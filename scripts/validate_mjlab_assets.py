@@ -65,6 +65,7 @@ def main() -> int:
         },
         "collision_filter": {
             "g1_rickshaw_pairs": "disabled",
+            "connected_gripper_contacts": "disabled",
             "ground_contacts": True,
         },
         "hitches": hitch_mesh_evidence(),

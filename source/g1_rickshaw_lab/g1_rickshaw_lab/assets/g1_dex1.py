@@ -181,14 +181,14 @@ def get_g1_spec() -> mujoco.MjSpec:
         joint.actfrcrange[:] = (-effort_limit, effort_limit)
 
     for geom in spec.geoms:
-        # Unitree FULL_COLLISION_WITHOUT_SELF plus tow-rod interaction.
+        # Unitree FULL_COLLISION_WITHOUT_SELF.
         geom.contype = ROBOT_COLLISION_BIT
         geom.conaffinity = GROUND_COLLISION_BIT
     set_body_collision(
         spec,
         GRIPPER_BODY_NAMES,
         contype=0,
-        conaffinity=GROUND_COLLISION_BIT,
+        conaffinity=0,
     )
 
     site_frames = (

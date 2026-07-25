@@ -153,6 +153,12 @@ def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision()
     body_names = [model.body(model.geom_bodyid[index]).name for index in range(model.ngeom)]
     robot_geoms = [index for index, name in enumerate(body_names) if name.startswith("robot/")]
     rickshaw_geoms = [index for index, name in enumerate(body_names) if name.startswith("rickshaw/")]
+    gripper_geoms = [index for index, name in enumerate(body_names) if "_dex1_" in name]
+    assert gripper_geoms
+    assert all(
+        model.geom_contype[index] == 0 and model.geom_conaffinity[index] == 0
+        for index in gripper_geoms
+    )
     assert all(
         not (
             model.geom_contype[robot_geom] & model.geom_conaffinity[rickshaw_geom]

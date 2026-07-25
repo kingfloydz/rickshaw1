@@ -18,7 +18,8 @@ The body-mesh tow points are `(0.276, -1.664929, 0.180746)` and
 are connected to the corresponding rickshaw sites by two MuJoCo site-connect
 equalities. The crossbar can rotate in the fixed claws, and all G1-rickshaw
 collisions are disabled because contact between rigidly connected bodies would
-conflict with the hand constraints. G1 and rickshaw ground contacts remain enabled.
+conflict with the hand constraints. The fixed gripper collision geoms are also
+disabled; all remaining G1 and rickshaw ground contacts stay enabled.
 
 The six G1 actuator groups use Unitree's open-source Mjlab defaults: MuJoCo
 built-in position actuators, 10 Hz natural frequency, damping ratio 2.0,

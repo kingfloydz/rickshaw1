@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import mujoco
 
-from g1_rickshaw_lab.assets.g1_dex1 import GRASP_SITE_NAMES, add_g1_position_actuators, get_g1_spec
+from g1_rickshaw_lab.assets.g1_dex1 import (
+    GRASP_SITE_NAMES,
+    GRIPPER_BODY_NAMES,
+    add_g1_position_actuators,
+    get_g1_spec,
+)
 from g1_rickshaw_lab.assets.mujoco_spec import (
     ALL_COLLISION_BITS,
     GROUND_COLLISION_BIT,
@@ -82,12 +87,20 @@ def validate_assembled_model(model: mujoco.MjModel) -> tuple[str, ...]:
     ]
     robot_geoms = [index for index, name in enumerate(body_names) if name.startswith("robot/")]
     rickshaw_geoms = [index for index, name in enumerate(body_names) if name.startswith("rickshaw/")]
+    gripper_bodies = {f"robot/{name}" for name in GRIPPER_BODY_NAMES}
+    gripper_geoms = [index for index in robot_geoms if body_names[index] in gripper_bodies]
     if not robot_geoms or not rickshaw_geoms:
         issues.append("missing robot or rickshaw collision class")
+    if not gripper_geoms or any(
+        model.geom_contype[index] != 0 or model.geom_conaffinity[index] != 0
+        for index in gripper_geoms
+    ):
+        issues.append("equality-connected gripper geoms must not generate contacts")
     if any(
         model.geom_contype[index] not in (0, ROBOT_COLLISION_BIT)
         or model.geom_conaffinity[index] != GROUND_COLLISION_BIT
         for index in robot_geoms
+        if index not in gripper_geoms
     ):
         issues.append("G1 geoms must use ground-only collision filtering without self collision")
     for robot_geom in robot_geoms:
