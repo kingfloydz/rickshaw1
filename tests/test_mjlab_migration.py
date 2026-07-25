@@ -14,6 +14,7 @@ from g1_rickshaw_lab.assets.g1_dex1 import (
 )
 from g1_rickshaw_lab.assets.rickshaw import get_rickshaw_spec, validate_rickshaw_urdf
 from g1_rickshaw_lab.rickshaw_spec import RICKSHAW_URDF_SPEC
+from g1_rickshaw_lab.project_paths import PROJECT_ROOT
 from g1_rickshaw_lab.static_equilibrium import (
     MujocoStaticEquilibrium,
     fat2_reference_angle_scalar,
@@ -125,6 +126,23 @@ def test_g1_uses_official_builtin_position_actuator_defaults() -> None:
             math.isclose(value, target)
             for value, target in zip(actual, values, strict=True)
         )
+
+
+def test_training_enables_mjlab_nan_guard() -> None:
+    pytest.importorskip("mjlab")
+
+    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
+        g1_rickshaw_env_cfg,
+    )
+
+    training = g1_rickshaw_env_cfg(play=False)
+    playback = g1_rickshaw_env_cfg(play=True)
+    expected_dir = str(PROJECT_ROOT / "outputs" / "nan_dumps")
+    assert training.sim.nan_guard.enabled
+    assert training.sim.nan_guard.buffer_size == 100
+    assert training.sim.nan_guard.max_envs_to_dump == 5
+    assert training.sim.nan_guard.output_dir == expected_dir
+    assert not playback.sim.nan_guard.enabled
 
 
 def test_assembled_model_uses_two_connections_and_only_tow_rod_collision() -> None:

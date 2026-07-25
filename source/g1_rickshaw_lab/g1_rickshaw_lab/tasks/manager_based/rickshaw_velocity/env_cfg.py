@@ -7,7 +7,7 @@ import math
 from g1_rickshaw_lab.assets import get_g1_robot_cfg, get_rickshaw_cfg
 from g1_rickshaw_lab.configuration import load_feasibility_envelope
 from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH
-from g1_rickshaw_lab.project_paths import CONFIG_ROOT
+from g1_rickshaw_lab.project_paths import CONFIG_ROOT, PROJECT_ROOT
 
 
 def _runtime_cfg(*, play: bool, history_length: int):
@@ -95,6 +95,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     from mjlab.tasks.velocity import mdp as velocity_mdp
     from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
     from mjlab.terrains import TerrainEntityCfg
+    from mjlab.utils.nan_guard import NanGuardCfg
     from mjlab.viewer import ViewerConfig
 
     from . import mjlab_mdp
@@ -424,6 +425,12 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
             nconmax=256,
             njmax=2400,
             contact_sensor_maxmatch=256,
+            nan_guard=NanGuardCfg(
+                enabled=not play,
+                buffer_size=100,
+                output_dir=str(PROJECT_ROOT / "outputs" / "nan_dumps"),
+                max_envs_to_dump=5,
+            ),
             mujoco=MujocoCfg(
                 timestep=0.002,
                 iterations=100,
