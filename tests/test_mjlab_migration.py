@@ -12,6 +12,7 @@ from g1_rickshaw_lab.assets.g1_dex1 import (
     get_g1_spec,
     validate_g1_urdf,
 )
+from g1_rickshaw_lab.assets.mujoco_spec import GROUND_COLLISION_BIT, ROBOT_COLLISION_BIT
 from g1_rickshaw_lab.assets.rickshaw import get_rickshaw_spec, validate_rickshaw_urdf
 from g1_rickshaw_lab.rickshaw_spec import RICKSHAW_URDF_SPEC
 from g1_rickshaw_lab.project_paths import PROJECT_ROOT
@@ -143,6 +144,14 @@ def test_training_enables_mjlab_nan_guard() -> None:
     assert training.sim.nan_guard.max_envs_to_dump == 5
     assert training.sim.nan_guard.output_dir == expected_dir
     assert not playback.sim.nan_guard.enabled
+    assert training.sim.mujoco.timestep == 0.005
+    assert training.sim.mujoco.iterations == 10
+    assert training.sim.mujoco.ls_iterations == 20
+    assert training.sim.mujoco.ccd_iterations == 50
+    assert training.sim.nconmax is None
+    assert training.sim.njmax == 300
+    assert training.sim.contact_sensor_maxmatch == 64
+    assert training.decimation == 4
 
 
 def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> None:
@@ -150,14 +159,52 @@ def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision()
     assert validate_assembled_model(model) == ()
     assert model.neq == 2
     assert model.nu == 29
+    assert model.opt.timestep == 0.005
+    assert model.opt.iterations == 10
+    assert model.opt.ls_iterations == 20
+    assert model.opt.ccd_iterations == 50
+    np.testing.assert_allclose(model.eq_solref, np.tile((0.02, 1.0), (model.neq, 1)))
     body_names = [model.body(model.geom_bodyid[index]).name for index in range(model.ngeom)]
     robot_geoms = [index for index, name in enumerate(body_names) if name.startswith("robot/")]
     rickshaw_geoms = [index for index, name in enumerate(body_names) if name.startswith("rickshaw/")]
     gripper_geoms = [index for index, name in enumerate(body_names) if "_dex1_" in name]
+    visual_geoms = [index for index in robot_geoms if model.geom_group[index] != 0]
     assert gripper_geoms
+    assert visual_geoms
     assert all(
         model.geom_contype[index] == 0 and model.geom_conaffinity[index] == 0
         for index in gripper_geoms
+    )
+    assert all(
+        model.geom_contype[index] == 0 and model.geom_conaffinity[index] == 0
+        for index in visual_geoms
+    )
+    foot_collision_geoms = [
+        index
+        for index, name in enumerate(body_names)
+        if name in ("robot/left_ankle_roll_link", "robot/right_ankle_roll_link")
+        and model.geom_group[index] == 0
+    ]
+    assert len(foot_collision_geoms) == 8
+    np.testing.assert_array_equal(model.geom_condim[foot_collision_geoms], 3)
+    np.testing.assert_array_equal(model.geom_priority[foot_collision_geoms], 1)
+    np.testing.assert_allclose(model.geom_friction[foot_collision_geoms, 0], 0.6)
+    np.testing.assert_allclose(
+        model.geom_solref[foot_collision_geoms],
+        np.tile((0.02, 1.0), (len(foot_collision_geoms), 1)),
+    )
+    physical_geoms = [
+        index for index in robot_geoms if index not in gripper_geoms and index not in visual_geoms
+    ]
+    assert all(model.geom_contype[index] == ROBOT_COLLISION_BIT for index in physical_geoms)
+    assert all(
+        model.geom_conaffinity[index] == (GROUND_COLLISION_BIT | ROBOT_COLLISION_BIT)
+        for index in physical_geoms
+    )
+    nonfoot_collision_geoms = [index for index in physical_geoms if index not in foot_collision_geoms]
+    np.testing.assert_array_equal(
+        model.geom_condim[nonfoot_collision_geoms],
+        np.ones(len(nonfoot_collision_geoms), dtype=int),
     )
     assert all(
         not (
@@ -190,6 +237,12 @@ def test_static_rest_pose_is_bound_to_the_compiled_model(tmp_path) -> None:
     load_mujoco_static_equilibrium(model, path)
 
     model.body_mass[model.body("rickshaw/base_link").id] += 1.0
+    with pytest.raises(ValueError, match="model signature"):
+        load_mujoco_static_equilibrium(model, path)
+
+    model = build_assembled_spec().compile()
+    path = save_mujoco_static_equilibrium(model, solution, tmp_path / "physics-rest.json")
+    model.opt.timestep = 0.002
     with pytest.raises(ValueError, match="model signature"):
         load_mujoco_static_equilibrium(model, path)
 

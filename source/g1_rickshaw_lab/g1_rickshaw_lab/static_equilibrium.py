@@ -113,6 +113,14 @@ def _model_signature(model: Any) -> str:
         names = [mujoco.mj_id2name(model, object_type, index) or "" for index in range(count)]
         digest.update(json.dumps(names, separators=(",", ":")).encode())
     for value in (
+        np.asarray(
+            (
+                model.opt.timestep,
+                model.opt.iterations,
+                model.opt.ls_iterations,
+                model.opt.ccd_iterations,
+            )
+        ),
         model.qpos0,
         model.body_mass,
         model.body_inertia,
@@ -130,12 +138,19 @@ def _model_signature(model: Any) -> str:
         model.geom_quat,
         model.geom_contype,
         model.geom_conaffinity,
+        model.geom_condim,
+        model.geom_priority,
+        model.geom_friction,
+        model.geom_solref,
+        model.geom_solimp,
         model.site_pos,
         model.site_quat,
         model.eq_type,
         model.eq_obj1id,
         model.eq_obj2id,
         model.eq_data,
+        model.eq_solref,
+        model.eq_solimp,
         model.actuator_trnid,
         model.actuator_gainprm,
         model.actuator_biasprm,

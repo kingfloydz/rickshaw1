@@ -99,9 +99,6 @@ def _body_mass_kinematics(env: Any, entity_name: str) -> tuple[torch.Tensor, tor
 
 def _load_static() -> tuple[Any, MujocoStaticEquilibrium]:
     model = build_assembled_spec(with_ground=True).compile()
-    model.opt.timestep = 0.002
-    model.opt.iterations = 100
-    model.opt.ls_iterations = 50
     return model, load_mujoco_static_equilibrium(model)
 
 

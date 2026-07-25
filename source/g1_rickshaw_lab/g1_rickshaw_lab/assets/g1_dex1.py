@@ -48,6 +48,7 @@ FIXED_GRIP_POSITION = -0.01609
 GRASP_SITE_X = 0.11066269
 GRASP_SITE_NAMES = ("left_grasp_site", "right_grasp_site")
 FOOT_SITE_NAMES = ("left_foot", "right_foot")
+FOOT_BODY_NAMES = ("left_ankle_roll_link", "right_ankle_roll_link")
 GRIPPER_BODY_NAMES = (
     "left_dex1_base_link",
     "left_dex1_finger_link_1",
@@ -181,9 +182,20 @@ def get_g1_spec() -> mujoco.MjSpec:
         joint.actfrcrange[:] = (-effort_limit, effort_limit)
 
     for geom in spec.geoms:
-        # Unitree FULL_COLLISION_WITHOUT_SELF.
-        geom.contype = ROBOT_COLLISION_BIT
-        geom.conaffinity = GROUND_COLLISION_BIT
+        # URDF collision geoms are group 0; group 1 contains render-only duplicates.
+        if geom.group == 0:
+            geom.contype = ROBOT_COLLISION_BIT
+            geom.conaffinity = GROUND_COLLISION_BIT | ROBOT_COLLISION_BIT
+            geom.condim = 1
+        else:
+            geom.contype = 0
+            geom.conaffinity = 0
+    for body_name in FOOT_BODY_NAMES:
+        for geom in spec.body(body_name).geoms:
+            if geom.group == 0 and geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
+                geom.condim = 3
+                geom.priority = 1
+                geom.friction = (0.6, 0.005, 0.0001)
     set_body_collision(
         spec,
         GRIPPER_BODY_NAMES,
@@ -205,7 +217,7 @@ def get_g1_spec() -> mujoco.MjSpec:
             rgba=(0.0, 0.0, 0.0, 0.0),
         )
     for body_name, site_name in zip(
-        ("left_ankle_roll_link", "right_ankle_roll_link"),
+        FOOT_BODY_NAMES,
         FOOT_SITE_NAMES,
         strict=True,
     ):

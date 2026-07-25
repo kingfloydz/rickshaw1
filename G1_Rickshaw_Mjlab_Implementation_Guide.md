@@ -19,7 +19,10 @@ are connected to the corresponding rickshaw sites by two MuJoCo site-connect
 equalities. The crossbar can rotate in the fixed claws, and all G1-rickshaw
 collisions are disabled because contact between rigidly connected bodies would
 conflict with the hand constraints. The fixed gripper collision geoms are also
-disabled; all remaining G1 and rickshaw ground contacts stay enabled.
+disabled. Only the G1 URDF's group-0 collision geoms contact the ground; its
+group-1 render meshes never participate in physics. The active geoms otherwise
+use Mjlab's full-collision setup: self-collision is enabled, foot contacts use
+three constraint dimensions and friction 0.6, and other contacts use one.
 
 The six G1 actuator groups use Unitree's open-source Mjlab defaults: MuJoCo
 built-in position actuators, 10 Hz natural frequency, damping ratio 2.0,
@@ -33,7 +36,7 @@ At startup, MuJoCo inverse dynamics loads one certified flat-ground pose. The
 14 arm joints and the two floating bases are optimized. The solve constrains
 the hitch to 0.75-0.95 m, keeps a 5 mm optimization margin at each boundary,
 and selects the valid pose with the smallest maximum normalized joint torque.
-The current certified hitch height is 0.754572 m. Initial constraint error,
+The current certified hitch height is 0.750492 m. Initial constraint error,
 support error, acceleration, contact force, and actuator torque are certified.
 The policy reference remains the physical pose `q_static`; the actuator layer
 separately applies the static offset `tau / Kp` to its built-in position target.

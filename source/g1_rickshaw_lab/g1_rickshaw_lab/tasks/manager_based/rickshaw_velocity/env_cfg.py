@@ -422,9 +422,9 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
             azimuth=90.0,
         ),
         sim=SimulationCfg(
-            nconmax=256,
-            njmax=2400,
-            contact_sensor_maxmatch=256,
+            nconmax=None,
+            njmax=300,
+            contact_sensor_maxmatch=64,
             nan_guard=NanGuardCfg(
                 enabled=not play,
                 buffer_size=100,
@@ -432,13 +432,13 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
                 max_envs_to_dump=5,
             ),
             mujoco=MujocoCfg(
-                timestep=0.002,
-                iterations=100,
-                ls_iterations=50,
+                timestep=0.005,
+                iterations=10,
+                ls_iterations=20,
                 ccd_iterations=50,
             ),
         ),
-        decimation=10,
+        decimation=4,
         episode_length_s=20.0,
     )
     cfg.history_length = history_length
