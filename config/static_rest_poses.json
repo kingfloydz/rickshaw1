@@ -1,6 +1,6 @@
 {
-  "schema_version": 9,
-  "model_signature": "444423b337c2ffc942671a6d7ba29f9afe7b1daba6185a40f54a506c252005fc",
+  "schema_version": 10,
+  "model_signature": "b1f11ec00b66895e0e8bce31a539b6d805569814ff03d4bf78e6c343153cf36f",
   "solution": {
     "qpos": [
       0.013801096381901985,

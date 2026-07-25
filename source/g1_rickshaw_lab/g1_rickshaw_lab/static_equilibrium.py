@@ -34,8 +34,9 @@ from .rickshaw_spec import (
     WHEEL_TRACK,
 )
 
-STATIC_REST_POSE_SCHEMA_VERSION = 9
+STATIC_REST_POSE_SCHEMA_VERSION = 10
 STATIC_REST_POSE_PATH = CONFIG_ROOT / "static_rest_poses.json"
+_MODEL_SIGNATURE_DECIMALS = 10
 
 
 @dataclass(frozen=True)
@@ -96,8 +97,21 @@ class MujocoStaticSolverCfg:
 
 
 def _model_signature(model: Any) -> str:
+    import mujoco
+
     digest = hashlib.sha256()
     digest.update(f"{model.nq}:{model.nv}:{model.nu}:{model.nbody}:{model.njnt}:{model.ngeom}:{model.nsite}".encode())
+    named_objects = (
+        (mujoco.mjtObj.mjOBJ_BODY, model.nbody),
+        (mujoco.mjtObj.mjOBJ_JOINT, model.njnt),
+        (mujoco.mjtObj.mjOBJ_GEOM, model.ngeom),
+        (mujoco.mjtObj.mjOBJ_SITE, model.nsite),
+        (mujoco.mjtObj.mjOBJ_EQUALITY, model.neq),
+        (mujoco.mjtObj.mjOBJ_ACTUATOR, model.nu),
+    )
+    for object_type, count in named_objects:
+        names = [mujoco.mj_id2name(model, object_type, index) or "" for index in range(count)]
+        digest.update(json.dumps(names, separators=(",", ":")).encode())
     for value in (
         model.qpos0,
         model.body_mass,
@@ -127,10 +141,19 @@ def _model_signature(model: Any) -> str:
         model.actuator_biasprm,
         model.actuator_forcerange,
     ):
-        array = np.ascontiguousarray(value)
-        digest.update(array.dtype.str.encode())
-        digest.update(np.asarray(array.shape, dtype=np.int64).tobytes())
-        digest.update(array.tobytes())
+        source = np.asarray(value)
+        if np.issubdtype(source.dtype, np.floating):
+            array = np.round(source.astype("<f8"), decimals=_MODEL_SIGNATURE_DECIMALS)
+            array[array == 0.0] = 0.0
+            kind = b"f"
+        elif np.issubdtype(source.dtype, np.integer):
+            array = source.astype("<i8")
+            kind = b"i"
+        else:
+            raise TypeError(f"unsupported model signature dtype: {source.dtype}")
+        digest.update(kind)
+        digest.update(np.asarray(array.shape, dtype="<i8").tobytes())
+        digest.update(np.ascontiguousarray(array).tobytes())
     return digest.hexdigest()
 
 

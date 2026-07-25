@@ -168,6 +168,10 @@ def test_static_rest_pose_is_bound_to_the_compiled_model(tmp_path) -> None:
     loaded = load_mujoco_static_equilibrium(model, path)
     np.testing.assert_array_equal(loaded.qpos, solution.qpos)
 
+    mass = model.body_mass[model.body("rickshaw/base_link").id]
+    model.body_mass[model.body("rickshaw/base_link").id] = np.nextafter(mass, np.inf)
+    load_mujoco_static_equilibrium(model, path)
+
     model.body_mass[model.body("rickshaw/base_link").id] += 1.0
     with pytest.raises(ValueError, match="model signature"):
         load_mujoco_static_equilibrium(model, path)
