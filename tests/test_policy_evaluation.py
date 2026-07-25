@@ -8,22 +8,16 @@ import torch
 
 from g1_rickshaw_lab.policy_evaluation import (
     CROSS_CASE_LABELS,
-    SIGNED_SLOPES,
     MetricStore,
     PolicyEvaluationAccumulator,
     command_phase_labels,
     connection_wrench_channels,
     evaluate_s2_return_floor,
-    slope_label,
 )
 
 
-def test_evaluation_uses_all_19_signed_slopes() -> None:
-    assert SIGNED_SLOPES == tuple(value / 100 for value in range(-8, 11))
+def test_evaluation_uses_one_randomization_case() -> None:
     assert CROSS_CASE_LABELS == ("RANDOM",)
-    assert slope_label(-0.08) == "-0.08"
-    assert slope_label(0.08) == "+0.08"
-    assert slope_label(0.10) == "+0.10"
 
 
 def test_s2_return_comparison_is_diagnostic_only() -> None:
@@ -42,10 +36,10 @@ def test_s2_return_comparison_is_diagnostic_only() -> None:
 
 
 def test_command_phase_labels_are_deterministic() -> None:
-    assert command_phase_labels([0.0, 0.5, 0.5], [0.0, 0.1, -0.1]) == [
+    assert command_phase_labels([0.0, 0.5, 1.0]) == [
         "standing",
-        "accelerating",
-        "decelerating",
+        "moving",
+        "moving",
     ]
 
 
@@ -84,31 +78,27 @@ def test_metric_store_excludes_nonfinite_samples_but_records_them() -> None:
     assert summary["episodes"]["return"]["mean"] == pytest.approx(2.0)
 
 
-def test_accumulator_keeps_global_and_per_slope_diagnostics() -> None:
+def test_accumulator_keeps_global_and_phase_diagnostics() -> None:
     accumulator = PolicyEvaluationAccumulator()
     accumulator.add_step(
         {"speed_error": [0.1, -0.2], "overspeed": [0.0, 1.0]},
-        [0, len(SIGNED_SLOPES) - 1],
         stage_labels=["training", "training"],
         cross_case_labels=["RANDOM", "RANDOM"],
-        phase_labels=["accelerating", "decelerating"],
+        phase_labels=["standing", "moving"],
     )
     accumulator.add_episode(
-        0,
         3.0,
         fell=False,
         causes=("timeout",),
-        phase_labels=("accelerating",),
+        phase_labels=("moving",),
         cross_case_label="RANDOM",
     )
-    global_summary, per_slope = accumulator.summary()
+    global_summary = accumulator.summary()
     assert global_summary["samples"] == 2
-    assert per_slope[slope_label(SIGNED_SLOPES[0])]["samples"] == 1
-    assert per_slope[slope_label(SIGNED_SLOPES[-1])]["samples"] == 1
     assert accumulator.stratified_summary()["by_cross_case"]["RANDOM"]["samples"] == 2
 
 
-def test_accumulator_rejects_invalid_slope_index() -> None:
+def test_accumulator_rejects_mismatched_sample_lengths() -> None:
     accumulator = PolicyEvaluationAccumulator()
-    with pytest.raises(ValueError, match="slope_indices"):
-        accumulator.add_step({"speed_error": [0.0]}, [len(SIGNED_SLOPES)])
+    with pytest.raises(ValueError, match="equal length"):
+        accumulator.add_step({"speed_error": [0.0], "overspeed": [0.0, 1.0]})

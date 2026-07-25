@@ -18,32 +18,6 @@ from .dynamics import quat_apply_wxyz
 
 
 @dataclass
-class CommandState:
-    v_sample: torch.Tensor
-    v_ref: torch.Tensor
-    a_ref: torch.Tensor
-    resampling_elapsed_s: torch.Tensor
-
-    @classmethod
-    def zeros(
-        cls,
-        num_envs: int,
-        *,
-        device: torch.device | str | None = None,
-        dtype: torch.dtype = torch.float32,
-    ) -> CommandState:
-        zeros = torch.zeros(num_envs, device=device, dtype=dtype)
-        return cls(zeros.clone(), zeros.clone(), zeros.clone(), zeros.clone())
-
-    def reset(self, env_ids: torch.Tensor | None = None) -> None:
-        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
-        self.v_sample[ids] = 0.0
-        self.v_ref[ids] = 0.0
-        self.a_ref[ids] = 0.0
-        self.resampling_elapsed_s[ids] = 0.0
-
-
-@dataclass
 class PathTrackingState:
     lateral_error: torch.Tensor
     heading_error: torch.Tensor
@@ -149,64 +123,6 @@ class StabilityState:
                 (num_envs, 8), device=device, dtype=torch.bool
             ),
         )
-
-
-@dataclass
-class SpeedCommandSamplingCfg:
-    minimum: float = 0.0
-    maximum: float = 0.1
-    limit_maximum: float = 1.0
-    curriculum_step: float = 0.1
-    standing_fraction: float = 0.02
-    resampling_time_s: float = 10.0
-
-    def validate(self) -> None:
-        if not 0.0 <= self.minimum <= self.maximum <= self.limit_maximum:
-            raise ValueError(
-                "speed command range must satisfy 0 <= minimum <= maximum <= limit_maximum"
-            )
-        if self.curriculum_step <= 0.0:
-            raise ValueError("curriculum_step must be positive")
-        if not 0.0 <= self.standing_fraction <= 1.0:
-            raise ValueError("standing_fraction must lie in [0,1]")
-        if self.resampling_time_s <= 0.0:
-            raise ValueError("resampling_time_s must be positive")
-
-
-def sample_speed_commands(
-    num_samples: int,
-    cfg: SpeedCommandSamplingCfg,
-    *,
-    device: torch.device | str | None = None,
-    dtype: torch.dtype = torch.float32,
-    generator: torch.Generator | None = None,
-) -> torch.Tensor:
-    cfg.validate()
-    samples = torch.rand(
-        num_samples, device=device, dtype=dtype, generator=generator
-    )
-    samples = cfg.minimum + (cfg.maximum - cfg.minimum) * samples
-    if cfg.standing_fraction > 0.0:
-        standing = (
-            torch.rand(num_samples, device=device, generator=generator)
-            < cfg.standing_fraction
-        )
-        samples[standing] = 0.0
-    return samples
-
-
-def resample_speed_command(
-    env: Any, env_ids: torch.Tensor, cfg: SpeedCommandSamplingCfg
-) -> None:
-    if env_ids.numel() == 0:
-        return
-    env.command_state.v_sample[env_ids] = sample_speed_commands(
-        env_ids.numel(),
-        cfg,
-        device=env.command_state.v_sample.device,
-        dtype=env.command_state.v_sample.dtype,
-    )
-    env.command_state.resampling_elapsed_s[env_ids] = 0.0
 
 
 def compute_path_tracking_errors(
@@ -391,17 +307,13 @@ def _update_teacher_static_domain(
 
 
 __all__ = [
-    "CommandState",
     "DOMAIN_PARAMETER_NAMES",
     "DOMAIN_RANDOMIZATION_NAMES",
     "DomainRandomizationCfg",
     "PathTrackingState",
     "RickshawRuntimeState",
-    "SpeedCommandSamplingCfg",
     "StabilityState",
     "compute_path_tracking_errors",
     "effective_cart_mass_com_bounds",
-    "resample_speed_command",
     "sample_domain_parameters",
-    "sample_speed_commands",
 ]

@@ -9,6 +9,7 @@ from torch import nn
 
 from g1_rickshaw_lab.policy_schema import ACTOR_OBSERVATION_DIM
 from g1_rickshaw_lab.rl import (
+    CRITIC_PRIVILEGE_DIM,
     DYNAMIC_PRIVILEGE_DIM,
     STATIC_PRIVILEGE_DIM,
     ContextEncoder,
@@ -71,10 +72,17 @@ class TestRickshawRLModels(unittest.TestCase):
         ]
         self.assertEqual(
             critic_shapes,
-            [(ACTOR_OBSERVATION_DIM + 34, 256), (256, 128), (128, 1)],
+            [
+                (ACTOR_OBSERVATION_DIM + CRITIC_PRIVILEGE_DIM, 256),
+                (256, 128),
+                (128, 1),
+            ],
         )
         self.assertEqual(
-            critic(torch.randn(3, ACTOR_OBSERVATION_DIM), torch.randn(3, 34)).shape,
+            critic(
+                torch.randn(3, ACTOR_OBSERVATION_DIM),
+                torch.randn(3, CRITIC_PRIVILEGE_DIM),
+            ).shape,
             (3, 1),
         )
 

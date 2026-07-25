@@ -22,7 +22,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
 )
 from g1_rickshaw_lab.workflows.rsl_rl import PlayOptions  # noqa: E402
 
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Directional-Slope-Student"
+DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Student"
 _OPERATIONAL_FLAGS = {
     "--headless",
     "--enable_cameras",
@@ -89,7 +89,6 @@ def main() -> int:
         validate_runtime=True,
     )
     training_parameters = loaded_checkpoint[TRAINING_CONFIGURATION_KEY]["training_parameters"]
-    fat2_weight = float(training_parameters["fat2_weight"])
     latent_dim = int(training_parameters["latent_dim"])
     history_length = int(training_parameters["history_length"])
     curriculum_iteration = loaded_checkpoint.get(CHECKPOINT_CURRICULUM_ITERATION_KEY)
@@ -112,7 +111,6 @@ def main() -> int:
             f"agent.actor.latent_dim={latent_dim}",
             f"agent.actor.history_length={history_length}",
             f"env.history_length={history_length}",
-            f"env.rewards.fat2_prior_exp.weight={fat2_weight}",
             *remaining,
         ],
         runner_context=runner_context,

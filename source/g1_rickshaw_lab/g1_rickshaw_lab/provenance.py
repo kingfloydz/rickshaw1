@@ -7,21 +7,22 @@ edits do not make an otherwise compatible checkpoint unloadable.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping, Sequence
-from dataclasses import dataclass
 import importlib
 import importlib.metadata
 import os
-from pathlib import Path
 import tempfile
+from collections.abc import Mapping, MutableMapping, Sequence
+from contextlib import suppress
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from .configuration import FIXED_G1_JOINT_ORDER, validate_joint_order
-
+from .configuration import G1_JOINT_ORDER, validate_joint_order
 
 PROVENANCE_SCHEMA_VERSION = 3
 CHECKPOINT_METADATA_KEY = "g1_rickshaw_provenance"
-RSL_RL_VERSION = "5.0.1"
+MJLAB_VERSION = "1.5.3"
+RSL_RL_VERSION = "5.4.0"
 CUDA_NOT_AVAILABLE = "none"
 
 
@@ -58,7 +59,7 @@ class CheckpointMetadata:
     mjlab_version: str
     pytorch_version: str
     cuda_version: str
-    joint_order: tuple[str, ...] = FIXED_G1_JOINT_ORDER
+    joint_order: tuple[str, ...] = G1_JOINT_ORDER
     rsl_rl_version: str = RSL_RL_VERSION
     schema_version: int = PROVENANCE_SCHEMA_VERSION
 
@@ -77,6 +78,11 @@ class CheckpointMetadata:
         pytorch_version = _required_text(self.pytorch_version, "pytorch_version")
         cuda_version = _required_text(self.cuda_version, "cuda_version")
         rsl_rl_version = _required_text(self.rsl_rl_version, "rsl_rl_version")
+        if mjlab_version != MJLAB_VERSION:
+            raise ProvenanceError(
+                f"mjlab version mismatch: checkpoint has {mjlab_version!r}, "
+                f"project requires {MJLAB_VERSION!r}"
+            )
         if rsl_rl_version != RSL_RL_VERSION:
             raise ProvenanceError(
                 f"RSL-RL version mismatch: checkpoint has {rsl_rl_version!r}, "
@@ -91,7 +97,7 @@ class CheckpointMetadata:
         object.__setattr__(self, "joint_order", joint_order)
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "CheckpointMetadata":
+    def from_mapping(cls, value: Mapping[str, Any]) -> CheckpointMetadata:
         if not isinstance(value, Mapping):
             raise ProvenanceError("checkpoint provenance metadata must be a mapping")
         expected = {
@@ -175,7 +181,12 @@ def discover_mjlab_version() -> str:
     version = _discover_package_version("mjlab", "mjlab")
     if version is None:
         raise ProvenanceError("cannot determine the Mjlab version")
-    return _required_text(version, "Mjlab version")
+    normalized = _required_text(version, "Mjlab version").removeprefix("v")
+    if normalized != MJLAB_VERSION:
+        raise ProvenanceError(
+            f"installed mjlab version is {normalized}; required {MJLAB_VERSION}"
+        )
+    return normalized
 
 
 def discover_rsl_rl_version() -> str:
@@ -213,7 +224,7 @@ def collect_checkpoint_metadata(
     mujoco_version: str | None = None,
     mjlab_version: str | None = None,
     rsl_rl_version: str | None = None,
-    joint_order: Sequence[str] = FIXED_G1_JOINT_ORDER,
+    joint_order: Sequence[str] = G1_JOINT_ORDER,
 ) -> CheckpointMetadata:
     """Collect the runtime versions and joint order needed to reload a policy."""
 
@@ -283,7 +294,7 @@ def validate_checkpoint_metadata(
     metadata: CheckpointMetadata | Mapping[str, Any],
     *,
     expected: CheckpointMetadata | Mapping[str, Any] | None = None,
-    joint_order: Sequence[str] = FIXED_G1_JOINT_ORDER,
+    joint_order: Sequence[str] = G1_JOINT_ORDER,
     mujoco_version: str | None = None,
     mjlab_version: str | None = None,
     pytorch_version: str | None = None,
@@ -390,10 +401,8 @@ def atomic_torch_save(value: Any, path: str | Path) -> Path:
             finally:
                 os.close(directory_fd)
     except BaseException:
-        try:
+        with suppress(FileNotFoundError):
             temporary.unlink()
-        except FileNotFoundError:
-            pass
         raise
     return destination
 
@@ -435,6 +444,7 @@ __all__ = [
     "CHECKPOINT_METADATA_KEY",
     "CUDA_NOT_AVAILABLE",
     "CheckpointMetadata",
+    "MJLAB_VERSION",
     "PROVENANCE_SCHEMA_VERSION",
     "ProvenanceDependencyError",
     "ProvenanceError",

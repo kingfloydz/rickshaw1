@@ -11,7 +11,6 @@ from g1_rickshaw_lab.training_contract import (
     ROLLOUT_DEFAULT_NUM_ENVS,
     ROLLOUT_MANIFEST_SCHEMA_VERSION,
     ROLLOUT_STAGE_SEQUENCE,
-    SIGNED_SLOPE_LABELS,
     guide_max_iterations,
     rollout_scaled_iterations,
     s0_remaining_learning_iterations,
@@ -23,20 +22,17 @@ from g1_rickshaw_lab.training_contract import (
 )
 
 
-def test_mainline_has_fixed_stage_budgets_and_19_slopes() -> None:
+def test_mainline_has_fixed_stage_budgets_and_flat_terrain() -> None:
     assert GUIDE_MAX_ITERATIONS == {
         "s0_teacher": 2600,
         "s1_context_distillation": 2000,
         "s2_student_ppo": 1600,
     }
     assert ROLLOUT_STAGE_SEQUENCE == ("TRAINING",)
-    assert SIGNED_SLOPE_LABELS == tuple(
-        f"{value / 100:+.2f}" for value in range(-8, 11)
-    )
     assert guide_max_iterations("s0_teacher") == 2600
     assert GUIDE_TRAINING_PARAMETERS["s0_teacher"] == {
         "domain_randomization": "startup_fixed",
-        "terrain_slopes": "startup_center_weighted_fixed",
+        "terrain": "flat_plane",
         "observation_noise": "unitree_g1_uniform",
     }
     with pytest.raises(ValueError, match="unknown training stage"):
@@ -85,12 +81,6 @@ def test_ppo_resume_uses_only_the_remaining_iteration_budget(
 def test_single_training_rollout_manifest_is_accepted() -> None:
     num_envs = ROLLOUT_DEFAULT_NUM_ENVS
     num_steps = DISTILLATION_ROLLOUT_STEPS
-    base, extra = divmod(num_envs, len(SIGNED_SLOPE_LABELS))
-    environments = {
-        label: base + (index < extra) for index, label in enumerate(SIGNED_SLOPE_LABELS)
-    }
-    samples = {label: count * num_steps for label, count in environments.items()}
-    episodes = dict(environments)
     total = num_envs * num_steps
     segment = {
         "global_stage": "TRAINING",
@@ -98,9 +88,6 @@ def test_single_training_rollout_manifest_is_accepted() -> None:
         "target_valid_samples": total,
         "full_environment_reset": True,
         "reset_policy_steps": 0,
-        "slope_environment_distribution": environments,
-        "slope_sample_distribution": samples,
-        "slope_episode_distribution": episodes,
         "per_environment_stage_distribution": {"TRAINING": num_envs},
         "valid_sample_stage_distribution": {"TRAINING": total},
     }
@@ -108,13 +95,9 @@ def test_single_training_rollout_manifest_is_accepted() -> None:
         "schema_version": ROLLOUT_MANIFEST_SCHEMA_VERSION,
         "num_envs": num_envs,
         "num_steps_per_stage": num_steps,
-        "signed_slopes": [value / 100 for value in range(-8, 11)],
         "stage_segments": [segment],
         "stage_sample_distribution": {"TRAINING": total},
         "num_samples": total,
-        "slope_environment_distribution": environments,
-        "slope_sample_distribution": samples,
-        "slope_episode_distribution": episodes,
     }
     assert validate_rollout_stage_coverage(manifest) == {"TRAINING": total}
 

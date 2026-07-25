@@ -14,12 +14,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
 
 from _rollout_audit import (  # noqa: E402
     ACTION_DIM,
-    DEFAULT_NUM_ENVS,
     ROLLOUT_MANIFEST_SCHEMA_VERSION,
-    SIGNED_SLOPES,
-    SLOPE_TERRAIN_LEVELS,
-    SLOPE_TERRAIN_TYPES,
-    slope_environment_assignment,
 )
 from train_context import _normalize_shard, seed_s1_training  # noqa: E402
 
@@ -35,9 +30,6 @@ def _canonical_rollout_tensors(batch_size: int = 2) -> dict[str, torch.Tensor]:
         "collection_segment": torch.zeros(batch_size, 1, dtype=torch.long),
         "environment_id": torch.arange(batch_size).unsqueeze(-1),
         "episode_id": torch.arange(batch_size).unsqueeze(-1),
-        "slope": torch.zeros(batch_size, 1),
-        "terrain_level": torch.zeros(batch_size, 1, dtype=torch.long),
-        "terrain_type": torch.zeros(batch_size, 1, dtype=torch.long),
     }
 
 
@@ -49,20 +41,6 @@ def _write_rollout_shard(path: Path, tensors: dict[str, torch.Tensor], *, root: 
         },
         path,
     )
-
-
-def test_formal_rollout_assignment_covers_all_19_slopes() -> None:
-    assignment = slope_environment_assignment(DEFAULT_NUM_ENVS)
-    counts = torch.bincount(
-        assignment["slope_index"], minlength=len(SIGNED_SLOPES)
-    )
-    assert counts.tolist() == [432] * 3 + [431] * 16
-    torch.testing.assert_close(
-        torch.unique(assignment["slope"], sorted=True),
-        torch.tensor(SIGNED_SLOPES),
-    )
-    assert len(SLOPE_TERRAIN_LEVELS) == len(SIGNED_SLOPES)
-    assert len(SLOPE_TERRAIN_TYPES) == len(SIGNED_SLOPES)
 
 
 def test_formal_rollout_shard_accepts_only_canonical_tensor_shapes(tmp_path: Path) -> None:

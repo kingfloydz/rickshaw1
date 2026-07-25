@@ -3,16 +3,23 @@ from __future__ import annotations
 import math
 import xml.etree.ElementTree as ET
 
+import numpy as np
 import pytest
 
 from g1_rickshaw_lab.assets.g1_dex1 import (
+    G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS,
     G1_DEX1_URDF_PATH,
     get_g1_spec,
     validate_g1_urdf,
 )
 from g1_rickshaw_lab.assets.rickshaw import get_rickshaw_spec, validate_rickshaw_urdf
 from g1_rickshaw_lab.rickshaw_spec import RICKSHAW_URDF_SPEC
-from g1_rickshaw_lab.static_equilibrium import fat2_reference_angle_scalar
+from g1_rickshaw_lab.static_equilibrium import (
+    MujocoStaticEquilibrium,
+    fat2_reference_angle_scalar,
+    load_mujoco_static_equilibrium,
+    save_mujoco_static_equilibrium,
+)
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.closed_chain import (
     build_assembled_spec,
     validate_assembled_model,
@@ -37,6 +44,8 @@ def test_rickshaw_has_0_6m_wheels_aligned_with_lowered_body() -> None:
     assert validate_rickshaw_urdf() == ()
     spec = RICKSHAW_URDF_SPEC
     assert spec.wheel_radius == 0.3
+    assert spec.base_mass == 31.0
+    assert spec.total_mass == 35.04
     assert spec.base_com_x == 0.1
     assert math.isclose(spec.body_vertical_offset, -(0.374999 - 0.3), abs_tol=1.0e-12)
     assert math.isclose(
@@ -48,6 +57,23 @@ def test_rickshaw_has_0_6m_wheels_aligned_with_lowered_body() -> None:
     for name in ("left_wheel_link", "right_wheel_link"):
         geom_id = int(model.body_geomadr[model.body(name).id])
         assert math.isclose(model.geom_size[geom_id, 0] * 2.0, 0.6, abs_tol=1.0e-12)
+
+
+def test_g1_default_lower_body_matches_unitree_home_keyframe() -> None:
+    expected = {
+        "left_hip_pitch_joint": -0.1,
+        "left_knee_joint": 0.3,
+        "left_ankle_pitch_joint": -0.2,
+        "right_hip_pitch_joint": -0.1,
+        "right_knee_joint": 0.3,
+        "right_ankle_pitch_joint": -0.2,
+    }
+    assert {name: G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS[name] for name in expected} == expected
+    assert all(
+        position == 0.0
+        for name, position in G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS.items()
+        if name not in expected
+    )
 
 
 def test_g1_uses_official_builtin_position_actuator_defaults() -> None:
@@ -105,6 +131,46 @@ def test_assembled_model_uses_two_connections_and_only_tow_rod_collision() -> No
     model = build_assembled_spec().compile()
     assert validate_assembled_model(model) == ()
     assert model.neq == 2
+    assert model.nu == 29
+    base_id = model.body("rickshaw/base_link").id
+    base_geoms = range(
+        model.body_geomadr[base_id],
+        model.body_geomadr[base_id] + model.body_geomnum[base_id],
+    )
+    tow_rod_geoms = {
+        model.geom("rickshaw/left_tow_rod_collision").id,
+        model.geom("rickshaw/right_tow_rod_collision").id,
+    }
+    assert all(
+        model.geom_contype[geom_id] == 0 and model.geom_conaffinity[geom_id] == 0
+        for geom_id in base_geoms
+        if geom_id not in tow_rod_geoms
+    )
+    assert all(
+        model.geom_contype[geom_id] != 0 and model.geom_conaffinity[geom_id] != 0
+        for geom_id in tow_rod_geoms
+    )
+
+
+def test_static_rest_pose_is_bound_to_the_compiled_model(tmp_path) -> None:
+    model = build_assembled_spec().compile()
+    solution = MujocoStaticEquilibrium(
+        qpos=np.zeros(model.nq),
+        joint_actuator_torque=np.zeros(29),
+        fat2_reference_angle=0.0,
+        equality_position_error=0.0,
+        support_height_error=0.0,
+        hitch_height=0.85,
+        acceleration_error=0.0,
+        actuator_torque_ratio=0.0,
+    )
+    path = save_mujoco_static_equilibrium(model, solution, tmp_path / "rest.json")
+    loaded = load_mujoco_static_equilibrium(model, path)
+    np.testing.assert_array_equal(loaded.qpos, solution.qpos)
+
+    model.body_mass[model.body("rickshaw/base_link").id] += 1.0
+    with pytest.raises(ValueError, match="model signature"):
+        load_mujoco_static_equilibrium(model, path)
 
 
 def test_fat2_prior_uses_tangent_and_normal_hand_force() -> None:

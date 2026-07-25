@@ -3,13 +3,13 @@
 from importlib.util import find_spec
 
 from .env_cfg import (
-    G1RickshawDirectionalSlopeEnvCfg,
-    G1RickshawDirectionalSlopePlayEnvCfg,
+    G1RickshawFlatEnvCfg,
+    G1RickshawFlatPlayEnvCfg,
     g1_rickshaw_env_cfg,
 )
 
-TRAIN_TASK_ID = "Mjlab-G1-Rickshaw-Directional-Slope-Teacher"
-STUDENT_TASK_ID = "Mjlab-G1-Rickshaw-Directional-Slope-Student"
+TRAIN_TASK_ID = "Mjlab-G1-Rickshaw-Flat-Teacher"
+STUDENT_TASK_ID = "Mjlab-G1-Rickshaw-Flat-Student"
 HISTORY_91_TEACHER_TASK_ID = TRAIN_TASK_ID + "-H91"
 HISTORY_91_STUDENT_TASK_ID = STUDENT_TASK_ID + "-H91"
 PLAY_TASK_ID = STUDENT_TASK_ID
@@ -41,8 +41,8 @@ if find_spec("mjlab") is not None:
         )
 
 __all__ = [
-    "G1RickshawDirectionalSlopeEnvCfg",
-    "G1RickshawDirectionalSlopePlayEnvCfg",
+    "G1RickshawFlatEnvCfg",
+    "G1RickshawFlatPlayEnvCfg",
     "HISTORY_91_STUDENT_TASK_ID",
     "HISTORY_91_TEACHER_TASK_ID",
     "PLAY_TASK_ID",

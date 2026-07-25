@@ -21,11 +21,11 @@
     <inertial>
       <!-- Body CoM is fixed at x=0.1 m in the assembly frame. -->
       <origin xyz="0.1 0 0.6276898532066667" rpy="0 0 0"/>
-      <mass value="36.0"/>
+      <mass value="31.0"/>
       <inertia
-        ixx="7.393572" ixy="0" ixz="0"
-        iyy="22.277208" iyz="0"
-        izz="17.829456"/>
+        ixx="6.366687" ixy="0" ixz="0"
+        iyy="19.183151333333335" iyz="0"
+        izz="15.353142666666665"/>
     </inertial>
     <visual>
       <origin xyz="1.94034 -0.414504 -0.074999" rpy="0 0 1.57079632679"/>

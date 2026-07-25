@@ -16,18 +16,11 @@ from typing import Any, Final
 import numpy as np
 import torch
 
-from .slope_contract import SLOPE_GRADIENTS
-
-POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 1
-GUIDE_POLICY_EVALUATION_TASK: Final[str] = (
-    "Mjlab-G1-Rickshaw-Directional-Slope-Student"
-)
-SIGNED_SLOPES: Final[tuple[float, ...]] = SLOPE_GRADIENTS
+POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 2
+GUIDE_POLICY_EVALUATION_TASK: Final[str] = "Mjlab-G1-Rickshaw-Flat-Student"
 COMMAND_PHASE_LABELS: Final[tuple[str, ...]] = (
     "standing",
-    "accelerating",
-    "cruising",
-    "decelerating",
+    "moving",
 )
 CROSS_CASE_LABELS: Final[tuple[str, ...]] = (
     "RANDOM",
@@ -42,11 +35,11 @@ METRIC_DEFINITIONS: Final[dict[str, str]] = {
     "tracking.overspeed_rate": "samples with v_s > v_ref + configured safety margin / samples",
     "tracking.lateral_error": "RMS and maximum absolute path lateral error",
     "tracking.heading_error": "wrapped heading RMS and maximum absolute error",
-    "rickshaw.pitch_error": "actual slope-relative pitch minus alpha_target",
-    "rickshaw.hitch_height_error": "actual slope-normal hitch height minus target",
+    "rickshaw.pitch_error": "actual path-frame pitch minus alpha_target",
+    "rickshaw.hitch_height_error": "actual world-vertical hitch height minus target",
     "rickshaw.two_wheel_contact_rate": "samples where both wheel normal forces pass the safety threshold",
     "rickshaw.wheel_normal_force": "per-wheel force percentiles",
-    "locomotion.foot_slip": "summed slope-plane speed of contacting feet",
+    "locomotion.foot_slip": "summed ground-plane speed of contacting feet",
     "actions.processed_rate": "RMS joint norm of (q_t-q_t-1)/policy_dt",
     "actions.processed_jerk": "RMS joint norm of (q_t-2q_t-1+q_t-2)/policy_dt^2",
     "actuation.power": "sum(abs(actuator_force * joint_velocity)) over the 29 policy joints",
@@ -62,7 +55,7 @@ METRIC_DEFINITIONS: Final[dict[str, str]] = {
         "minimum per-environment 1-|actuator_force|/current actuator.effort_limit"
     ),
     "distillation.teacher_student_action_kl": "KL(teacher Gaussian || student Gaussian), summed over 29 actions",
-    "curriculum.distribution": "policy-sample histogram for training stage and slope",
+    "curriculum.distribution": "policy-sample histogram for training stage",
     "stratified": (
         "full metric reductions under the deterministic 0->1->0 m/s command protocol "
         "over the single training distribution"
@@ -89,36 +82,20 @@ def connection_wrench_channels(wrench: torch.Tensor) -> dict[str, torch.Tensor]:
     }
 
 
-def slope_label(slope: float) -> str:
-    """Return an unambiguous, stable JSON key for one signed gradient."""
-
-    return f"{float(slope):+.2f}"
-
-
 def command_phase_labels(
     v_ref: Any,
-    a_ref: Any,
     *,
     velocity_epsilon: float = 1.0e-3,
-    acceleration_epsilon: float = 1.0e-3,
 ) -> list[str]:
-    """Classify deployable speed-reference samples without using ``v_sample``."""
+    """Classify direct Mjlab-style speed commands as standing or moving."""
 
-    if velocity_epsilon < 0.0 or acceleration_epsilon < 0.0:
-        raise ValueError("command phase epsilons must be non-negative")
+    if velocity_epsilon < 0.0:
+        raise ValueError("command phase epsilon must be non-negative")
     velocity = np.asarray(v_ref, dtype=np.float64)
-    acceleration = np.asarray(a_ref, dtype=np.float64)
-    if velocity.ndim != 1 or acceleration.shape != velocity.shape:
-        raise ValueError("v_ref and a_ref must be one-dimensional arrays with equal shape")
-    if not np.all(np.isfinite(velocity)) or not np.all(np.isfinite(acceleration)):
-        raise ValueError("v_ref and a_ref must be finite")
-    labels = np.full(velocity.shape, "cruising", dtype=object)
-    standing = (np.abs(velocity) <= velocity_epsilon) & (
-        np.abs(acceleration) <= acceleration_epsilon
-    )
-    labels[standing] = "standing"
-    labels[acceleration > acceleration_epsilon] = "accelerating"
-    labels[acceleration < -acceleration_epsilon] = "decelerating"
+    if velocity.ndim != 1 or not np.all(np.isfinite(velocity)):
+        raise ValueError("v_ref must be a finite one-dimensional array")
+    labels = np.full(velocity.shape, "moving", dtype=object)
+    labels[np.abs(velocity) <= velocity_epsilon] = "standing"
     return labels.tolist()
 
 
@@ -128,8 +105,6 @@ def validate_stratified_summary(value: Any, *, label: str = "stratified") -> Non
     if not isinstance(value, Mapping) or set(value) != {
         "by_phase",
         "by_cross_case",
-        "by_slope_phase",
-        "by_slope_cross_case",
     }:
         raise ValueError(f"{label} must contain the exact stratified reductions")
 
@@ -167,27 +142,11 @@ def validate_stratified_summary(value: Any, *, label: str = "stratified") -> Non
         CROSS_CASE_LABELS,
         leaf_label=f"{label}.by_cross_case",
     )
-    slope_labels = tuple(slope_label(slope) for slope in SIGNED_SLOPES)
-    for key, inner_labels in (
-        ("by_slope_phase", COMMAND_PHASE_LABELS),
-        ("by_slope_cross_case", CROSS_CASE_LABELS),
-    ):
-        raw = value[key]
-        if not isinstance(raw, Mapping) or set(raw) != set(slope_labels):
-            raise ValueError(
-                f"{label}.{key} does not contain the exact {len(SIGNED_SLOPES)} slopes"
-            )
-        for slope in slope_labels:
-            validate_leaves(
-                raw[slope], inner_labels, leaf_label=f"{label}.{key}.{slope}"
-            )
-
-
 def validate_s1_baseline_diagnostic_report(
     report: Any,
     *,
     fixed_seeds: Sequence[int],
-    episodes_per_slope: int,
+    episodes_per_stage: int,
 ) -> dict[str, float]:
     """Validate an S1 return baseline used for an S2 diagnostic comparison."""
 
@@ -211,16 +170,16 @@ def validate_s1_baseline_diagnostic_report(
     evaluation = report.get("evaluation")
     expected_seeds = list(fixed_seeds)
     if (
-        isinstance(episodes_per_slope, bool)
-        or not isinstance(episodes_per_slope, int)
-        or episodes_per_slope <= 0
+        isinstance(episodes_per_stage, bool)
+        or not isinstance(episodes_per_stage, int)
+        or episodes_per_stage <= 0
         or not expected_seeds
         or any(
             isinstance(seed, bool) or not isinstance(seed, int)
             for seed in expected_seeds
         )
         or len(set(expected_seeds)) != len(expected_seeds)
-        or episodes_per_slope
+        or episodes_per_stage
         % (len(expected_seeds) * len(CROSS_CASE_LABELS))
         != 0
     ):
@@ -228,15 +187,13 @@ def validate_s1_baseline_diagnostic_report(
             "S1/S2 diagnostic episode quota must be positive and divisible "
             "by the number of fixed seeds and cross cases"
         )
-    expected_slopes = list(SIGNED_SLOPES)
     curriculum_stages = evaluation.get("curriculum_stages") if isinstance(evaluation, Mapping) else None
     num_envs = evaluation.get("num_envs") if isinstance(evaluation, Mapping) else None
     if (
         not isinstance(evaluation, Mapping)
         or evaluation.get("deterministic_actions") is not True
         or evaluation.get("fixed_seeds") != expected_seeds
-        or evaluation.get("signed_slopes") != expected_slopes
-        or evaluation.get("episodes_per_slope_per_stage") != episodes_per_slope
+        or evaluation.get("episodes_per_stage") != episodes_per_stage
         or isinstance(num_envs, bool)
         or not isinstance(num_envs, int)
         or num_envs <= 0
@@ -247,12 +204,11 @@ def validate_s1_baseline_diagnostic_report(
         or not isinstance(curriculum_stages, (list, tuple))
         or list(curriculum_stages) != ["training"]
     ):
-        raise ValueError("S1 baseline report does not use the exact S2 seeds/slopes/episode quota")
+        raise ValueError("S1 baseline report does not use the exact S2 seeds and episode quota")
 
     stages = report.get("stages")
     if not isinstance(stages, Mapping):
         raise ValueError("S1 baseline report is missing curriculum-stage results")
-    expected_labels = {slope_label(slope) for slope in SIGNED_SLOPES}
     returns: dict[str, float] = {}
     for stage_name in ("training",):
         stage_report = stages.get(stage_name)
@@ -261,18 +217,6 @@ def validate_s1_baseline_diagnostic_report(
         validate_stratified_summary(
             stage_report.get("stratified"), label=f"S1 {stage_name}.stratified"
         )
-        per_slope = stage_report.get("per_slope")
-        if not isinstance(per_slope, Mapping) or set(per_slope) != expected_labels:
-            raise ValueError(
-                f"S1 {stage_name} report does not contain the exact {len(SIGNED_SLOPES)} slopes"
-            )
-        for label, slope_report in per_slope.items():
-            episodes = slope_report.get("episodes") if isinstance(slope_report, Mapping) else None
-            count = episodes.get("completed") if isinstance(episodes, Mapping) else None
-            if isinstance(count, bool) or not isinstance(count, int) or count < episodes_per_slope:
-                raise ValueError(
-                    f"S1 {stage_name} slope {label} has fewer than {episodes_per_slope} episodes"
-                )
         baseline = stage_report.get("return")
         if not isinstance(baseline, Mapping):
             raise ValueError(f"S1 {stage_name} report has no baseline return")
@@ -280,19 +224,9 @@ def validate_s1_baseline_diagnostic_report(
         if (
             isinstance(baseline_episodes, bool)
             or not isinstance(baseline_episodes, int)
-            or baseline_episodes < len(SIGNED_SLOPES) * episodes_per_slope
+            or baseline_episodes < episodes_per_stage
         ):
             raise ValueError(f"S1 {stage_name} baseline return episode quota is incomplete")
-        per_slope_mean = baseline.get("per_slope_mean")
-        if not isinstance(per_slope_mean, Mapping) or set(per_slope_mean) != expected_labels:
-            raise ValueError(f"S1 {stage_name} baseline return is missing per-slope means")
-        if any(
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            for value in per_slope_mean.values()
-        ):
-            raise ValueError(f"S1 {stage_name} baseline contains a non-finite per-slope return")
         mean = baseline.get("mean")
         if isinstance(mean, bool) or not isinstance(mean, (int, float)) or not math.isfinite(mean):
             raise ValueError(f"S1 {stage_name} baseline mean return is not finite")
@@ -373,7 +307,7 @@ def _percentiles(values: np.ndarray) -> dict[str, float | None]:
 
 @dataclass
 class MetricStore:
-    """Chunked sample/episode store used by global and per-slope reductions."""
+    """Chunked sample/episode store used by evaluation reductions."""
 
     chunks: dict[str, list[np.ndarray]] = field(default_factory=lambda: defaultdict(list))
     non_finite_counts: Counter[str] = field(default_factory=Counter)
@@ -384,7 +318,6 @@ class MetricStore:
         default_factory=lambda: {
             "stage": Counter(),
             "cross_case": Counter(),
-            "slope": Counter(),
         }
     )
 
@@ -510,20 +443,11 @@ class MetricStore:
 
 @dataclass
 class PolicyEvaluationAccumulator:
-    """Global plus complete per-slope metric aggregation."""
+    """Global metrics with command-phase and randomization reductions."""
 
     global_store: MetricStore = field(default_factory=MetricStore)
-    slope_stores: tuple[MetricStore, ...] = field(
-        default_factory=lambda: tuple(MetricStore() for _ in SIGNED_SLOPES)
-    )
     phase_stores: dict[str, MetricStore] = field(default_factory=dict)
     cross_case_stores: dict[str, MetricStore] = field(default_factory=dict)
-    slope_phase_stores: tuple[dict[str, MetricStore], ...] = field(
-        default_factory=lambda: tuple({} for _ in SIGNED_SLOPES)
-    )
-    slope_cross_case_stores: tuple[dict[str, MetricStore], ...] = field(
-        default_factory=lambda: tuple({} for _ in SIGNED_SLOPES)
-    )
 
     @staticmethod
     def _add_labeled_samples(
@@ -541,30 +465,23 @@ class PolicyEvaluationAccumulator:
     def add_step(
         self,
         samples: Mapping[str, Any],
-        slope_indices: Any,
         *,
         stage_labels: Sequence[str] | None = None,
         cross_case_labels: Sequence[str] | None = None,
         phase_labels: Sequence[str] | None = None,
     ) -> None:
-        indices = np.asarray(slope_indices, dtype=np.int64)
-        if indices.ndim != 1 or np.any(indices < 0) or np.any(indices >= len(SIGNED_SLOPES)):
-            raise ValueError(
-                "slope_indices must be a 1-D array in "
-                f"[0, {len(SIGNED_SLOPES) - 1}]"
-            )
         vectors = {name: _as_vector(value, name) for name, value in samples.items()}
-        if any(value.size != indices.size for value in vectors.values()):
-            raise ValueError("sample arrays and slope_indices must have equal length")
+        sizes = {value.size for value in vectors.values()}
+        if len(sizes) != 1:
+            raise ValueError("sample arrays must have equal length")
+        batch_size = sizes.pop() if sizes else 0
         self.global_store.add_samples(vectors)
-        slope_names = [slope_label(SIGNED_SLOPES[index]) for index in indices]
-        self.global_store.add_curriculum("slope", slope_names)
         if stage_labels is not None:
-            if len(stage_labels) != indices.size:
+            if len(stage_labels) != batch_size:
                 raise ValueError("stage labels have the wrong length")
             self.global_store.add_curriculum("stage", stage_labels)
         if cross_case_labels is not None:
-            if len(cross_case_labels) != indices.size:
+            if len(cross_case_labels) != batch_size:
                 raise ValueError("cross-case labels have the wrong length")
             self.global_store.add_curriculum("cross_case", cross_case_labels)
             unknown = sorted(set(cross_case_labels) - set(CROSS_CASE_LABELS))
@@ -572,42 +489,14 @@ class PolicyEvaluationAccumulator:
                 raise ValueError(f"unknown cross-case labels: {unknown}")
             self._add_labeled_samples(self.cross_case_stores, cross_case_labels, vectors)
         if phase_labels is not None:
-            if len(phase_labels) != indices.size:
+            if len(phase_labels) != batch_size:
                 raise ValueError("command-phase labels have the wrong length")
             unknown = sorted(set(phase_labels) - set(COMMAND_PHASE_LABELS))
             if unknown:
                 raise ValueError(f"unknown command-phase labels: {unknown}")
             self._add_labeled_samples(self.phase_stores, phase_labels, vectors)
-        for slope_index, store in enumerate(self.slope_stores):
-            selected = indices == slope_index
-            if np.any(selected):
-                selected_vectors = {
-                    name: value[selected] for name, value in vectors.items()
-                }
-                store.add_samples(selected_vectors)
-                store.add_curriculum("slope", [slope_label(SIGNED_SLOPES[slope_index])] * int(selected.sum()))
-                if stage_labels is not None:
-                    labels = np.asarray(stage_labels, dtype=object)[selected].tolist()
-                    store.add_curriculum("stage", labels)
-                if cross_case_labels is not None:
-                    labels = np.asarray(cross_case_labels, dtype=object)[selected].tolist()
-                    store.add_curriculum("cross_case", labels)
-                    self._add_labeled_samples(
-                        self.slope_cross_case_stores[slope_index],
-                        labels,
-                        selected_vectors,
-                    )
-                if phase_labels is not None:
-                    labels = np.asarray(phase_labels, dtype=object)[selected].tolist()
-                    self._add_labeled_samples(
-                        self.slope_phase_stores[slope_index],
-                        labels,
-                        selected_vectors,
-                    )
-
     def add_episode(
         self,
-        slope_index: int,
         episode_return: float,
         *,
         fell: bool,
@@ -615,8 +504,6 @@ class PolicyEvaluationAccumulator:
         phase_labels: Sequence[str],
         cross_case_label: str,
     ) -> None:
-        if not 0 <= slope_index < len(SIGNED_SLOPES):
-            raise ValueError("invalid slope index")
         observed_phases = tuple(dict.fromkeys(str(label) for label in phase_labels))
         if not observed_phases:
             raise ValueError("episode must contain at least one command phase")
@@ -626,26 +513,16 @@ class PolicyEvaluationAccumulator:
         if cross_case_label not in CROSS_CASE_LABELS:
             raise ValueError(f"unknown cross-case label {cross_case_label!r}")
         self.global_store.add_episode(episode_return, fell=fell, causes=causes)
-        self.slope_stores[slope_index].add_episode(episode_return, fell=fell, causes=causes)
         for phase_label in observed_phases:
             self.phase_stores.setdefault(phase_label, MetricStore()).add_episode(
                 episode_return, fell=fell, causes=causes
             )
-            self.slope_phase_stores[slope_index].setdefault(
-                phase_label, MetricStore()
-            ).add_episode(episode_return, fell=fell, causes=causes)
         self.cross_case_stores.setdefault(cross_case_label, MetricStore()).add_episode(
             episode_return, fell=fell, causes=causes
         )
-        self.slope_cross_case_stores[slope_index].setdefault(
-            cross_case_label, MetricStore()
-        ).add_episode(episode_return, fell=fell, causes=causes)
 
-    def summary(self) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-        return self.global_store.summary(), {
-            slope_label(slope): self.slope_stores[index].summary()
-            for index, slope in enumerate(SIGNED_SLOPES)
-        }
+    def summary(self) -> dict[str, Any]:
+        return self.global_store.summary()
 
     def stratified_summary(self) -> dict[str, Any]:
         def summarize(
@@ -659,18 +536,6 @@ class PolicyEvaluationAccumulator:
         return {
             "by_phase": summarize(self.phase_stores, COMMAND_PHASE_LABELS),
             "by_cross_case": summarize(self.cross_case_stores, CROSS_CASE_LABELS),
-            "by_slope_phase": {
-                slope_label(slope): summarize(
-                    self.slope_phase_stores[index], COMMAND_PHASE_LABELS
-                )
-                for index, slope in enumerate(SIGNED_SLOPES)
-            },
-            "by_slope_cross_case": {
-                slope_label(slope): summarize(
-                    self.slope_cross_case_stores[index], CROSS_CASE_LABELS
-                )
-                for index, slope in enumerate(SIGNED_SLOPES)
-            },
         }
 
 
@@ -682,13 +547,11 @@ __all__ = [
     "GUIDE_POLICY_EVALUATION_TASK",
     "METRIC_DEFINITIONS",
     "POLICY_DIAGNOSTIC_SCHEMA_VERSION",
-    "SIGNED_SLOPES",
     "MetricStore",
     "PolicyEvaluationAccumulator",
     "command_phase_labels",
     "connection_wrench_channels",
     "evaluate_s2_return_floor",
-    "slope_label",
     "validate_s1_baseline_diagnostic_report",
     "validate_stratified_summary",
 ]

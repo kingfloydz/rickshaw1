@@ -10,7 +10,6 @@ from pathlib import Path
 
 import mujoco
 
-from g1_rickshaw_lab.project_paths import ASSET_ROOT
 from g1_rickshaw_lab.g1_motor_defaults import (
     ARMATURE_4010,
     ARMATURE_5020,
@@ -30,6 +29,7 @@ from g1_rickshaw_lab.g1_motor_defaults import (
     STIFFNESS_7520_14,
     STIFFNESS_7520_22,
 )
+from g1_rickshaw_lab.project_paths import ASSET_ROOT
 
 from .mujoco_spec import (
     GROUND_COLLISION_BIT,
@@ -41,14 +41,13 @@ from .mujoco_spec import (
 
 G1_DEX1_ASSET_DIR = ASSET_ROOT / "g1_dex1"
 G1_DEX1_URDF_PATH = G1_DEX1_ASSET_DIR / "g1_29dof_mode_15_with_dex1_1.urdf"
-G1_DEX1_URDF = str(G1_DEX1_URDF_PATH)
 
 G1_DOF_COUNT = 29
-COMBINED_DOF_COUNT = G1_DOF_COUNT
 G1_TOTAL_MASS = 34.1299349
 FIXED_GRIP_POSITION = -0.01609
 GRASP_SITE_X = 0.11066269
 GRASP_SITE_NAMES = ("left_grasp_site", "right_grasp_site")
+FOOT_SITE_NAMES = ("left_foot", "right_foot")
 GRIPPER_BODY_NAMES = (
     "left_dex1_base_link",
     "left_dex1_finger_link_1",
@@ -62,6 +61,24 @@ LOWER_JOINT_PATTERN = r".*_(hip|knee|ankle)_.*"
 WAIST_JOINT_PATTERN = r"waist_.*_joint"
 ARM_JOINT_PATTERN = r".*_(shoulder|elbow|wrist)_.*"
 EXPECTED_GROUP_COUNTS = {"lower": 12, "waist": 3, "arm": 14}
+
+G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS = {
+    "left_hip_pitch_joint": -0.1,
+    "left_hip_roll_joint": 0.0,
+    "left_hip_yaw_joint": 0.0,
+    "left_knee_joint": 0.3,
+    "left_ankle_pitch_joint": -0.2,
+    "left_ankle_roll_joint": 0.0,
+    "right_hip_pitch_joint": -0.1,
+    "right_hip_roll_joint": 0.0,
+    "right_hip_yaw_joint": 0.0,
+    "right_knee_joint": 0.3,
+    "right_ankle_pitch_joint": -0.2,
+    "right_ankle_roll_joint": 0.0,
+    "waist_yaw_joint": 0.0,
+    "waist_roll_joint": 0.0,
+    "waist_pitch_joint": 0.0,
+}
 
 class AssetValidationError(ValueError):
     """Raised when the fixed-gripper G1 asset violates its contract."""
@@ -119,10 +136,6 @@ def partition_joint_names(joint_names: Iterable[str]) -> JointPartition:
     )
 
 
-def partition_articulation_joints(robot) -> JointPartition:
-    return partition_joint_names(robot.joint_names)
-
-
 def validate_g1_urdf(path: str | Path = G1_DEX1_URDF_PATH) -> tuple[str, ...]:
     """Validate 29 DoF and the calibrated, zero-DoF gripper posture."""
 
@@ -154,7 +167,7 @@ def validate_g1_urdf(path: str | Path = G1_DEX1_URDF_PATH) -> tuple[str, ...]:
 
 
 def get_g1_spec() -> mujoco.MjSpec:
-    """Build the floating G1 spec and its two calibrated grasp sites."""
+    """Build the floating G1 spec with task sites and sensors."""
 
     issues = validate_g1_urdf()
     if issues:
@@ -191,6 +204,22 @@ def get_g1_spec() -> mujoco.MjSpec:
             quat=quat,
             rgba=(0.0, 0.0, 0.0, 0.0),
         )
+    for body_name, site_name in zip(
+        ("left_ankle_roll_link", "right_ankle_roll_link"),
+        FOOT_SITE_NAMES,
+        strict=True,
+    ):
+        spec.body(body_name).add_site(
+            name=site_name,
+            pos=(0.04, 0.0, -0.037),
+            rgba=(1.0, 0.0, 0.0, 1.0),
+        )
+    spec.add_sensor(
+        name="root_angmom",
+        type=mujoco.mjtSensor.mjSENS_SUBTREEANGMOM,
+        objtype=mujoco.mjtObj.mjOBJ_BODY,
+        objname="pelvis",
+    )
     return spec
 
 
@@ -281,11 +310,9 @@ def get_g1_robot_cfg():
         spec_fn=get_g1_spec,
         sort_actuators=True,
         init_state=EntityCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.72),
+            pos=(0.0, 0.0, 0.8),
             joint_pos={
-                r".*_hip_pitch_joint": -0.32,
-                r".*_knee_joint": 0.92,
-                r".*_ankle_pitch_joint": -0.34,
+                **G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS,
                 r".*_shoulder_pitch_joint": 0.35,
                 r"left_shoulder_roll_joint": -0.08,
                 r"right_shoulder_roll_joint": 0.08,
@@ -299,35 +326,23 @@ def get_g1_robot_cfg():
     )
 
 
-build_g1_rickshaw_cfg = get_g1_robot_cfg
-G1_RICKSHAW_CFG = None
-
-
-def missing_g1_dex1_assets() -> tuple[Path, ...]:
-    return () if G1_DEX1_URDF_PATH.is_file() else (G1_DEX1_URDF_PATH,)
-
-
 __all__ = [
     "AssetValidationError",
-    "COMBINED_DOF_COUNT",
     "FIXED_GRIP_POSITION",
-    "G1_DEX1_URDF",
+    "FOOT_SITE_NAMES",
     "G1_DEX1_URDF_PATH",
     "G1_DOF_COUNT",
+    "G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS",
     "G1_JOINT_ARMATURE",
     "G1_JOINT_DAMPING",
     "G1_JOINT_EFFORT_LIMITS",
     "G1_JOINT_STIFFNESS",
-    "G1_RICKSHAW_CFG",
     "G1_TOTAL_MASS",
     "GRASP_SITE_NAMES",
     "JointPartition",
     "add_g1_position_actuators",
-    "build_g1_rickshaw_cfg",
     "get_g1_robot_cfg",
     "get_g1_spec",
-    "missing_g1_dex1_assets",
-    "partition_articulation_joints",
     "partition_joint_names",
     "validate_g1_urdf",
 ]

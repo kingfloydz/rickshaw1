@@ -7,7 +7,6 @@ before returning an object that can be used by training or deployment code.
 Canonical ``feasibility_envelope.yaml`` layout::
 
     schema_version: 2
-    slopes: [-0.08, ..., 0.0, ..., 0.10]
     joint_order: [29 exact G1 joint names]
     ranges:
       payload.mass: {min: -3.0, max: 3.0}
@@ -31,10 +30,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from .slope_contract import SLOPE_GRADIENTS
-
-FEASIBILITY_SCHEMA_VERSION = 1
-SLOPE_MATCH_TOLERANCE = 1.0e-9
+FEASIBILITY_SCHEMA_VERSION = 2
 
 # This is the source-URDF order after applying the guide's one-time grouping
 # rule: lower_names + waist_names + arm_names.  Runtime regex ordering is never
@@ -70,13 +66,6 @@ G1_JOINT_ORDER = (
     "right_wrist_pitch_joint",
     "right_wrist_yaw_joint",
 )
-FIXED_G1_JOINT_ORDER = G1_JOINT_ORDER
-
-# Continuous hardware limits in policy-joint order.
-LOWER_HARDWARE_EFFORT_LIMITS = (88.0, 139.0, 88.0, 139.0, 50.0, 50.0) * 2
-WAIST_HARDWARE_EFFORT_LIMITS = (88.0, 50.0, 50.0)
-ARM_HARDWARE_EFFORT_LIMITS = (25.0, 25.0, 25.0, 25.0, 25.0, 5.0, 5.0) * 2
-
 # Marginal bounds produced by the feasibility scan for runtime domain parameters.
 REQUIRED_FEASIBILITY_RANGES = (
     "torso.mass_delta",
@@ -88,8 +77,6 @@ REQUIRED_FEASIBILITY_RANGES = (
     "terrain.friction",
     "wheel.left_damping",
     "wheel.right_damping",
-    "command.acceleration_limit",
-    "command.jerk_limit",
 )
 
 # Values that the guide explicitly leaves MISSING until asset inspection,
@@ -97,7 +84,6 @@ REQUIRED_FEASIBILITY_RANGES = (
 # Vector lengths are validated below; scalar fields must be finite.
 REQUIRED_CALIBRATION_FIELDS = (
     "rickshaw.pitch_inertia_about_axle",
-    "rickshaw_pose.hitch_height_target",
     "rickshaw_pose.hitch_height_tolerance",
     "rickshaw_pose.hitch_vertical_speed_tolerance",
     "rolling_resistance.c_rr_nominal",
@@ -123,7 +109,6 @@ _CALIBRATION_VECTOR_LENGTHS = {
 _CALIBRATION_STRICTLY_POSITIVE = frozenset(
     {
         "rickshaw.pitch_inertia_about_axle",
-        "rickshaw_pose.hitch_height_target",
         "rickshaw_pose.hitch_height_tolerance",
         "rickshaw_pose.hitch_vertical_speed_tolerance",
         "rolling_resistance.c_rr_nominal",
@@ -224,27 +209,6 @@ def validate_joint_order(joint_order: Iterable[str], *, path: str = "joint_order
         index, expected, actual = mismatch
         raise ConfigurationContractError(f"{path}[{index}] is {actual!r}; fixed checkpoint order requires {expected!r}")
     return names
-
-
-def _validate_required_slopes(values: Any, path: str = "slopes") -> tuple[float, ...]:
-    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
-        raise ConfigurationContractError(f"{path} must be a sequence")
-    slopes = tuple(_finite_float(value, f"{path}[{index}]") for index, value in enumerate(values))
-    if len(slopes) != len(SLOPE_GRADIENTS):
-        raise ConfigurationContractError(
-            f"{path} must contain exactly {len(SLOPE_GRADIENTS)} gradients, got {len(slopes)}"
-        )
-    for expected in SLOPE_GRADIENTS:
-        matches = [
-            index
-            for index, actual in enumerate(slopes)
-            if math.isclose(actual, expected, rel_tol=0.0, abs_tol=SLOPE_MATCH_TOLERANCE)
-        ]
-        if len(matches) != 1:
-            raise ConfigurationContractError(
-                f"{path} requires exactly one occurrence of gradient {expected}; found {len(matches)}"
-            )
-    return SLOPE_GRADIENTS
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,7 +352,6 @@ class FeasibilityEnvelope:
 
     ranges: Mapping[str, NumericRange]
     calibration: Mapping[str, Any]
-    slopes: tuple[float, ...] = SLOPE_GRADIENTS
     joint_order: tuple[str, ...] = G1_JOINT_ORDER
     schema_version: int = FEASIBILITY_SCHEMA_VERSION
     source_path: Path | None = None
@@ -402,7 +365,6 @@ class FeasibilityEnvelope:
             raise ConfigurationContractError(
                 f"unsupported feasibility schema_version={self.schema_version!r}; expected {FEASIBILITY_SCHEMA_VERSION}"
             )
-        slopes = _validate_required_slopes(self.slopes)
         joint_order = validate_joint_order(self.joint_order)
         parsed_ranges = {
             name: NumericRange.from_value(value, path=f"ranges.{name}") for name, value in self.ranges.items()
@@ -417,8 +379,6 @@ class FeasibilityEnvelope:
             "terrain.friction",
             "wheel.left_damping",
             "wheel.right_damping",
-            "command.acceleration_limit",
-            "command.jerk_limit",
         ):
             if parsed_ranges[name].minimum <= 0.0:
                 raise ConfigurationContractError(f"ranges.{name}.min must be positive")
@@ -430,7 +390,6 @@ class FeasibilityEnvelope:
                 raise ConfigurationContractError(
                     f"calibration.{calibration_name}={nominal} lies outside ranges.{range_name}"
                 )
-        object.__setattr__(self, "slopes", slopes)
         object.__setattr__(self, "joint_order", joint_order)
         object.__setattr__(self, "ranges", MappingProxyType(parsed_ranges))
         object.__setattr__(self, "calibration", calibration)
@@ -444,14 +403,13 @@ class FeasibilityEnvelope:
         data = _expect_mapping(mapping, "feasibility envelope")
         _expect_exact_keys(
             data,
-            {"schema_version", "slopes", "joint_order", "ranges", "calibration"},
+            {"schema_version", "joint_order", "ranges", "calibration"},
             "feasibility envelope",
         )
         ranges = _flatten_interval_mapping(_expect_mapping(data["ranges"], "ranges"), allow_scalars=False)
         calibration = _expect_mapping(data["calibration"], "calibration")
         return cls(
             schema_version=data["schema_version"],
-            slopes=data["slopes"],
             joint_order=data["joint_order"],
             ranges=ranges,
             calibration=calibration,
@@ -461,7 +419,6 @@ class FeasibilityEnvelope:
     def to_mapping(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
-            "slopes": list(self.slopes),
             "joint_order": list(self.joint_order),
             "ranges": {name: self.ranges[name].to_mapping() for name in REQUIRED_FEASIBILITY_RANGES},
             "calibration": {
@@ -571,18 +528,13 @@ def assert_sampling_ranges_within_envelope(
 __all__ = [
     "ConfigurationContractError",
     "ConfigurationDependencyError",
-    "ARM_HARDWARE_EFFORT_LIMITS",
     "FEASIBILITY_SCHEMA_VERSION",
-    "FIXED_G1_JOINT_ORDER",
     "FeasibilityEnvelope",
     "G1_JOINT_ORDER",
-    "LOWER_HARDWARE_EFFORT_LIMITS",
     "NumericRange",
     "REQUIRED_CALIBRATION_FIELDS",
     "REQUIRED_FEASIBILITY_RANGES",
-    "SLOPE_GRADIENTS",
     "assert_sampling_ranges_within_envelope",
     "load_feasibility_envelope",
-    "WAIST_HARDWARE_EFFORT_LIMITS",
     "validate_joint_order",
 ]

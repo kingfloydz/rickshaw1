@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import torch
 
 from g1_rickshaw_lab.policy_schema import (
@@ -12,14 +13,12 @@ from g1_rickshaw_lab.policy_schema import (
     TEACHER_STATIC_DIM,
     validate_history_length,
 )
-from g1_rickshaw_lab.slope_contract import SLOPE_GRADIENTS
 
 from .actions import ACTION_DIM
-from .rewards import GAIT_PERIOD_S
 
-TEACHER_STATIC_DOMAIN_DIM = TEACHER_STATIC_DIM - 1
-SLOPE_LOWER = min(SLOPE_GRADIENTS)
-SLOPE_UPPER = max(SLOPE_GRADIENTS)
+GAIT_PERIOD_S = 1.0
+
+TEACHER_STATIC_DOMAIN_DIM = TEACHER_STATIC_DIM
 
 BASE_ANGULAR_VELOCITY_SLICE = slice(0, 3)
 PROJECTED_GRAVITY_SLICE = slice(3, 6)
@@ -58,7 +57,6 @@ TEACHER_STATIC_FEATURE_NAMES = (
     "terrain.friction",
     "wheel.left_damping",
     "wheel.right_damping",
-    "terrain.slope",
 )
 TEACHER_DYNAMIC_FEATURE_NAMES = (
     "robot.velocity.s",

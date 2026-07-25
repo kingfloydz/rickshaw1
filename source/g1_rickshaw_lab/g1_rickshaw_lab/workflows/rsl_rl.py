@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import time
-from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -21,15 +20,11 @@ class PlayOptions:
     export_policy: bool = True
     export_only: bool = False
     follow_robot_camera: bool = False
-    slope_frames: int | None = None
     video_name_prefix: str = "rl-video"
-    video_segment_callback: Callable[[Path, int], None] | None = None
 
     def __post_init__(self) -> None:
         if self.export_only and not self.export_policy:
             raise ValueError("export_only requires export_policy")
-        if self.slope_frames is not None and self.slope_frames <= 0:
-            raise ValueError("slope_frames must be positive")
 
 
 class _JsonlSummaryWriter:
@@ -159,8 +154,9 @@ def run_rsl_rl(
 
 
 def _load_configs(args: argparse.Namespace, overrides: list[str], *, play: bool):
-    import g1_rickshaw_lab.tasks  # noqa: F401
     from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
+
+    import g1_rickshaw_lab.tasks  # noqa: F401
 
     env_cfg = load_env_cfg(args.task, play=play)
     agent_cfg = load_rl_cfg(args.task)
@@ -259,12 +255,8 @@ def _run_play(
         video_recorder = VideoRecorder(
             env,
             video_folder=video_dir,
-            step_trigger=(lambda step: step == 0)
-            if options.slope_frames is None
-            else (lambda step: step % options.slope_frames == 0),
-            video_length=args.video_length
-            if options.slope_frames is None
-            else options.slope_frames,
+            step_trigger=lambda step: step == 0,
+            video_length=args.video_length,
             name_prefix=options.video_name_prefix,
             disable_logger=True,
         )
@@ -283,20 +275,12 @@ def _run_play(
         return
     if args.video:
         obs = wrapped.get_observations()
-        for step in range(args.video_length):
+        for _step in range(args.video_length):
             start = time.time()
             with torch.inference_mode():
                 action = policy(obs)
                 obs, _, dones, _ = wrapped.step(action)
                 policy.reset(dones)
-            if options.slope_frames and options.video_segment_callback and (step + 1) % options.slope_frames == 0:
-                if video_recorder is None or video_recorder.is_recording:
-                    raise RuntimeError("video segment callback ran before the MP4 was finalized")
-                segment = (step + 1) // options.slope_frames - 1
-                raw = video_recorder.video_folder / (
-                    f"{options.video_name_prefix}-step-{segment * options.slope_frames}.mp4"
-                )
-                options.video_segment_callback(raw, segment)
             if args.real_time:
                 time.sleep(max(0.0, wrapped.unwrapped.step_dt - (time.time() - start)))
     else:

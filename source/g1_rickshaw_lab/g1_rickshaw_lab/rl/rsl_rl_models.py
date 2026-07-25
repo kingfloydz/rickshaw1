@@ -1,4 +1,4 @@
-"""RSL-RL 5.0.1 adapters for the fixed rickshaw policy architecture."""
+"""RSL-RL 5.4.0 adapters for the fixed rickshaw policy architecture."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ from g1_rickshaw_lab.policy_schema import (
     BUTTERWORTH_B1,
     DEFAULT_CONTEXT_DIM,
     HISTORY_LENGTH,
-    validate_history_length,
     validate_context_dim,
+    validate_history_length,
 )
 
 from .actor_critic import (
@@ -36,7 +36,7 @@ def _require_rsl_rl() -> None:
         import rsl_rl  # noqa: F401
         import tensordict  # noqa: F401
     except ModuleNotFoundError as exc:
-        raise RuntimeError("RSL-RL adapters require rsl-rl-lib==5.0.1 and tensordict") from exc
+        raise RuntimeError("RSL-RL adapters require rsl-rl-lib==5.4.0 and tensordict") from exc
 
 
 class _RslModelContract(nn.Module):

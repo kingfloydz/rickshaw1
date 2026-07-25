@@ -101,7 +101,12 @@ def validate_assembled_model(model: mujoco.MjModel) -> tuple[str, ...]:
     tow_rods = {
         f"rickshaw/{name}" for name in TOW_ROD_COLLISION_GEOM_NAMES
     }
-    if {geom_names[index] for index in rickshaw_geoms if model.geom_conaffinity[index] == ROBOT_COLLISION_BIT} != tow_rods:
+    colliding_with_robot = {
+        geom_names[index]
+        for index in rickshaw_geoms
+        if model.geom_conaffinity[index] == ROBOT_COLLISION_BIT
+    }
+    if colliding_with_robot != tow_rods:
         issues.append("only the two tow-rod geoms may collide with G1")
     for robot_geom in robot_geoms:
         for rickshaw_geom in rickshaw_geoms:

@@ -12,8 +12,8 @@ from g1_rickshaw_lab.policy_schema import (
     ACTOR_OBSERVATION_DIM,
     DEFAULT_CONTEXT_DIM,
     HISTORY_LENGTH,
-    validate_history_length,
     validate_context_dim,
+    validate_history_length,
 )
 
 OBSERVATION_DIM: Final[int] = ACTOR_OBSERVATION_DIM

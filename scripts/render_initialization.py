@@ -16,12 +16,12 @@ if str(SOURCE_ROOT) not in sys.path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--num-envs", type=int, default=19)
+    parser.add_argument("--num-envs", type=int, default=1)
     parser.add_argument(
         "--render-env-index",
         type=int,
         default=0,
-        help="Environment slot to render; play mode maps slots 0-18 to the 19 slopes.",
+        help="Environment slot to render.",
     )
     parser.add_argument(
         "--render-env-indices",
@@ -51,18 +51,14 @@ def main() -> int:
     import torch
 
     import g1_rickshaw_lab.tasks  # noqa: F401
-    from g1_rickshaw_lab.configuration import (
-        ARM_HARDWARE_EFFORT_LIMITS,
-        G1_JOINT_ORDER,
-        LOWER_HARDWARE_EFFORT_LIMITS,
-        WAIST_HARDWARE_EFFORT_LIMITS,
-    )
+    from g1_rickshaw_lab.configuration import G1_JOINT_ORDER
+    from g1_rickshaw_lab.g1_motor_defaults import G1_JOINT_EFFORT_LIMITS
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.tasks.registry import load_env_cfg
 
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
     cfg = load_env_cfg(
-        "Mjlab-G1-Rickshaw-Directional-Slope-Student", play=True
+        "Mjlab-G1-Rickshaw-Flat-Student", play=True
     )
     cfg.scene.num_envs = args.num_envs
     cfg.viewer.env_idx = render_indices[0]
@@ -88,22 +84,17 @@ def main() -> int:
                 - cart.data.site_pos_w[:, env.hitch_site_ids],
                 dim=-1,
             )
-            joint_position = env.static_joint_position_table[env.slope_slot]
-            q_ref = env.static_q_ref_table[env.slope_slot]
+            joint_position = env.static_joint_position.expand(args.num_envs, -1)
+            actuator_target = env.static_actuator_position_target.expand(args.num_envs, -1)
             joint_reset_error = torch.abs(
                 robot.data.joint_pos[:, env.policy_joint_ids] - joint_position
             )
             joint_target_error = torch.abs(
-                robot.data.joint_pos_target[:, env.policy_joint_ids] - q_ref
+                robot.data.joint_pos_target[:, env.policy_joint_ids] - actuator_target
             )
-            effort_limit = torch.tensor(
-                LOWER_HARDWARE_EFFORT_LIMITS
-                + WAIST_HARDWARE_EFFORT_LIMITS
-                + ARM_HARDWARE_EFFORT_LIMITS,
-                device=device,
-            )
+            effort_limit = torch.tensor(G1_JOINT_EFFORT_LIMITS, device=device)
             static_torque_ratio = torch.abs(
-                env.static_actuator_torque_table[env.slope_slot]
+                env.static_actuator_torque.expand(args.num_envs, -1)
             ) / effort_limit
             actuator_torque_ratio = torch.abs(
                 robot.data.actuator_force[:, env.policy_actuator_ids]
@@ -133,7 +124,7 @@ def main() -> int:
                     torch.max(torch.abs(wheel_plane_distance - 0.3)).item()
                 ),
                 "wheel_contact_counts": contact_counts("wheel_contacts"),
-                "foot_contact_counts": contact_counts("robot_contacts"),
+                "foot_contact_counts": contact_counts("feet_ground_contact"),
                 "connection_position_error_m": connection_error.max(dim=-1).values.cpu().tolist(),
                 "connection_position_error_max_m": float(torch.max(connection_error).item()),
                 "joint_reset_error_max_rad": joint_reset_error.max(dim=-1).values.cpu().tolist(),
@@ -190,10 +181,8 @@ def main() -> int:
                     },
                     "action_dim": env.action_manager.total_action_dim,
                     "zero_action_steps": args.steps,
-                    "static_solution_count": len(env._mujoco_static_equilibria),
-                    "slopes": env.slope.detach().cpu().tolist(),
+                    "static_solution_count": 1,
                     "render_env_indices": render_indices,
-                    "rendered_slopes": [float(env.slope[index].item()) for index in render_indices],
                     "physical_metrics_before_zero_step": metrics_before_step,
                     "physical_metrics_after_zero_action_steps": metrics_after_step,
                     "reward": reward.detach().cpu().tolist(),

@@ -9,19 +9,23 @@ from dataclasses import dataclass
 class RickshawUrdfSpec:
     """Mechanical source of truth in the MuJoCo assembly frame."""
 
-    base_mass: float = 36.0
+    base_mass: float = 31.0
     base_com_x_before_shift: float = 0.7427393855133334
     center_of_mass_rearward_shift: float = 0.6427393855133334
     base_com_x: float = 0.1
-    base_inertia_diagonal: tuple[float, float, float] = (7.393572, 22.277208, 17.829456)
+    base_inertia_diagonal: tuple[float, float, float] = (
+        6.366687,
+        19.183151333333335,
+        15.353142666666665,
+    )
     wheel_mass: float = 2.0
     wheel_inertia_diagonal: tuple[float, float, float] = (0.04587720205066667, 0.09, 0.04587720205066667)
     hitch_link_mass: float = 0.02
-    total_mass: float = 40.04
+    total_mass: float = 35.04
     center_of_mass: tuple[float, float, float] = (
-        0.09157335564435565,
+        0.09037092351598175,
         0.0,
-        0.5944321827032967,
+        0.5896865105424277,
     )
     wheel_radius: float = 0.3
     wheel_width: float = 0.072548
@@ -51,10 +55,12 @@ WHEEL_JOINT_DAMPING = RICKSHAW_URDF_SPEC.wheel_joint_damping
 HITCH_X = RICKSHAW_URDF_SPEC.hitch_x
 HITCH_Z = RICKSHAW_URDF_SPEC.hitch_z
 HITCH_HALF_WIDTH = RICKSHAW_URDF_SPEC.hitch_half_width
+HITCH_HEIGHT_RANGE = (0.75, 0.95)
 
 
 __all__ = [
     "HITCH_HALF_WIDTH",
+    "HITCH_HEIGHT_RANGE",
     "HITCH_X",
     "HITCH_Z",
     "RICKSHAW_CENTER_OF_MASS",

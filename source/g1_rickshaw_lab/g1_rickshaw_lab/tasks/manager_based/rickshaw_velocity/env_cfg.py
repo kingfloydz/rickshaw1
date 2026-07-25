@@ -12,7 +12,7 @@ from g1_rickshaw_lab.project_paths import CONFIG_ROOT
 
 def _runtime_cfg(*, play: bool, history_length: int):
     from .mdp.dynamics import AnalyticForceCfg, FAT2Cfg, SupportPolygonCfg, ZMPCfg
-    from .mdp.events import DomainRandomizationCfg, SpeedCommandSamplingCfg
+    from .mdp.events import DomainRandomizationCfg
     from .mjlab_events import MjlabTaskRuntimeCfg
     from .task_spec import RickshawPoseTargetCfg
 
@@ -49,11 +49,7 @@ def _runtime_cfg(*, play: bool, history_length: int):
     )
     return MjlabTaskRuntimeCfg(
         domain=domain,
-        command=SpeedCommandSamplingCfg(maximum=1.0 if play else 0.1),
-        speed_acceleration_limit=envelope.ranges["command.acceleration_limit"].maximum,
-        speed_jerk_limit=envelope.ranges["command.jerk_limit"].maximum,
         rickshaw_pose=RickshawPoseTargetCfg(
-            hitch_height_target=calibration["rickshaw_pose.hitch_height_target"],
             hitch_height_tolerance=calibration["rickshaw_pose.hitch_height_tolerance"],
             hitch_vertical_speed_tolerance=calibration["rickshaw_pose.hitch_vertical_speed_tolerance"],
         ),
@@ -74,38 +70,47 @@ def _runtime_cfg(*, play: bool, history_length: int):
         ),
         zmp=ZMPCfg(min_ground_reaction=calibration["safety.min_ground_reaction"]),
         history_length=history_length,
-        shuffle_slopes=not play,
         play=play,
     )
 
 
 def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LENGTH):
-    """Create the full directional-slope task using mjlab 1.2 APIs."""
+    """Create the flat-ground rickshaw velocity task using mjlab 1.5.3 APIs."""
 
     from mjlab.envs import ManagerBasedRlEnvCfg
-    from mjlab.envs import mdp as envs_mdp
-    from mjlab.managers.curriculum_manager import CurriculumTermCfg
     from mjlab.managers.event_manager import EventTermCfg
     from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
     from mjlab.managers.reward_manager import RewardTermCfg
+    from mjlab.managers.scene_entity_config import SceneEntityCfg
     from mjlab.managers.termination_manager import TerminationTermCfg
     from mjlab.scene import SceneCfg
-    from mjlab.sensor import ContactMatch, ContactSensorCfg
+    from mjlab.sensor import (
+        ContactMatch,
+        ContactSensorCfg,
+        ObjRef,
+        RingPatternCfg,
+        TerrainHeightSensorCfg,
+    )
     from mjlab.sim import MujocoCfg, SimulationCfg
+    from mjlab.tasks.velocity import mdp as velocity_mdp
+    from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
     from mjlab.terrains import TerrainEntityCfg
     from mjlab.viewer import ViewerConfig
 
     from . import mjlab_mdp
     from .closed_chain import add_closed_chain_constraints
-    from .mdp.rewards import REWARD_WEIGHTS
+    from .mdp.rewards import (
+        HITCH_HEIGHT_ERROR_SCALE_M,
+        HITCH_HEIGHT_RECOVERY_DEADBAND_M,
+        HITCH_HEIGHT_RECOVERY_SCALE_M,
+    )
     from .mjlab_actions import StaticReferenceJointPositionActionCfg
     from .mjlab_events import (
         advance_mjlab_policy_state,
         initialize_mjlab_domain,
         initialize_mjlab_task,
-        reset_from_mujoco_statics,
+        reset_from_mujoco_static,
     )
-    from .terrain_cfg import make_mjlab_directional_slopes_cfg
 
     runtime = _runtime_cfg(play=play, history_length=history_length)
     observations = {
@@ -155,69 +160,193 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     events = {
         "initialize_task": EventTermCfg(func=initialize_mjlab_task, mode="startup", params={"cfg": runtime}),
         "initialize_domain": EventTermCfg(func=initialize_mjlab_domain, mode="startup", params={"cfg": runtime}),
-        "mujoco_static_reset": EventTermCfg(func=reset_from_mujoco_statics, mode="reset"),
+        "mujoco_static_reset": EventTermCfg(func=reset_from_mujoco_static, mode="reset"),
         "policy_state": EventTermCfg(func=advance_mjlab_policy_state, mode="step", params={"cfg": runtime}),
     }
+    feet_ground_sensor_name = "feet_ground_contact"
+    foot_height_sensor_name = "foot_height_scan"
+    self_collision_sensor_name = "self_collision"
+    foot_site_names = ("left_foot", "right_foot")
     rewards = {
-        "track_speed_exp": RewardTermCfg(func=mjlab_mdp.track_speed_exp, weight=REWARD_WEIGHTS["track_speed_exp"]),
-        "lateral_error_l2": RewardTermCfg(func=mjlab_mdp.lateral_error_l2, weight=REWARD_WEIGHTS["lateral_error_l2"]),
-        "heading_error_l2": RewardTermCfg(func=mjlab_mdp.heading_error_l2, weight=REWARD_WEIGHTS["heading_error_l2"]),
-        "zmp_margin_barrier": RewardTermCfg(
-            func=mjlab_mdp.zmp_margin_barrier, weight=REWARD_WEIGHTS["zmp_margin_barrier"]
+        "track_linear_velocity": RewardTermCfg(
+            func=velocity_mdp.track_linear_velocity,
+            weight=2.0,
+            params={
+                "command_name": "twist",
+                "std": math.sqrt(0.25),
+                "asset_cfg": SceneEntityCfg("rickshaw"),
+            },
         ),
-        "hitch_height_exp": RewardTermCfg(func=mjlab_mdp.hitch_height_exp, weight=REWARD_WEIGHTS["hitch_height_exp"]),
+        "track_angular_velocity": RewardTermCfg(
+            func=velocity_mdp.track_angular_velocity,
+            weight=2.0,
+            params={
+                "command_name": "twist",
+                "std": math.sqrt(0.5),
+                "asset_cfg": SceneEntityCfg("rickshaw"),
+            },
+        ),
+        "upright": RewardTermCfg(
+            func=velocity_mdp.upright,
+            weight=0.2,
+            params={
+                "std": math.sqrt(0.2),
+                "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
+            },
+        ),
+        "pose": RewardTermCfg(
+            func=velocity_mdp.variable_posture,
+            weight=1.0,
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+                "command_name": "twist",
+                "std_standing": {".*": 0.05},
+                "std_walking": {
+                    ".*hip_pitch.*": 0.3,
+                    ".*hip_roll.*": 0.15,
+                    ".*hip_yaw.*": 0.15,
+                    ".*knee.*": 0.35,
+                    ".*ankle_pitch.*": 0.25,
+                    ".*ankle_roll.*": 0.1,
+                    ".*waist_yaw.*": 0.2,
+                    ".*waist_roll.*": 0.08,
+                    ".*waist_pitch.*": 0.1,
+                    ".*shoulder_pitch.*": 0.15,
+                    ".*shoulder_roll.*": 0.15,
+                    ".*shoulder_yaw.*": 0.1,
+                    ".*elbow.*": 0.15,
+                    ".*wrist.*": 0.3,
+                },
+                "std_running": {
+                    ".*hip_pitch.*": 0.5,
+                    ".*hip_roll.*": 0.2,
+                    ".*hip_yaw.*": 0.2,
+                    ".*knee.*": 0.6,
+                    ".*ankle_pitch.*": 0.35,
+                    ".*ankle_roll.*": 0.15,
+                    ".*waist_yaw.*": 0.3,
+                    ".*waist_roll.*": 0.08,
+                    ".*waist_pitch.*": 0.2,
+                    ".*shoulder_pitch.*": 0.5,
+                    ".*shoulder_roll.*": 0.2,
+                    ".*shoulder_yaw.*": 0.15,
+                    ".*elbow.*": 0.35,
+                    ".*wrist.*": 0.3,
+                },
+                "walking_threshold": 0.05,
+                "running_threshold": 1.5,
+            },
+        ),
+        "body_ang_vel": RewardTermCfg(
+            func=velocity_mdp.body_angular_velocity_penalty,
+            weight=-0.05,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",))},
+        ),
+        "angular_momentum": RewardTermCfg(
+            func=velocity_mdp.angular_momentum_penalty,
+            weight=-0.02,
+            params={"sensor_name": "robot/root_angmom"},
+        ),
+        "dof_pos_limits": RewardTermCfg(func=velocity_mdp.joint_pos_limits, weight=-1.0),
+        "action_rate_l2": RewardTermCfg(func=velocity_mdp.action_rate_l2, weight=-0.1),
+        "air_time": RewardTermCfg(
+            func=velocity_mdp.feet_air_time,
+            weight=0.0,
+            params={
+                "sensor_name": feet_ground_sensor_name,
+                "threshold_min": 0.05,
+                "threshold_max": 0.5,
+                "command_name": "twist",
+                "command_threshold": 0.5,
+            },
+        ),
+        "foot_clearance": RewardTermCfg(
+            func=velocity_mdp.feet_clearance,
+            weight=-2.0,
+            params={
+                "target_height": 0.1,
+                "height_sensor_name": foot_height_sensor_name,
+                "command_name": "twist",
+                "command_threshold": 0.05,
+                "asset_cfg": SceneEntityCfg("robot", site_names=foot_site_names),
+            },
+        ),
+        "foot_swing_height": RewardTermCfg(
+            func=velocity_mdp.feet_swing_height,
+            weight=-0.25,
+            params={
+                "sensor_name": feet_ground_sensor_name,
+                "height_sensor_name": foot_height_sensor_name,
+                "target_height": 0.08,
+                "command_name": "twist",
+                "command_threshold": 0.05,
+            },
+        ),
+        "foot_slip": RewardTermCfg(
+            func=velocity_mdp.feet_slip,
+            weight=-0.1,
+            params={
+                "sensor_name": feet_ground_sensor_name,
+                "command_name": "twist",
+                "command_threshold": 0.05,
+                "asset_cfg": SceneEntityCfg("robot", site_names=foot_site_names),
+            },
+        ),
+        "soft_landing": RewardTermCfg(
+            func=velocity_mdp.soft_landing,
+            weight=-1.0e-5,
+            params={
+                "sensor_name": feet_ground_sensor_name,
+                "command_name": "twist",
+                "command_threshold": 0.05,
+            },
+        ),
+        "self_collisions": RewardTermCfg(
+            func=velocity_mdp.self_collision_cost,
+            weight=-1.0,
+            params={"sensor_name": self_collision_sensor_name, "force_threshold": 10.0},
+        ),
+        "hitch_height_exp": RewardTermCfg(
+            func=mjlab_mdp.hitch_height_exp,
+            weight=0.5,
+            params={"std": HITCH_HEIGHT_ERROR_SCALE_M},
+        ),
         "hitch_height_recovery_l2": RewardTermCfg(
             func=mjlab_mdp.hitch_height_recovery_l2,
-            weight=REWARD_WEIGHTS["hitch_height_recovery_l2"],
+            weight=-0.25,
+            params={
+                "deadband": HITCH_HEIGHT_RECOVERY_DEADBAND_M,
+                "scale": HITCH_HEIGHT_RECOVERY_SCALE_M,
+            },
         ),
-        "fat2_prior_exp": RewardTermCfg(func=mjlab_mdp.fat2_prior_exp, weight=REWARD_WEIGHTS["fat2_prior_exp"]),
-        "feet_gait": RewardTermCfg(func=mjlab_mdp.feet_gait, weight=REWARD_WEIGHTS["feet_gait"]),
-        "feet_swing_height": RewardTermCfg(
-            func=mjlab_mdp.feet_swing_height, weight=REWARD_WEIGHTS["feet_swing_height"]
-        ),
-        "feet_slide": RewardTermCfg(func=mjlab_mdp.feet_slide, weight=REWARD_WEIGHTS["feet_slide"]),
-        "terrain_normal_velocity_l2": RewardTermCfg(
-            func=mjlab_mdp.terrain_normal_velocity_l2,
-            weight=REWARD_WEIGHTS["terrain_normal_velocity_l2"],
-        ),
-        "joint_power_l1": RewardTermCfg(func=mjlab_mdp.joint_power_l1, weight=REWARD_WEIGHTS["joint_power_l1"]),
-        "joint_acc_l2": RewardTermCfg(
-            func=mjlab_mdp.joint_acc_l2,
-            weight=REWARD_WEIGHTS["joint_acc_l2"],
-        ),
-        "action_rate_l2": RewardTermCfg(
-            func=mjlab_mdp.action_rate_l2,
-            weight=REWARD_WEIGHTS["action_rate_l2"],
-        ),
-        "hip_yaw_roll_reference_l2": RewardTermCfg(
-            func=mjlab_mdp.hip_yaw_roll_reference_l2,
-            weight=REWARD_WEIGHTS["hip_yaw_roll_reference_l2"],
-        ),
-        "pelvis_height_limits_l2": RewardTermCfg(
-            func=mjlab_mdp.pelvis_height_limits_l2,
-            weight=REWARD_WEIGHTS["pelvis_height_limits_l2"],
-        ),
-        "joint_position_limits": RewardTermCfg(
-            func=mjlab_mdp.joint_position_limits,
-            weight=REWARD_WEIGHTS["joint_position_limits"],
-        ),
-        "termination": RewardTermCfg(func=mjlab_mdp.termination, weight=REWARD_WEIGHTS["termination"]),
+    }
+    commands = {
+        "twist": UniformVelocityCommandCfg(
+            entity_name="rickshaw",
+            resampling_time_range=(3.0, 8.0),
+            rel_standing_envs=0.1,
+            rel_heading_envs=0.3,
+            rel_forward_envs=0.2,
+            heading_command=True,
+            heading_control_stiffness=0.5,
+            debug_vis=True,
+            ranges=UniformVelocityCommandCfg.Ranges(
+                lin_vel_x=(-1.0, 1.0),
+                lin_vel_y=(-1.0, 1.0),
+                ang_vel_z=(-0.5, 0.5),
+                heading=(-math.pi, math.pi),
+            ),
+        )
     }
     terminations = {
-        "time_out": TerminationTermCfg(func=envs_mdp.time_out, time_out=True),
+        "time_out": TerminationTermCfg(func=velocity_mdp.time_out, time_out=True),
         "fell_over": TerminationTermCfg(
-            func=envs_mdp.bad_orientation,
+            func=velocity_mdp.bad_orientation,
             params={"limit_angle": math.radians(70.0)},
         ),
     }
-    curriculum = {
-        "speed_command_levels": CurriculumTermCfg(
-            func=mjlab_mdp.speed_command_levels,
-            params={"reward_term_name": "track_speed_exp"},
-        )
-    }
     feet = ContactSensorCfg(
-        name="robot_contacts",
+        name=feet_ground_sensor_name,
         primary=ContactMatch(
             mode="subtree",
             pattern=r"^(left_ankle_roll_link|right_ankle_roll_link)$",
@@ -228,6 +357,26 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         reduce="netforce",
         num_slots=1,
         track_air_time=True,
+    )
+    foot_height = TerrainHeightSensorCfg(
+        name=foot_height_sensor_name,
+        frame=tuple(
+            ObjRef(type="site", name=name, entity="robot") for name in foot_site_names
+        ),
+        ray_alignment="yaw",
+        pattern=RingPatternCfg.single_ring(radius=0.03, num_samples=6),
+        max_distance=1.0,
+        exclude_parent_body=True,
+        include_geom_groups=(0,),
+    )
+    self_collision = ContactSensorCfg(
+        name=self_collision_sensor_name,
+        primary=ContactMatch(mode="subtree", pattern="pelvis", entity="robot"),
+        secondary=ContactMatch(mode="subtree", pattern="pelvis", entity="robot"),
+        fields=("found", "force"),
+        reduce="none",
+        num_slots=1,
+        history_length=4,
     )
     wheels = ContactSensorCfg(
         name="wheel_contacts",
@@ -245,23 +394,22 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     cfg = ManagerBasedRlEnvCfg(
         scene=SceneCfg(
             terrain=TerrainEntityCfg(
-                terrain_type="generator",
-                terrain_generator=make_mjlab_directional_slopes_cfg(),
-                max_init_terrain_level=0,
+                terrain_type="plane",
             ),
             entities={"robot": get_g1_robot_cfg(), "rickshaw": get_rickshaw_cfg()},
-            sensors=(feet, wheels),
-            num_envs=19 if play else 8192,
+            sensors=(feet, foot_height, self_collision, wheels),
+            num_envs=1 if play else 8192,
             env_spacing=6.0,
+            extent=3.0,
             spec_fn=add_closed_chain_constraints,
         ),
         observations=observations,
         actions=actions,
-        commands={},
+        commands=commands,
         events=events,
         rewards=rewards,
         terminations=terminations,
-        curriculum={} if play else curriculum,
+        curriculum={},
         metrics={},
         viewer=ViewerConfig(
             origin_type=ViewerConfig.OriginType.ASSET_BODY,
@@ -293,16 +441,16 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     return cfg
 
 
-def G1RickshawDirectionalSlopeEnvCfg():
+def G1RickshawFlatEnvCfg():
     return g1_rickshaw_env_cfg(play=False)
 
 
-def G1RickshawDirectionalSlopePlayEnvCfg():
+def G1RickshawFlatPlayEnvCfg():
     return g1_rickshaw_env_cfg(play=True)
 
 
 __all__ = [
-    "G1RickshawDirectionalSlopeEnvCfg",
-    "G1RickshawDirectionalSlopePlayEnvCfg",
+    "G1RickshawFlatEnvCfg",
+    "G1RickshawFlatPlayEnvCfg",
     "g1_rickshaw_env_cfg",
 ]

@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 import numpy as np
 import trimesh
 
-from g1_rickshaw_lab.assets import (
+from _mjlab_wrappers import add_project_source_to_path
+
+add_project_source_to_path()
+
+from g1_rickshaw_lab.assets import (  # noqa: E402
     RICKSHAW_URDF_SPEC,
     validate_g1_urdf,
     validate_rickshaw_urdf,
 )
-from g1_rickshaw_lab.assets.rickshaw import TOW_ROD_COLLISION_GEOM_NAMES
-from g1_rickshaw_lab.project_paths import ASSET_ROOT
-from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.closed_chain import (
+from g1_rickshaw_lab.assets.rickshaw import TOW_ROD_COLLISION_GEOM_NAMES  # noqa: E402
+from g1_rickshaw_lab.project_paths import ASSET_ROOT  # noqa: E402
+from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.closed_chain import (  # noqa: E402
     build_assembled_spec,
     validate_assembled_model,
 )
@@ -44,7 +49,7 @@ def hitch_mesh_evidence() -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="mjlab_asset_validation.json")
+    parser.add_argument("--output", type=Path, default=Path("outputs/validation/mjlab_assets.json"))
     args = parser.parse_args()
     issues = [*validate_g1_urdf(), *validate_rickshaw_urdf()]
     model = build_assembled_spec().compile()
@@ -66,9 +71,8 @@ def main() -> int:
         },
         "hitches": hitch_mesh_evidence(),
     }
-    with open(args.output, "w", encoding="utf-8") as stream:
-        json.dump(report, stream, indent=2)
-        stream.write("\n")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
     return 0 if not issues else 1
 

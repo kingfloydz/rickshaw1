@@ -32,8 +32,6 @@ from .mujoco_spec import (
 
 RICKSHAW_ASSET_DIR = ASSET_ROOT / "rickshaw"
 RICKSHAW_URDF_PATH = RICKSHAW_ASSET_DIR / "rickshaw.urdf"
-RICKSHAW_URDF = str(RICKSHAW_URDF_PATH)
-RICKSHAW_MESH_PATHS = tuple(RICKSHAW_ASSET_DIR / name for name in ("body.stl", "left_wheel.stl", "right_wheel.stl"))
 
 BASE_LINK_NAME = "base_link"
 WHEEL_LINK_NAMES = ("left_wheel_link", "right_wheel_link")
@@ -42,10 +40,6 @@ HITCH_LINK_NAMES = ("left_tow_hitch_link", "right_tow_hitch_link")
 HITCH_JOINT_NAMES = ("left_tow_hitch_joint", "right_tow_hitch_joint")
 HITCH_SITE_NAMES = ("left_hitch_site", "right_hitch_site")
 TOW_ROD_COLLISION_GEOM_NAMES = ("left_tow_rod_collision", "right_tow_rod_collision")
-
-
-class RickshawAssetValidationError(ValueError):
-    pass
 
 
 def _vector(element: ET.Element | None, attribute: str) -> tuple[float, ...]:
@@ -79,6 +73,11 @@ def validate_rickshaw_urdf(path: str | Path = RICKSHAW_URDF_PATH, *, tolerance: 
         return tuple(issues)
 
     base_origin = _vector(links[BASE_LINK_NAME].find("inertial/origin"), "xyz")
+    base_mass = float(links[BASE_LINK_NAME].find("inertial/mass").attrib["value"])  # type: ignore[union-attr]
+    base_inertia = links[BASE_LINK_NAME].find("inertial/inertia")
+    scalar("base mass", base_mass, spec.base_mass)
+    for axis, expected in zip(("ixx", "iyy", "izz"), spec.base_inertia_diagonal, strict=True):
+        scalar(f"base {axis}", float(base_inertia.attrib[axis]), expected)  # type: ignore[union-attr]
     scalar("base CoM x", base_origin[0], spec.base_com_x)
     scalar(
         "base CoM rearward shift",
@@ -88,6 +87,8 @@ def validate_rickshaw_urdf(path: str | Path = RICKSHAW_URDF_PATH, *, tolerance: 
     scalar("base CoM z", base_origin[2], 0.6276898532066667)
 
     for name in WHEEL_LINK_NAMES:
+        mass = float(links[name].find("inertial/mass").attrib["value"])  # type: ignore[union-attr]
+        scalar(f"{name} mass", mass, spec.wheel_mass)
         inertia = links[name].find("inertial/inertia")
         for axis, expected in zip(("ixx", "iyy", "izz"), spec.wheel_inertia_diagonal, strict=True):
             scalar(f"{name} {axis}", float(inertia.attrib[axis]), expected)  # type: ignore[union-attr]
@@ -110,15 +111,23 @@ def validate_rickshaw_urdf(path: str | Path = RICKSHAW_URDF_PATH, *, tolerance: 
         "right_tow_hitch_joint": (spec.hitch_x, -spec.hitch_half_width, spec.hitch_z),
     }
     for name, expected in expected_hitches.items():
+        mass = float(links[name.removesuffix("_joint") + "_link"].find("inertial/mass").attrib["value"])  # type: ignore[union-attr]
+        scalar(f"{name} link mass", mass, spec.hitch_link_mass)
         if joints[name].attrib.get("type") != "fixed":
             issues.append(f"{name} must be fixed")
         actual = _vector(joints[name].find("origin"), "xyz")
         for axis, (value, target) in enumerate(zip(actual, expected, strict=True)):
             scalar(f"{name} origin[{axis}]", value, target)
 
-    masses_and_positions = [(36.0, base_origin)]
-    masses_and_positions.extend((2.0, expected_wheels[name]) for name in WHEEL_JOINT_NAMES)
-    masses_and_positions.extend((0.02, expected_hitches[name]) for name in HITCH_JOINT_NAMES)
+    masses_and_positions = [(base_mass, base_origin)]
+    masses_and_positions.extend(
+        (float(links[name.removesuffix("_joint") + "_link"].find("inertial/mass").attrib["value"]), position)  # type: ignore[union-attr]
+        for name, position in expected_wheels.items()
+    )
+    masses_and_positions.extend(
+        (float(links[name.removesuffix("_joint") + "_link"].find("inertial/mass").attrib["value"]), position)  # type: ignore[union-attr]
+        for name, position in expected_hitches.items()
+    )
     total_mass = sum(mass for mass, _ in masses_and_positions)
     center = tuple(
         sum(mass * position[axis] for mass, position in masses_and_positions) / total_mass for axis in range(3)
@@ -129,16 +138,12 @@ def validate_rickshaw_urdf(path: str | Path = RICKSHAW_URDF_PATH, *, tolerance: 
     return tuple(issues)
 
 
-def assert_valid_rickshaw_urdf(path: str | Path = RICKSHAW_URDF_PATH) -> None:
-    issues = validate_rickshaw_urdf(path)
-    if issues:
-        raise RickshawAssetValidationError("invalid rickshaw URDF: " + "; ".join(issues))
-
-
 def get_rickshaw_spec() -> mujoco.MjSpec:
     """Build the passive two-wheel rickshaw and its two hitch sites."""
 
-    assert_valid_rickshaw_urdf()
+    issues = validate_rickshaw_urdf()
+    if issues:
+        raise ValueError("invalid rickshaw URDF: " + "; ".join(issues))
     spec = load_urdf_spec(RICKSHAW_URDF_PATH)
     spec.compiler.discardvisual = 0
     add_free_joint(spec, BASE_LINK_NAME)
@@ -146,6 +151,9 @@ def get_rickshaw_spec() -> mujoco.MjSpec:
         geom.contype = RICKSHAW_COLLISION_BIT
         geom.conaffinity = GROUND_COLLISION_BIT
         geom.group = 3
+    for geom in spec.body(BASE_LINK_NAME).geoms:
+        geom.contype = 0
+        geom.conaffinity = 0
     for name, lateral in zip(TOW_ROD_COLLISION_GEOM_NAMES, (0.276, -0.276), strict=True):
         spec.body(BASE_LINK_NAME).add_geom(
             name=name,
@@ -196,7 +204,7 @@ def get_rickshaw_spec() -> mujoco.MjSpec:
             quat=quat,
             contype=0,
             conaffinity=0,
-            group=0,
+            group=3,
             rgba=rgba,
         )
     for body_name, site_name in zip(HITCH_LINK_NAMES, HITCH_SITE_NAMES, strict=True):
@@ -222,14 +230,6 @@ def get_rickshaw_cfg():
     )
 
 
-build_rickshaw_cfg = get_rickshaw_cfg
-RICKSHAW_CFG = None
-
-
-def missing_rickshaw_assets() -> tuple[Path, ...]:
-    return tuple(path for path in (RICKSHAW_URDF_PATH, *RICKSHAW_MESH_PATHS) if not path.is_file())
-
-
 __all__ = [
     "BASE_LINK_NAME",
     "HITCH_HALF_WIDTH",
@@ -240,22 +240,16 @@ __all__ = [
     "HITCH_Z",
     "RICKSHAW_ASSET_DIR",
     "RICKSHAW_CENTER_OF_MASS",
-    "RICKSHAW_CFG",
     "RICKSHAW_TOTAL_MASS",
-    "RICKSHAW_URDF",
     "RICKSHAW_URDF_PATH",
     "RICKSHAW_URDF_SPEC",
-    "RickshawAssetValidationError",
     "RickshawUrdfSpec",
     "WHEEL_JOINT_DAMPING",
     "WHEEL_JOINT_NAMES",
     "WHEEL_RADIUS",
     "WHEEL_TRACK",
     "WHEEL_WIDTH",
-    "assert_valid_rickshaw_urdf",
-    "build_rickshaw_cfg",
     "get_rickshaw_cfg",
     "get_rickshaw_spec",
-    "missing_rickshaw_assets",
     "validate_rickshaw_urdf",
 ]

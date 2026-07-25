@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Produce fixed-seed, configured-slope policy diagnostics in Mjlab."""
+"""Produce fixed-seed flat-ground policy diagnostics in Mjlab."""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
 from dataclasses import asdict
 import json
 import os
@@ -27,20 +26,11 @@ from g1_rickshaw_lab.policy_evaluation import (  # noqa: E402
     FORMAL_EVALUATION_CROSS_CASE_PROTOCOL,
     METRIC_DEFINITIONS,
     POLICY_DIAGNOSTIC_SCHEMA_VERSION,
-    SIGNED_SLOPES,
     PolicyEvaluationAccumulator,
     command_phase_labels,
     connection_wrench_channels,
     evaluate_s2_return_floor,
-    slope_label,
     validate_s1_baseline_diagnostic_report,
-)
-from g1_rickshaw_lab.reward_profile import (  # noqa: E402
-    apply_reward_weight_overrides,
-    reward_weight_overrides_from_configuration,
-)
-from g1_rickshaw_lab.slope_contract import (  # noqa: E402
-    FORMAL_EVALUATION_NUM_ENVS,
 )
 from g1_rickshaw_lab.training_contract import (  # noqa: E402
     CHECKPOINT_CURRICULUM_ITERATION_KEY,
@@ -56,7 +46,7 @@ from g1_rickshaw_lab.artifact_io import (  # noqa: E402
 )
 
 
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Directional-Slope-Student"
+DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Student"
 SUPPORTED_STAGES = {
     "s0_teacher",
     "s1_context_distillation",
@@ -99,8 +89,8 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--output", required=True)
-    parser.add_argument("--num-envs", type=int, default=FORMAL_EVALUATION_NUM_ENVS)
-    parser.add_argument("--episodes-per-slope", type=int, default=100)
+    parser.add_argument("--num-envs", type=int, default=100)
+    parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--seeds", type=int, nargs="+", default=(42, 43, 44, 45, 46))
     parser.add_argument("--max-policy-steps-per-seed", type=int, default=6000)
     parser.add_argument("--device", default=None)
@@ -115,8 +105,8 @@ def _validate_args(args: argparse.Namespace, stage: str) -> None:
         raise ValueError("fixed seeds must be non-empty")
     quota_divisor = len(args.seeds) * len(CROSS_CASE_LABELS)
     if (
-        args.episodes_per_slope <= 0
-        or args.episodes_per_slope % quota_divisor != 0
+        args.episodes <= 0
+        or args.episodes % quota_divisor != 0
         or args.max_policy_steps_per_seed <= 0
     ):
         raise ValueError(
@@ -129,44 +119,13 @@ def _validate_args(args: argparse.Namespace, stage: str) -> None:
         raise ValueError("--s1-baseline-report applies only to S2 diagnostics")
 
 
-def _configure_evaluation(
-    env_cfg: Any,
-    fat2_weight: float | None,
-    reward_weight_overrides: Mapping[str, float],
-) -> None:
+def _configure_evaluation(env_cfg: Any) -> None:
     env_cfg.curriculum = {}
-    env_cfg.scene.terrain.terrain_generator.curriculum = True
     env_cfg.domain_randomization.enabled = False
-    apply_reward_weight_overrides(env_cfg, reward_weight_overrides)
-    if fat2_weight is not None:
-        env_cfg.rewards["fat2_prior_exp"].weight = float(fat2_weight)
-
-
-def _assign_fixed_slopes(base_env: Any) -> Any:
-    """Bind every configured gradient for the single training distribution."""
-
-    import torch
-    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity import mdp
-    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mjlab_events import (
-        assign_mjlab_slope_slots,
-    )
-
-    slots, _, _ = mdp.balanced_slope_assignment(
-        base_env.num_envs,
-        device=base_env.device,
-    )
-    assign_mjlab_slope_slots(base_env, slots)
-    expected = torch.tensor(SIGNED_SLOPES, device=base_env.device)[slots]
-    if not torch.allclose(base_env.slope, expected, atol=1.0e-7, rtol=0.0):
-        raise RuntimeError(
-            "fixed evaluation terrain does not resolve to every configured slope"
-        )
-
-    return slots
 
 
 def _apply_evaluation_command_protocol(base_env: Any, active: Any) -> None:
-    """Drive every counted episode through all four command phases deterministically."""
+    """Drive every counted episode through standing and moving commands."""
 
     import torch
 
@@ -180,11 +139,16 @@ def _apply_evaluation_command_protocol(base_env: Any, active: Any) -> None:
     # Hold zero briefly, accelerate to and cruise at 1 m/s, then brake to a
     # final standing interval before the 20 s timeout.
     moving = (elapsed_s >= 1.0) & (elapsed_s < 10.0)
-    target = moving.to(dtype=base_env.command_state.v_sample.dtype)
-    base_env.command_state.v_sample[active] = target[active]
-    # Disable the regular 10 s random resampler without bypassing the deployable
-    # acceleration/jerk limiter that advances v_ref and a_ref.
-    base_env.command_state.resampling_elapsed_s[active] = 0.0
+    command_term = base_env.command_manager.get_term("twist")
+    target = moving.to(dtype=command_term.vel_command_b.dtype)
+    command_term.vel_command_b[active] = 0.0
+    command_term.vel_command_b[active, 0] = target[active]
+    command_term.vel_command_w[active] = command_term.vel_command_b[active]
+    command_term.is_standing_env[active] = False
+    command_term.is_heading_env[active] = False
+    command_term.is_world_env[active] = False
+    command_term.is_forward_env[active] = True
+    command_term.time_left[active] = 21.0
 
 
 def _episode_fell(*, timed_out: bool, causes: list[str]) -> bool:
@@ -287,7 +251,7 @@ def _load_rsl_runner_cfg(
 
 def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  # noqa: C901
     import torch
-    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.terrain_cfg import (
+    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.task_spec import (
         target_pitch_from_hitch_height,
     )
 
@@ -295,18 +259,19 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     state = base_env.rickshaw_state
     stability = base_env.stability_state
     analytic = base_env.analytic_force_state
-    actual_speed = torch.sum(robot.data.root_link_lin_vel_w * base_env.path_tangent_w, dim=-1)
-    speed_error = actual_speed - base_env.command_state.v_ref
+    actual_speed = base_env.rickshaw_speed_s
+    speed_command = base_env.command_manager.get_command("twist")[:, 0]
+    speed_error = actual_speed - speed_command
     overspeed_margin = float(
         base_env.runtime_cfg.domain.calibration["safety.overspeed_margin"]
     )
-    overspeed = actual_speed > base_env.command_state.v_ref + overspeed_margin
+    overspeed = actual_speed > speed_command + overspeed_margin
     pitch_error = state.pitch - target_pitch_from_hitch_height(
-        base_env.rickshaw_pose_cfg
+        float(base_env.hitch_height_target), base_env.rickshaw_pose_cfg
     )
-    hitch_error = state.hitch_height - float(base_env.rickshaw_pose_cfg.hitch_height_target)
+    hitch_error = state.hitch_height - float(base_env.hitch_height_target)
 
-    contact_sensor = base_env.scene["robot_contacts"]
+    contact_sensor = base_env.scene["feet_ground_contact"]
     foot_contact = contact_sensor.data.found > 0
     foot_velocity = robot.data.body_link_lin_vel_w[:, base_env.foot_body_ids]
     foot_s = torch.sum(foot_velocity * base_env.path_tangent_w[:, None, :], dim=-1)
@@ -323,18 +288,9 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     ids = base_env.policy_joint_ids
     torque = robot.data.actuator_force
     velocity = robot.data.joint_vel[:, ids]
-    from g1_rickshaw_lab.configuration import (
-        ARM_HARDWARE_EFFORT_LIMITS,
-        LOWER_HARDWARE_EFFORT_LIMITS,
-        WAIST_HARDWARE_EFFORT_LIMITS,
-    )
+    from g1_rickshaw_lab.g1_motor_defaults import G1_JOINT_EFFORT_LIMITS
 
-    effort = torch.tensor(
-        LOWER_HARDWARE_EFFORT_LIMITS
-        + WAIST_HARDWARE_EFFORT_LIMITS
-        + ARM_HARDWARE_EFFORT_LIMITS,
-        device=base_env.device,
-    )
+    effort = torch.tensor(G1_JOINT_EFFORT_LIMITS, device=base_env.device)
     torque_margin = 1.0 - torch.abs(torque) / effort
     leg_margin = torch.amin(torque_margin[:, :12], dim=-1)
     arm_margin = torch.amin(torque_margin[:, 15:], dim=-1)
@@ -401,8 +357,7 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
 def _labels(base_env: Any, env_ids: Any) -> tuple[list[str], list[str], list[str]]:
     stages = ["TRAINING"] * int(env_ids.numel())
     phases = command_phase_labels(
-        base_env.command_state.v_ref[env_ids].detach().cpu().numpy(),
-        base_env.command_state.a_ref[env_ids].detach().cpu().numpy(),
+        base_env.command_manager.get_command("twist")[env_ids, 0].detach().cpu().numpy(),
     )
     return (
         stages,
@@ -414,12 +369,11 @@ def _labels(base_env: Any, env_ids: Any) -> tuple[list[str], list[str], list[str
 def _run_mode(
     env: Any,
     base_env: Any,
-    slope_slots: Any,
     policy: PolicyHandle,
     teacher: PolicyHandle | None,
     *,
     seeds: list[int],
-    episodes_per_slope: int,
+    episodes: int,
     max_steps_per_seed: int,
 ) -> tuple[PolicyEvaluationAccumulator, dict[str, Any]]:
     import torch
@@ -427,79 +381,48 @@ def _run_mode(
     if not seeds:
         raise ValueError("fixed evaluation seeds must be non-empty")
     quota_divisor = len(seeds) * len(CROSS_CASE_LABELS)
-    if episodes_per_slope % quota_divisor != 0:
-        raise ValueError(
-            "episodes_per_slope must be divisible by the number of seeds"
-        )
+    if episodes % quota_divisor != 0:
+        raise ValueError("episodes must be divisible by the number of seeds")
     accumulator = PolicyEvaluationAccumulator()
-    completed = torch.zeros(len(SIGNED_SLOPES), dtype=torch.long, device=base_env.device)
-    in_flight = torch.zeros_like(completed)
-    completed_by_case = torch.zeros(
-        (len(SIGNED_SLOPES), len(CROSS_CASE_LABELS)),
-        dtype=torch.long,
-        device=base_env.device,
-    )
-    in_flight_by_case = torch.zeros_like(completed_by_case)
+    completed = 0
+    in_flight = 0
     enrolled = torch.zeros(base_env.num_envs, dtype=torch.bool, device=base_env.device)
-    returns_by_slope: list[list[float]] = [[] for _ in SIGNED_SLOPES]
+    episode_returns: list[float] = []
     episode_return = torch.zeros(base_env.num_envs, device=base_env.device)
     episode_phases: list[set[str]] = [set() for _ in range(base_env.num_envs)]
-    episode_cross_cases: list[str | None] = [None] * base_env.num_envs
     cause_names = tuple(base_env.termination_manager.active_terms)
 
+    def reserve_episodes(candidate_ids: Any, needed: int) -> None:
+        nonlocal in_flight
+
+        if candidate_ids.numel() == 0:
+            return
+        selected = candidate_ids[~enrolled[candidate_ids]][:needed]
+        enrolled[selected] = True
+        in_flight += int(selected.numel())
+
     for seed_index, seed in enumerate(seeds):
-        milestone = (seed_index + 1) * episodes_per_slope // len(seeds)
-        case_milestone = milestone // len(CROSS_CASE_LABELS)
+        milestone = (seed_index + 1) * episodes // len(seeds)
         env.seed(seed)
         observation, _ = env.reset()
         observation = observation.to(base_env.device)
-        if torch.any(in_flight != 0):
+        if in_flight:
             raise RuntimeError("evaluation seed changed with unfinished reserved episodes")
         enrolled.zero_()
 
-        def reserve_episodes(candidate_ids: Any) -> None:
-            """Reserve only episodes that will belong to the exact quota."""
-
-            if candidate_ids.numel() == 0:
-                return
-            case_slots = torch.zeros(
-                base_env.num_envs, device=base_env.device, dtype=torch.long
-            )
-            for slope_index in range(len(SIGNED_SLOPES)):
-                for case_index in range(len(CROSS_CASE_LABELS)):
-                    needed = int(
-                        (
-                            case_milestone
-                            - completed_by_case[slope_index, case_index]
-                            - in_flight_by_case[slope_index, case_index]
-                        ).item()
-                    )
-                    if needed <= 0:
-                        continue
-                    candidates = candidate_ids[
-                        (slope_slots[candidate_ids] == slope_index)
-                        & (case_slots[candidate_ids] == case_index)
-                        & ~enrolled[candidate_ids]
-                    ]
-                    selected = candidates[:needed]
-                    enrolled[selected] = True
-                    in_flight[slope_index] += selected.numel()
-                    in_flight_by_case[slope_index, case_index] += selected.numel()
-
         reserve_episodes(
-            torch.arange(base_env.num_envs, device=base_env.device, dtype=torch.long)
+            torch.arange(base_env.num_envs, device=base_env.device, dtype=torch.long),
+            milestone - completed - in_flight,
         )
         episode_return.zero_()
         for phases in episode_phases:
             phases.clear()
-        episode_cross_cases[:] = [None] * base_env.num_envs
         policy_steps = 0
-        while torch.any(completed < milestone):
+        while completed < milestone:
             if policy_steps >= max_steps_per_seed:
-                remaining = (milestone - completed).clamp_min(0).detach().cpu().tolist()
                 raise RuntimeError(
                     f"seed {seed} exceeded {max_steps_per_seed} policy steps; "
-                    f"remaining episodes per slope={remaining}; in_flight={in_flight.detach().cpu().tolist()}"
+                    f"remaining episodes={milestone - completed}; in_flight={in_flight}"
                 )
             active = enrolled
             _apply_evaluation_command_protocol(base_env, active)
@@ -517,22 +440,14 @@ def _run_mode(
                         for name, value in raw_samples.items()
                     }
                     stage_labels, case_labels, phase_labels = _labels(base_env, ids)
-                    for env_id, phase, case in zip(
+                    for env_id, phase in zip(
                         ids.detach().cpu().tolist(),
                         phase_labels,
-                        case_labels,
                         strict=True,
                     ):
                         episode_phases[int(env_id)].add(str(phase))
-                        previous_case = episode_cross_cases[int(env_id)]
-                        if previous_case is not None and previous_case != str(case):
-                            raise RuntimeError(
-                                "evaluation cross-case changed within an episode"
-                            )
-                        episode_cross_cases[int(env_id)] = str(case)
                     accumulator.add_step(
                         samples,
-                        slope_slots[ids].detach().cpu().numpy(),
                         stage_labels=stage_labels,
                         cross_case_labels=case_labels,
                         phase_labels=phase_labels,
@@ -551,10 +466,7 @@ def _run_mode(
                     if not bool(enrolled[env_id].item()) or not bool(active[env_id].item()):
                         episode_return[env_id] = 0.0
                         episode_phases[env_id].clear()
-                        episode_cross_cases[env_id] = None
                         continue
-                    slope_index = int(slope_slots[env_id].item())
-                    case_index = 0
                     value = float(episode_return[env_id].item())
                     causes = [
                         name
@@ -565,19 +477,14 @@ def _run_mode(
                         timed_out=bool(time_outs[env_id].item()),
                         causes=causes,
                     )
-                    returns_by_slope[slope_index].append(value)
-                    completed[slope_index] += 1
-                    in_flight[slope_index] -= 1
-                    completed_by_case[slope_index, case_index] += 1
-                    in_flight_by_case[slope_index, case_index] -= 1
+                    episode_returns.append(value)
+                    completed += 1
+                    in_flight -= 1
                     enrolled[env_id] = False
                     reusable_ids.append(env_id)
-                    if not episode_phases[env_id] or episode_cross_cases[env_id] is None:
-                        raise RuntimeError(
-                            "active completed episode has no phase/cross-case evidence"
-                        )
+                    if not episode_phases[env_id]:
+                        raise RuntimeError("active completed episode has no phase evidence")
                     accumulator.add_episode(
-                        slope_index,
                         value,
                         fell=fell,
                         causes=causes,
@@ -586,43 +493,30 @@ def _run_mode(
                             for label in COMMAND_PHASE_LABELS
                             if label in episode_phases[env_id]
                         ],
-                        cross_case_label=episode_cross_cases[env_id],
+                        cross_case_label="RANDOM",
                     )
                     episode_return[env_id] = 0.0
                     episode_phases[env_id].clear()
-                    episode_cross_cases[env_id] = None
                 if reusable_ids:
                     reserve_episodes(
                         torch.tensor(
                             reusable_ids, device=base_env.device, dtype=torch.long
-                        )
+                        ),
+                        milestone - completed - in_flight,
                     )
             policy_steps += 1
 
         if (
-            torch.any(in_flight != 0)
-            or torch.any(in_flight_by_case != 0)
+            in_flight
             or torch.any(enrolled)
-            or torch.any(completed_by_case != case_milestone)
         ):
             raise RuntimeError("evaluation milestone completed with reserved episodes still active")
 
-    if torch.any(completed != episodes_per_slope):
-        raise RuntimeError(f"episode quota drifted: {completed.detach().cpu().tolist()}")
-    expected_case_total = episodes_per_slope // len(CROSS_CASE_LABELS)
-    if torch.any(completed_by_case != expected_case_total):
-        raise RuntimeError(
-            "slope/cross-case episode quota drifted: "
-            f"{completed_by_case.detach().cpu().tolist()}"
-        )
-    flattened = [value for group in returns_by_slope for value in group]
+    if completed != episodes:
+        raise RuntimeError(f"episode quota drifted: {completed}")
     return_summary = {
-        "episodes": len(flattened),
-        "mean": sum(flattened) / len(flattened),
-        "per_slope_mean": {
-            slope_label(slope): sum(returns_by_slope[index]) / len(returns_by_slope[index])
-            for index, slope in enumerate(SIGNED_SLOPES)
-        },
+        "episodes": len(episode_returns),
+        "mean": sum(episode_returns) / len(episode_returns),
     }
     return accumulator, return_summary
 
@@ -649,13 +543,9 @@ def main() -> int:  # noqa: C901
     if training_configuration["task"] != args.task:
         raise ValueError("policy evaluation task differs from checkpoint training task")
     training_parameters = training_configuration["training_parameters"]
-    fat2_weight = float(training_parameters["fat2_weight"])
     rollout_steps = int(training_parameters["rollout_steps"])
     latent_dim = int(training_parameters["latent_dim"])
     history_length = int(training_parameters["history_length"])
-    reward_weight_overrides = reward_weight_overrides_from_configuration(
-        training_configuration
-    )
     _validate_args(args, stage)
     is_student = stage != "s0_teacher"
 
@@ -670,16 +560,13 @@ def main() -> int:  # noqa: C901
         s1_baseline_returns = validate_s1_baseline_diagnostic_report(
             s1_report,
             fixed_seeds=args.seeds,
-            episodes_per_slope=args.episodes_per_slope,
+            episodes_per_stage=args.episodes,
         )
         baseline_parameters = s1_report["evaluation"]
         if (
             baseline_parameters.get("latent_dim") != latent_dim
             or baseline_parameters.get("history_length") != history_length
             or baseline_parameters.get("rollout_steps") != rollout_steps
-            or baseline_parameters.get("fat2_weight") != fat2_weight
-            or baseline_parameters.get("reward_weight_overrides", {})
-            != reward_weight_overrides
         ):
             raise ValueError("S1 baseline uses different training parameters")
         s1_baseline_binding = {
@@ -694,14 +581,7 @@ def main() -> int:  # noqa: C901
         teacher_checkpoint = load_stage_checkpoint(
             teacher_path, expected_stage="s0_teacher", validate_runtime=False
         )
-        if (
-            teacher_checkpoint[TRAINING_CONFIGURATION_KEY]["training_parameters"]
-            != training_parameters
-            or reward_weight_overrides_from_configuration(
-                teacher_checkpoint[TRAINING_CONFIGURATION_KEY]
-            )
-            != reward_weight_overrides
-        ):
+        if teacher_checkpoint[TRAINING_CONFIGURATION_KEY]["training_parameters"] != training_parameters:
             raise ValueError("teacher checkpoint uses different training parameters")
 
     stage_reports: dict[str, Any] = {}
@@ -724,7 +604,7 @@ def main() -> int:  # noqa: C901
                 seed=args.seeds[0],
                 history_length=history_length,
             )
-            _configure_evaluation(env_cfg, fat2_weight, reward_weight_overrides)
+            _configure_evaluation(env_cfg)
             if is_student and teacher_path is None:
                 env_cfg.observations.pop("teacher_dynamic_history", None)
                 env_cfg.observations.pop("teacher_static", None)
@@ -739,8 +619,6 @@ def main() -> int:  # noqa: C901
             raw_env = ManagerBasedRlEnv(env_cfg, device=device)
             env = RslRlVecEnvWrapper(raw_env, clip_actions=agent_cfg.clip_actions)
             base_env = raw_env.unwrapped
-            slope_slots = _assign_fixed_slopes(base_env)
-
             policy, keepalive = _load_policy(
                 env, checkpoint_path, checkpoint, stage, device, args.task
             )
@@ -755,18 +633,16 @@ def main() -> int:  # noqa: C901
             baseline_accumulator, baseline_return = _run_mode(
                 env,
                 base_env,
-                slope_slots,
                 policy,
                 teacher,
                 seeds=list(args.seeds),
-                episodes_per_slope=args.episodes_per_slope,
+                episodes=args.episodes,
                 max_steps_per_seed=args.max_policy_steps_per_seed,
             )
-            metrics, per_slope = baseline_accumulator.summary()
+            metrics = baseline_accumulator.summary()
             stratified = baseline_accumulator.stratified_summary()
             stage_reports[EVALUATION_STAGE] = {
                 "metrics": metrics,
-                "per_slope": per_slope,
                 "stratified": stratified,
                 "return": baseline_return,
             }
@@ -781,7 +657,7 @@ def main() -> int:  # noqa: C901
     if is_student and teacher_checkpoint is None:
         omitted_diagnostics.append("teacher_student_action_kl")
     stage_report = stage_reports[EVALUATION_STAGE]
-    if stage_report["metrics"]["episodes"]["completed"] != len(SIGNED_SLOPES) * args.episodes_per_slope:
+    if stage_report["metrics"]["episodes"]["completed"] != args.episodes:
         raise RuntimeError("training evaluation episode quota is incomplete")
 
     if stage == "s2_student_ppo":
@@ -808,17 +684,14 @@ def main() -> int:  # noqa: C901
         "evaluation": {
             "deterministic_actions": True,
             "fixed_seeds": list(args.seeds),
-            "signed_slopes": list(SIGNED_SLOPES),
-            "episodes_per_slope_per_stage": args.episodes_per_slope,
+            "episodes_per_stage": args.episodes,
             "num_envs": args.num_envs,
             "curriculum_stages": [EVALUATION_STAGE],
             "command_protocol": FORMAL_EVALUATION_COMMAND_PROTOCOL,
             "cross_case_protocol": FORMAL_EVALUATION_CROSS_CASE_PROTOCOL,
-            "fat2_weight": fat2_weight,
             "rollout_steps": rollout_steps,
             "latent_dim": latent_dim,
             "history_length": history_length,
-            "reward_weight_overrides": reward_weight_overrides,
         },
         "metric_definitions": METRIC_DEFINITIONS,
         "stages": stage_reports,

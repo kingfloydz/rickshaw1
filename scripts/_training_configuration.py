@@ -48,12 +48,9 @@ def build_training_configuration(
     resolved_parameters: Mapping[str, Any],
     actor_initialized_from_teacher: bool | None,
     stage_coverage: Mapping[str, Any] | None,
-    fat2_weight: float = float(DEFAULT_TRAINING_PARAMETERS["fat2_weight"]),
     latent_dim: int = int(DEFAULT_TRAINING_PARAMETERS["latent_dim"]),
     rollout_steps: int = int(DEFAULT_TRAINING_PARAMETERS["rollout_steps"]),
-    stability_reward_curriculum: bool = bool(
-        DEFAULT_TRAINING_PARAMETERS["stability_reward_curriculum"]
-    ),
+    history_length: int = int(DEFAULT_TRAINING_PARAMETERS["history_length"]),
 ) -> dict[str, Any]:
     """Build the stable configuration shared by every mainline stage."""
 
@@ -82,10 +79,9 @@ def build_training_configuration(
             "actor_initialized_from_teacher": actor_initialized_from_teacher,
             "stage_coverage": None if stage_coverage is None else dict(stage_coverage),
             "training_parameters": {
-                "fat2_weight": fat2_weight,
                 "rollout_steps": rollout_steps,
                 "latent_dim": latent_dim,
-                "stability_reward_curriculum": stability_reward_curriculum,
+                "history_length": history_length,
             },
         }
     )

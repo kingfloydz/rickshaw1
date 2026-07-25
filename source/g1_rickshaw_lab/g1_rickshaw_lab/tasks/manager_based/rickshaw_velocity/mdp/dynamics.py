@@ -1,4 +1,4 @@
-"""Pure Torch command, cart, FAT2, and ZMP dynamics kernels."""
+"""Pure Torch cart, FAT2, and ZMP dynamics kernels."""
 
 from __future__ import annotations
 
@@ -8,89 +8,6 @@ from dataclasses import MISSING, dataclass
 import torch
 
 GRAVITY = 9.81
-
-
-@dataclass
-class SpeedReferenceCfg:
-    acceleration_limit: float = MISSING
-    jerk_limit: float = MISSING
-    response_time: float = 0.5
-    velocity_tolerance: float = 1.0e-3
-
-    def validate(self) -> None:
-        if self.acceleration_limit <= 0.0:
-            raise ValueError("acceleration_limit must be positive")
-        if self.jerk_limit <= 0.0:
-            raise ValueError("jerk_limit must be positive")
-        if self.response_time <= 0.0:
-            raise ValueError("response_time must be positive")
-        if self.velocity_tolerance < 0.0:
-            raise ValueError("velocity_tolerance must be non-negative")
-
-
-@dataclass
-class SpeedReferenceState:
-    v_ref: torch.Tensor
-    a_ref: torch.Tensor
-
-    @classmethod
-    def zeros(
-        cls,
-        num_envs: int,
-        *,
-        device: torch.device | str | None = None,
-        dtype: torch.dtype = torch.float32,
-    ) -> SpeedReferenceState:
-        value = torch.zeros(num_envs, device=device, dtype=dtype)
-        return cls(v_ref=value.clone(), a_ref=value.clone())
-
-    def reset(self, env_ids: torch.Tensor | None = None) -> None:
-        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
-        self.v_ref[ids] = 0.0
-        self.a_ref[ids] = 0.0
-
-
-def update_speed_reference(
-    state: SpeedReferenceState,
-    v_sample: torch.Tensor,
-    dt: float,
-    cfg: SpeedReferenceCfg,
-) -> SpeedReferenceState:
-    """Advance the jerk- and acceleration-limited reference in place.
-
-    The stopping-velocity look-ahead and the target snap condition are exactly
-    the command contract from section 5.5 of the guide.
-    """
-
-    cfg.validate()
-    if dt <= 0.0:
-        raise ValueError("dt must be positive")
-    if state.v_ref.shape != state.a_ref.shape or v_sample.shape != state.v_ref.shape:
-        raise ValueError("v_sample, v_ref, and a_ref must have identical shapes")
-
-    v_stop = state.v_ref + state.a_ref * torch.abs(state.a_ref) / (2.0 * cfg.jerk_limit)
-    a_des = torch.clamp(
-        (v_sample - v_stop) / cfg.response_time,
-        -cfg.acceleration_limit,
-        cfg.acceleration_limit,
-    )
-    da = torch.clamp(
-        a_des - state.a_ref,
-        -cfg.jerk_limit * dt,
-        cfg.jerk_limit * dt,
-    )
-    a_next = torch.clamp(
-        state.a_ref + da,
-        -cfg.acceleration_limit,
-        cfg.acceleration_limit,
-    )
-    v_next = state.v_ref + a_next * dt
-    settled = (torch.abs(v_sample - v_next) <= cfg.velocity_tolerance) & (
-        torch.abs(a_next) <= cfg.jerk_limit * dt
-    )
-    state.v_ref[:] = torch.where(settled, v_sample, v_next)
-    state.a_ref[:] = torch.where(settled, torch.zeros_like(a_next), a_next)
-    return state
 
 
 def low_pass(
@@ -574,7 +491,6 @@ def analytic_handle_force(
     a_s: torch.Tensor,
     alpha_ddot: torch.Tensor,
     alpha: torch.Tensor,
-    gamma: torch.Tensor,
     c_rr: torch.Tensor,
     wheel_normal_force: torch.Tensor,
     properties: RickshawMassProperties,
@@ -588,19 +504,14 @@ def analytic_handle_force(
 
     The stored CoM and handle coordinates are cart-frame vectors from the axle.
     They are rotated by the current front-lift pitch before evaluating moments
-    in the slope frame.
+    in the flat-ground path frame.
     """
 
     if velocity_epsilon <= 0.0:
         raise ValueError("velocity_epsilon must be positive")
     n_w = torch.sum(wheel_normal_force, dim=-1)
     rr_magnitude = c_rr * n_w * torch.tanh(v_s / velocity_epsilon)
-    t_s = (
-        properties.m_eff * a_s
-        + properties.m_cart * GRAVITY * torch.sin(gamma)
-        + rr_magnitude
-        + properties.b_eff * v_s
-    )
+    t_s = properties.m_eff * a_s + rr_magnitude + properties.b_eff * v_s
     if (handle_from_axle_sn is None) != (com_from_axle_sn is None):
         raise ValueError("actual handle and CoM geometry must be supplied together")
     if handle_from_axle_sn is None:
@@ -621,12 +532,7 @@ def analytic_handle_force(
     t_n = (
         properties.pitch_inertia_about_axle * alpha_ddot
         + handle_z * t_s
-        + properties.m_cart
-        * GRAVITY
-        * (
-            com_x * torch.cos(gamma)
-            - com_z * torch.sin(gamma)
-        )
+        + properties.m_cart * GRAVITY * com_x
     ) / denominator
     t_s = torch.where(valid, t_s, torch.zeros_like(t_s))
     t_n = torch.where(valid, t_n, torch.zeros_like(t_n))
@@ -637,7 +543,6 @@ def update_analytic_handle_force_state(
     state: AnalyticHandleForceState,
     v_s: torch.Tensor,
     pitch: torch.Tensor,
-    gamma: torch.Tensor,
     c_rr: torch.Tensor,
     wheel_normal_force: torch.Tensor,
     properties: RickshawMassProperties,
@@ -660,7 +565,6 @@ def update_analytic_handle_force_state(
         a_s,
         alpha_ddot,
         pitch,
-        gamma,
         c_rr,
         wheel_normal_force,
         properties,
@@ -694,7 +598,7 @@ def rickshaw_pitch_from_quaternion(
     path_tangent_w: torch.Tensor,
     path_normal_w: torch.Tensor,
 ) -> torch.Tensor:
-    """Return front-lift pitch ``alpha`` relative to the signed slope frame."""
+    """Return front-lift pitch ``alpha`` relative to the path frame."""
 
     local_x = torch.zeros_like(path_tangent_w)
     local_x[..., 0] = 1.0
@@ -702,30 +606,6 @@ def rickshaw_pitch_from_quaternion(
     forward_s = torch.sum(forward_w * path_tangent_w, dim=-1)
     forward_n = torch.sum(forward_w * path_normal_w, dim=-1)
     return torch.atan2(forward_n, forward_s)
-
-
-def torso_tilt_from_slope_normal(
-    torso_quaternion_wxyz: torch.Tensor,
-    path_normal_w: torch.Tensor,
-) -> torch.Tensor:
-    """Return the unsigned 3D angle between torso +Z and the slope normal."""
-
-    if torso_quaternion_wxyz.shape[:-1] != path_normal_w.shape[:-1]:
-        raise ValueError("torso quaternion and path normal batch shapes differ")
-    if torso_quaternion_wxyz.shape[-1] != 4 or path_normal_w.shape[-1] != 3:
-        raise ValueError("torso quaternion/path normal dimensions must end in 4/3")
-    local_z = torch.zeros_like(path_normal_w)
-    local_z[..., 2] = 1.0
-    up_w = quat_apply_wxyz(torso_quaternion_wxyz, local_z)
-    up_norm = torch.linalg.vector_norm(up_w, dim=-1, keepdim=True)
-    normal_norm = torch.linalg.vector_norm(path_normal_w, dim=-1, keepdim=True)
-    if torch.any(up_norm <= 1.0e-8) or torch.any(normal_norm <= 1.0e-8):
-        raise ValueError("torso up and path normal vectors must be nonzero")
-    up_w = up_w / up_norm
-    normal_w = path_normal_w / normal_norm
-    sine = torch.linalg.vector_norm(torch.linalg.cross(up_w, normal_w, dim=-1), dim=-1)
-    cosine = torch.sum(up_w * normal_w, dim=-1)
-    return torch.atan2(sine, cosine)
 
 
 def torso_pitch_from_world_vertical(
@@ -841,22 +721,6 @@ def adapt_connection_reaction_wrench(
     return reaction_wrench if reaction_is_joint_on_body else -reaction_wrench
 
 
-def project_hand_wrench_to_slope(
-    force_w: torch.Tensor,
-    torque_w: torch.Tensor,
-    path_tangent_w: torch.Tensor,
-    path_normal_w: torch.Tensor,
-    path_lateral_w: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Project a summed world-frame hand wrench to ``(F_s,F_n,tau_y)``."""
-
-    return (
-        torch.sum(force_w * path_tangent_w, dim=-1),
-        torch.sum(force_w * path_normal_w, dim=-1),
-        torch.sum(torque_w * path_lateral_w, dim=-1),
-    )
-
-
 @dataclass
 class ZMPCfg:
     min_ground_reaction: float = MISSING
@@ -907,7 +771,7 @@ class ZMPKinematicState:
         self.acceleration_n[ids] = 0.0
 
 
-def slope_zmp(
+def zmp_from_hand_wrench(
     com_s: torch.Tensor,
     com_n: torch.Tensor,
     com_acceleration_s: torch.Tensor,
@@ -918,11 +782,10 @@ def slope_zmp(
     hand_force_n: torch.Tensor,
     hand_torque_y: torch.Tensor,
     robot_mass: torch.Tensor | float,
-    gamma: torch.Tensor,
     *,
     min_ground_reaction: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Compute slope-frame ZMP for the cart-on-robot hand wrench.
+    """Compute flat-ground ZMP for the cart-on-robot hand wrench.
 
     ``hand_force_*`` and ``hand_torque_y`` use the wrench acting on the robot
     from the cart.  The force moment is written as the negative of the usual
@@ -931,8 +794,8 @@ def slope_zmp(
     """
 
     mass = torch.as_tensor(robot_mass, device=com_s.device, dtype=com_s.dtype)
-    r_s = mass * (com_acceleration_s + GRAVITY * torch.sin(gamma)) - hand_force_s
-    r_n = mass * (com_acceleration_n + GRAVITY * torch.cos(gamma)) - hand_force_n
+    r_s = mass * com_acceleration_s - hand_force_s
+    r_n = mass * (com_acceleration_n + GRAVITY) - hand_force_n
     valid = r_n > min_ground_reaction
     denominator = torch.where(valid, r_n, torch.ones_like(r_n))
     hand_moment_about_com = (
@@ -1086,8 +949,6 @@ __all__ = [
     "GRAVITY",
     "RickshawMassProperties",
     "SecondOrderLowPassState",
-    "SpeedReferenceCfg",
-    "SpeedReferenceState",
     "SupportPolygonCfg",
     "WrenchConsistencyState",
     "ZMPCfg",
@@ -1105,15 +966,12 @@ __all__ = [
     "foot_support_polygon",
     "low_pass",
     "parallel_axis_inertia",
-    "project_hand_wrench_to_slope",
     "quat_apply_wxyz",
     "rickshaw_pitch_from_quaternion",
     "rolling_resistance_wrench",
     "sagittal_com_radius",
-    "slope_zmp",
-    "torso_tilt_from_slope_normal",
     "torso_pitch_from_world_vertical",
     "update_analytic_handle_force_state",
-    "update_speed_reference",
     "update_wrench_consistency_state",
+    "zmp_from_hand_wrench",
 ]

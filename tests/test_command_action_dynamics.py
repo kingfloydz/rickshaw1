@@ -24,91 +24,15 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.actions import (
 )
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.dynamics import (
     FAT2ComRadiusState,
-    SpeedReferenceCfg,
-    SpeedReferenceState,
     WrenchConsistencyState,
     foot_support_polygon,
     quat_apply_wxyz,
     rolling_resistance_wrench,
     sagittal_com_radius,
-    slope_zmp,
     torso_pitch_from_world_vertical,
-    torso_tilt_from_slope_normal,
-    update_speed_reference,
     update_wrench_consistency_state,
+    zmp_from_hand_wrench,
 )
-from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.events import (
-    CommandState,
-)
-
-DT = 0.02
-SPEED_CFG = SpeedReferenceCfg(
-    acceleration_limit=0.8,
-    jerk_limit=2.5,
-    response_time=0.5,
-    velocity_tolerance=1.0e-3,
-)
-
-
-def _run_reference(start: float, target: float) -> tuple[torch.Tensor, torch.Tensor]:
-    state = SpeedReferenceState(
-        v_ref=torch.tensor([start], dtype=torch.float64),
-        a_ref=torch.zeros(1, dtype=torch.float64),
-    )
-    sample = torch.tensor([target], dtype=torch.float64)
-    velocities = [state.v_ref.clone()]
-    accelerations = [state.a_ref.clone()]
-    for _ in range(1_000):
-        previous_acceleration = state.a_ref.clone()
-        update_speed_reference(state, sample, DT, SPEED_CFG)
-        assert torch.all(
-            torch.abs(state.a_ref) <= SPEED_CFG.acceleration_limit + 1.0e-12
-        )
-        jerk = torch.abs((state.a_ref - previous_acceleration) / DT)
-        assert torch.all(jerk <= SPEED_CFG.jerk_limit + 1.0e-12)
-        velocities.append(state.v_ref.clone())
-        accelerations.append(state.a_ref.clone())
-        if state.v_ref.item() == target and state.a_ref.item() == 0.0:
-            break
-    else:
-        raise AssertionError(f"reference did not settle from {start} to {target}")
-    return torch.cat(velocities), torch.cat(accelerations)
-
-
-@pytest.mark.parametrize(
-    ("start", "target"),
-    ((0.0, 1.0), (1.0, 0.2), (0.7, -0.4), (-0.3, 0.5)),
-)
-def test_speed_reference_respects_acceleration_and_jerk(
-    start: float, target: float
-) -> None:
-    velocities, accelerations = _run_reference(start, target)
-    assert velocities[-1].item() == target
-    assert accelerations[-1].item() == 0.0
-
-
-def test_command_reset_clears_selected_environments() -> None:
-    state = CommandState.zeros(3, dtype=torch.float64)
-    state.v_sample[:] = torch.tensor([0.2, 0.4, 0.6], dtype=torch.float64)
-    state.v_ref[:] = torch.tensor([0.1, 0.3, 0.5], dtype=torch.float64)
-    state.a_ref[:] = torch.tensor([0.2, -0.2, 0.1], dtype=torch.float64)
-    state.resampling_elapsed_s[:] = 1.0
-    state.reset(torch.tensor([0, 2]))
-    torch.testing.assert_close(
-        state.v_sample, torch.tensor([0.0, 0.4, 0.0], dtype=torch.float64)
-    )
-    torch.testing.assert_close(
-        state.v_ref, torch.tensor([0.0, 0.3, 0.0], dtype=torch.float64)
-    )
-    torch.testing.assert_close(
-        state.a_ref, torch.tensor([0.0, -0.2, 0.0], dtype=torch.float64)
-    )
-    torch.testing.assert_close(
-        state.resampling_elapsed_s,
-        torch.tensor([0.0, 1.0, 0.0], dtype=torch.float64),
-    )
-
-
 def test_action_scale_matches_unitree_motor_defaults() -> None:
     assert ACTION_GROUP_DIMS == {
         "lower": 12,
@@ -158,13 +82,8 @@ def test_canonicalize_action_scale_rejects_environment_variation() -> None:
 
 def test_rolling_resistance_opposes_each_wheel() -> None:
     dtype = torch.float64
-    gamma = torch.tensor([0.12, -0.08], dtype=dtype)
-    tangent = torch.stack(
-        (torch.cos(gamma), torch.zeros_like(gamma), torch.sin(gamma)), dim=-1
-    )
-    normal = torch.stack(
-        (-torch.sin(gamma), torch.zeros_like(gamma), torch.cos(gamma)), dim=-1
-    )
+    tangent = torch.tensor([[1.0, 0.0, 0.0]] * 2, dtype=dtype)
+    normal = torch.tensor([[0.0, 0.0, 1.0]] * 2, dtype=dtype)
     wheel_speed = torch.tensor([[1.0, 0.8], [-1.0, -0.7]], dtype=dtype)
     normal_force = torch.tensor([[310.0, 330.0], [280.0, 300.0]], dtype=dtype)
     c_rr = torch.tensor([0.02, 0.03], dtype=dtype)
@@ -250,10 +169,8 @@ def test_foot_support_polygon_uses_collision_center_offset() -> None:
     assert torch.all(mask)
 
 
-@pytest.mark.parametrize("gradient", (-0.06, 0.0, 0.06))
-def test_torso_pitch_is_measured_from_world_vertical(gradient: float) -> None:
-    gamma = math.atan(gradient)
-    tangent = torch.tensor([[math.cos(gamma), 0.0, math.sin(gamma)]], dtype=torch.float64)
+def test_torso_pitch_is_measured_from_world_vertical() -> None:
+    tangent = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float64)
     pitch = 0.19
     quaternion = torch.tensor(
         [[math.cos(0.5 * pitch), 0.0, math.sin(0.5 * pitch), 0.0]],
@@ -262,26 +179,6 @@ def test_torso_pitch_is_measured_from_world_vertical(gradient: float) -> None:
     torch.testing.assert_close(
         torso_pitch_from_world_vertical(quaternion, tangent),
         torch.tensor([pitch], dtype=torch.float64),
-        rtol=0.0,
-        atol=1.0e-12,
-    )
-
-
-def test_torso_tilt_ignores_yaw() -> None:
-    angle = 0.31
-    half = 0.5 * angle
-    quaternions = torch.tensor(
-        [
-            [math.cos(half), math.sin(half), 0.0, 0.0],
-            [math.cos(half), 0.0, math.sin(half), 0.0],
-            [math.cos(half), 0.0, 0.0, math.sin(half)],
-        ],
-        dtype=torch.float64,
-    )
-    normal = torch.tensor([[0.0, 0.0, 1.0]], dtype=torch.float64).expand(3, -1)
-    torch.testing.assert_close(
-        torso_tilt_from_slope_normal(quaternions, normal),
-        torch.tensor([angle, angle, 0.0], dtype=torch.float64),
         rtol=0.0,
         atol=1.0e-12,
     )
@@ -302,8 +199,8 @@ def test_quaternion_vector_rotation_matches_mjlab() -> None:
     )
 
 
-def test_slope_zmp_applied_hand_torque_sign() -> None:
-    zmp, _, reaction, valid = slope_zmp(
+def test_flat_zmp_applied_hand_torque_sign() -> None:
+    zmp, _, reaction, valid = zmp_from_hand_wrench(
         torch.tensor([0.0], dtype=torch.float64),
         torch.tensor([1.0], dtype=torch.float64),
         torch.zeros(1, dtype=torch.float64),
@@ -314,7 +211,6 @@ def test_slope_zmp_applied_hand_torque_sign() -> None:
         torch.zeros(1, dtype=torch.float64),
         torch.tensor([9.81], dtype=torch.float64),
         1.0,
-        torch.tensor([0.0], dtype=torch.float64),
         min_ground_reaction=1.0,
     )
     assert valid.item()

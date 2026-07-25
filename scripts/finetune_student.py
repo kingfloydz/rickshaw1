@@ -17,18 +17,12 @@ from _mjlab_wrappers import (
 add_project_source_to_path()
 
 from g1_rickshaw_lab.provenance import atomic_torch_save  # noqa: E402
-from g1_rickshaw_lab.reward_profile import (  # noqa: E402
-    REWARD_WEIGHT_OVERRIDES_KEY,
-    reward_weight_hydra_overrides,
-    reward_weight_overrides_from_configuration,
-)
 from g1_rickshaw_lab.rl.runner import RunnerContext  # noqa: E402
 from g1_rickshaw_lab.training_contract import (  # noqa: E402
     CHECKPOINT_CURRICULUM_ITERATION_KEY,
     CHECKPOINT_LINEAGE_KEY,
     GUIDE_TRAINING_NUM_ENVS,
     GUIDE_TRAINING_PARAMETERS,
-    GUIDE_TRAINING_TASK,
     TRAINING_CONFIGURATION_KEY as TRAINING_CONFIGURATION_CHECKPOINT_KEY,
     build_training_configuration,
     build_s2_bootstrap_checkpoint,
@@ -39,7 +33,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     training_artifact_interval,
 )
 
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Directional-Slope-Student"
+DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Student"
 STUDENT_AGENT_KEY = "rsl_rl_student_cfg_entry_point"
 S2_GUIDE_PARAMETERS = GUIDE_TRAINING_PARAMETERS["s2_student_ppo"]
 
@@ -55,11 +49,7 @@ def _validate_resume_lineage(checkpoint: dict, teacher: Path, context: Path) -> 
 
 def _validate_resume_training_configuration(resume_configuration: dict, source_configuration: dict) -> None:
     if resume_configuration["training_parameters"] != source_configuration["training_parameters"]:
-        raise ValueError("S2 resume cannot change FAT2, latent_dim, history_length, or rollout_steps")
-    if reward_weight_overrides_from_configuration(resume_configuration) != reward_weight_overrides_from_configuration(
-        source_configuration
-    ):
-        raise ValueError("S2 resume cannot change reward weights")
+        raise ValueError("S2 resume cannot change latent_dim, history_length, or rollout_steps")
 
 
 def main() -> int:
@@ -98,9 +88,6 @@ def main() -> int:
     rollout_steps = int(training_parameters["rollout_steps"])
     latent_dim = int(training_parameters["latent_dim"])
     history_length = int(training_parameters["history_length"])
-    fat2_weight = float(training_parameters["fat2_weight"])
-    stability_reward_curriculum = bool(training_parameters["stability_reward_curriculum"])
-    reward_weight_overrides = reward_weight_overrides_from_configuration(s1_training_configuration)
     resume_checkpoint_path: Path | None = None
     if args.resume_checkpoint is None:
         checkpoint = build_s2_bootstrap_checkpoint(teacher, context)
@@ -160,22 +147,17 @@ def main() -> int:
             "num_envs": args.num_envs,
             "num_steps_per_env": rollout_steps,
             "save_interval": training_artifact_interval(rollout_steps),
-            "fat2_weight": fat2_weight,
             "latent_dim": latent_dim,
             "history_length": history_length,
-            "stability_reward_curriculum": stability_reward_curriculum,
-            REWARD_WEIGHT_OVERRIDES_KEY: reward_weight_overrides,
             "launcher_arguments": list(remaining),
             "teacher_checkpoint": os.fspath(teacher.resolve()),
             "context_checkpoint": os.fspath(context.resolve()),
         },
         actor_initialized_from_teacher=bool(s1_training_configuration.get("actor_initialized_from_teacher")),
         stage_coverage=s1_training_configuration.get("stage_coverage"),
-        fat2_weight=fat2_weight,
         latent_dim=latent_dim,
         history_length=history_length,
         rollout_steps=rollout_steps,
-        stability_reward_curriculum=stability_reward_curriculum,
     )
     runner_context = RunnerContext.training(
         stage="s2_student_ppo",
@@ -211,8 +193,6 @@ def main() -> int:
             f"agent.actor.latent_dim={latent_dim}",
             f"agent.actor.history_length={history_length}",
             f"env.history_length={history_length}",
-            *reward_weight_hydra_overrides(reward_weight_overrides),
-            f"env.rewards.fat2_prior_exp.weight={fat2_weight}",
         ],
         runner_context=runner_context,
     )

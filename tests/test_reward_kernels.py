@@ -1,59 +1,80 @@
 from __future__ import annotations
 
+from importlib.metadata import version
+
+import pytest
 import torch
 
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp import rewards
+from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.observations import (
+    GAIT_PERIOD_S,
+)
 
 
-def test_requested_reward_profile() -> None:
-    assert rewards.REWARD_WEIGHTS["joint_acc_l2"] == -2.5e-7
-    assert rewards.REWARD_WEIGHTS["joint_position_limits"] == -10.0
-    assert rewards.REWARD_WEIGHTS["action_rate_l2"] == -0.05
-    assert rewards.REWARD_WEIGHTS["feet_gait"] == 0.5
-    assert rewards.GAIT_PERIOD_S == 1.0
-    assert rewards.GAIT_STANCE_THRESHOLD == 0.56
-    assert rewards.MOVING_COMMAND_THRESHOLD_MPS == 0.1
-
-
-def test_action_rate_uses_raw_policy_action_delta() -> None:
-    action = torch.tensor([[0.5, -0.5]])
-    previous_action = torch.tensor([[0.2, -0.1]])
-
+def test_rickshaw_height_reward_kernels() -> None:
+    height = torch.tensor([0.80, 0.82, 0.90])
+    contact = torch.tensor([True, True, False])
     torch.testing.assert_close(
-        rewards.action_rate_l2_value(action, previous_action),
-        torch.tensor([0.25]),
-    )
-
-
-def test_speed_kernels_use_the_configured_scales() -> None:
-    v_ref = torch.tensor([1.0])
-    v_robot = torch.tensor([0.5])
-    lateral_speed = torch.tensor([0.0])
-
-    torch.testing.assert_close(
-        rewards.track_speed_exp_value(v_ref, v_robot, lateral_speed),
-        torch.exp(torch.tensor([-1.0])),
+        rewards.hitch_height_exp_value(height, 0.80, contact),
+        torch.tensor([1.0, torch.exp(torch.tensor(-1.0)), 0.0]),
     )
     torch.testing.assert_close(
-        rewards.track_speed_exp_value(v_ref, v_robot, torch.tensor([0.5])),
-        torch.exp(torch.tensor([-2.0])),
+        rewards.hitch_height_recovery_l2_value(height, 0.80),
+        torch.tensor([0.0, 0.0, 1.0]),
+    )
+    assert GAIT_PERIOD_S == 1.0
+
+
+def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
+    pytest.importorskip("mjlab")
+    assert version("mjlab") == "1.5.3"
+
+    from mjlab.tasks.velocity import mdp as velocity_mdp
+    from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
+
+    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
+        g1_rickshaw_env_cfg,
     )
 
+    cfg = g1_rickshaw_env_cfg()
+    mjlab_cfg = unitree_g1_flat_env_cfg()
+    official = {
+        "track_linear_velocity": (velocity_mdp.track_linear_velocity, 2.0),
+        "track_angular_velocity": (velocity_mdp.track_angular_velocity, 2.0),
+        "upright": (velocity_mdp.upright, 1.0),
+        "pose": (velocity_mdp.variable_posture, 1.0),
+        "body_ang_vel": (velocity_mdp.body_angular_velocity_penalty, -0.05),
+        "angular_momentum": (velocity_mdp.angular_momentum_penalty, -0.02),
+        "dof_pos_limits": (velocity_mdp.joint_pos_limits, -1.0),
+        "action_rate_l2": (velocity_mdp.action_rate_l2, -0.1),
+        "air_time": (velocity_mdp.feet_air_time, 0.0),
+        "foot_clearance": (velocity_mdp.feet_clearance, -2.0),
+        "foot_swing_height": (velocity_mdp.feet_swing_height, -0.25),
+        "foot_slip": (velocity_mdp.feet_slip, -0.1),
+        "soft_landing": (velocity_mdp.soft_landing, -1.0e-5),
+        "self_collisions": (velocity_mdp.self_collision_cost, -1.0),
+    }
+    assert set(cfg.rewards) == {
+        *official,
+        "hitch_height_exp",
+        "hitch_height_recovery_l2",
+    }
+    for name, (func, weight) in official.items():
+        term = cfg.rewards[name]
+        mjlab_term = mjlab_cfg.rewards[name]
+        assert term.func is func
+        assert term.func is mjlab_term.func
+        assert term.weight == pytest.approx(0.2 if name == "upright" else weight)
+        local_params = dict(term.params)
+        mjlab_params = dict(mjlab_term.params)
+        if name in {"track_linear_velocity", "track_angular_velocity"}:
+            assert local_params.pop("asset_cfg").name == "rickshaw"
+        if name == "foot_swing_height":
+            mjlab_params["target_height"] = 0.08
+        assert local_params == mjlab_params
 
-def test_gait_reward_requires_motion_and_matching_contact_phase() -> None:
-    episode_time = torch.tensor([0.30, 0.30, 0.30])
-    contact = torch.tensor([[True, False], [False, True], [True, False]])
-    v_ref = torch.tensor([0.5, 0.5, 0.0])
-
-    value = rewards.feet_gait_value(episode_time, contact, v_ref)
-
-    torch.testing.assert_close(value, torch.tensor([1.0, 0.0, 0.0]))
-
-
-def test_swing_height_penalty_uses_only_airborne_feet() -> None:
-    penalty = rewards.feet_swing_height_value(
-        torch.tensor([[0.0, 0.02]]),
-        torch.tensor([[True, False]]),
-    )
-
-    torch.testing.assert_close(penalty, torch.tensor([0.0025]))
+    assert cfg.rewards["foot_swing_height"].params["target_height"] == 0.08
+    assert cfg.rewards["foot_clearance"].params["target_height"] == 0.10
+    assert cfg.rewards["hitch_height_exp"].weight == 0.5
+    assert cfg.rewards["hitch_height_recovery_l2"].weight == -0.25
+    assert cfg.commands["twist"].entity_name == "rickshaw"

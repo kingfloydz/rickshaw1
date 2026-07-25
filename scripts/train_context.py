@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
 import random
 import subprocess
 import sys
-from typing import Any, Mapping
+from typing import Any
 
 from _mjlab_wrappers import add_project_source_to_path, require_existing_file
 
@@ -25,10 +26,6 @@ from g1_rickshaw_lab.provenance import (  # noqa: E402
     save_checkpoint_atomic,
 )
 from g1_rickshaw_lab.policy_schema import ACTOR_OBSERVATION_DIM  # noqa: E402
-from g1_rickshaw_lab.reward_profile import (  # noqa: E402
-    REWARD_WEIGHT_OVERRIDES_KEY,
-    reward_weight_overrides_from_configuration,
-)
 from g1_rickshaw_lab.rl import G1RickshawStudentActor, StudentDistillationLoss  # noqa: E402
 from g1_rickshaw_lab.training_contract import (  # noqa: E402
     CHECKPOINT_CURRICULUM_ITERATION_KEY,
@@ -303,9 +300,6 @@ def train(args: argparse.Namespace) -> Path:
         teacher_checkpoint[TRAINING_CONFIGURATION_CHECKPOINT_KEY]
     )
     training_parameters = teacher_training_configuration["training_parameters"]
-    reward_weight_overrides = reward_weight_overrides_from_configuration(
-        teacher_training_configuration
-    )
     latent_dim = int(training_parameters["latent_dim"])
     history_length = int(training_parameters["history_length"])
     rollout_steps = int(training_parameters["rollout_steps"])
@@ -392,17 +386,12 @@ def train(args: argparse.Namespace) -> Path:
             ),
             "teacher_rollout_samples": int(rollout_manifest["num_samples"]),
             "deterministic_algorithms": S1_DETERMINISTIC_ALGORITHMS,
-            REWARD_WEIGHT_OVERRIDES_KEY: reward_weight_overrides,
         },
         actor_initialized_from_teacher=True,
         stage_coverage=stage_coverage,
-        fat2_weight=float(training_parameters["fat2_weight"]),
         latent_dim=latent_dim,
         history_length=history_length,
         rollout_steps=rollout_steps,
-        stability_reward_curriculum=bool(
-            training_parameters["stability_reward_curriculum"]
-        ),
     )
     validate_guide_training_configuration(
         training_configuration,
@@ -538,7 +527,7 @@ def main() -> int:
         required=True,
         help="S0 teacher checkpoint with provenance metadata.",
     )
-    parser.add_argument("--task", default="Mjlab-G1-Rickshaw-Directional-Slope-Teacher")
+    parser.add_argument("--task", default="Mjlab-G1-Rickshaw-Flat-Teacher")
     parser.add_argument(
         "--rollout-dir",
         required=False,

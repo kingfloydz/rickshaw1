@@ -8,7 +8,6 @@ from g1_rickshaw_lab.configuration import (
     G1_JOINT_ORDER,
     REQUIRED_CALIBRATION_FIELDS,
     REQUIRED_FEASIBILITY_RANGES,
-    SLOPE_GRADIENTS,
     ConfigurationContractError,
     FeasibilityEnvelope,
 )
@@ -21,8 +20,6 @@ def _range_for(name: str) -> dict[str, float]:
         return {"min": 0.0, "max": 10.0}
     if name == "terrain.friction":
         return {"min": 0.6, "max": 1.2}
-    if name in {"command.acceleration_limit", "command.jerk_limit"}:
-        return {"min": 0.1, "max": 1.0}
     return {"min": 0.01, "max": 10.0}
 
 
@@ -39,8 +36,7 @@ def _calibration_for(name: str):
 
 def _valid_mapping() -> dict:
     return {
-        "schema_version": 1,
-        "slopes": list(SLOPE_GRADIENTS),
+        "schema_version": 2,
         "joint_order": list(G1_JOINT_ORDER),
         "ranges": {name: _range_for(name) for name in REQUIRED_FEASIBILITY_RANGES},
         "calibration": {
@@ -52,7 +48,6 @@ def _valid_mapping() -> dict:
 def test_feasibility_envelope_requires_exact_schema_fields() -> None:
     envelope = FeasibilityEnvelope.from_mapping(_valid_mapping())
     assert tuple(envelope.joint_order) == G1_JOINT_ORDER
-    assert tuple(envelope.slopes) == SLOPE_GRADIENTS
     assert set(envelope.ranges) == set(REQUIRED_FEASIBILITY_RANGES)
     assert set(envelope.calibration) == set(REQUIRED_CALIBRATION_FIELDS)
 

@@ -1,8 +1,8 @@
 """Project-owned RSL-RL runner integration.
 
-The runner is created explicitly by the project launcher.  It keeps checkpoint
-provenance, iteration accounting, and the optional stability-reward schedule in
-one place without modifying RSL-RL classes globally.
+The runner is created explicitly by the project launcher. It keeps checkpoint
+provenance and iteration accounting in one place without modifying RSL-RL
+classes globally.
 """
 
 from __future__ import annotations
@@ -21,13 +21,11 @@ from g1_rickshaw_lab.provenance import (
     attach_checkpoint_metadata,
     validate_checkpoint,
 )
-from g1_rickshaw_lab.reward_profile import reward_weight_overrides_from_configuration
 from g1_rickshaw_lab.training_contract import (
     BASELINE_ROLLOUT_STEPS,
     CHECKPOINT_CURRICULUM_ITERATION_KEY,
     CHECKPOINT_LINEAGE_KEY,
     CHECKPOINT_SCHEMA_VERSION,
-    CHECKPOINT_STABILITY_REWARDS_ACTIVE_KEY,
     CHECKPOINT_STAGE_KEY,
     TRAINING_CONFIGURATION_KEY,
     checkpoint_stage,
@@ -105,19 +103,6 @@ def _torch_load(path: str | Path) -> dict[str, Any]:
     return checkpoint
 
 
-def _unwrap_env(env: Any) -> Any:
-    visited: set[int] = set()
-    while id(env) not in visited:
-        visited.add(id(env))
-        next_env = getattr(env, "unwrapped", None)
-        if next_env is None or next_env is env:
-            next_env = getattr(env, "env", None)
-        if next_env is None or next_env is env:
-            break
-        env = next_env
-    return env
-
-
 def create_rickshaw_runner_type(
     context: RunnerContext,
     *,
@@ -140,19 +125,6 @@ def create_rickshaw_runner_type(
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             super().__init__(*args, **kwargs)
-            self._g1_stability_reward_curriculum = bool(
-                training_configuration and training_configuration["training_parameters"]["stability_reward_curriculum"]
-            )
-            if self._g1_stability_reward_curriculum:
-                env = _unwrap_env(self.env)
-                self._g1_stability_reward_weights = {
-                    name: float(env.reward_manager.get_term_cfg(name).weight)
-                    for name in ("fat2_prior_exp", "zmp_margin_barrier")
-                }
-                self._set_stability_rewards(False)
-            else:
-                self._g1_stability_rewards_active = True
-
             if training_configuration is not None:
                 parameters = training_configuration["training_parameters"]
                 configured_steps = int(parameters["rollout_steps"])
@@ -171,12 +143,6 @@ def create_rickshaw_runner_type(
             self._g1_curriculum_iteration = self._g1_curriculum_start_iteration
             self._install_algorithm_update_callback()
 
-        def _set_stability_rewards(self, active: bool) -> None:
-            env = _unwrap_env(self.env)
-            for name, default_weight in self._g1_stability_reward_weights.items():
-                env.reward_manager.get_term_cfg(name).weight = default_weight if active else 0.0
-            self._g1_stability_rewards_active = active
-
         def _install_algorithm_update_callback(self) -> None:
             algorithm_update = self.alg.update
 
@@ -187,14 +153,6 @@ def create_rickshaw_runner_type(
                 self._g1_curriculum_iteration = self._g1_curriculum_start_iteration + (
                     self._g1_stage_policy_steps // BASELINE_ROLLOUT_STEPS
                 )
-                if (
-                    self._g1_stability_reward_curriculum
-                    and not self._g1_stability_rewards_active
-                    and self.logger.lenbuffer
-                    and sum(self.logger.lenbuffer) / len(self.logger.lenbuffer) > 500.0
-                ):
-                    self._set_stability_rewards(True)
-                    print("[INFO] FAT2 and ZMP rewards enabled at mean episode length > 500")
                 return result
 
             self.alg.update = update_with_progress
@@ -244,7 +202,6 @@ def create_rickshaw_runner_type(
             checkpoint["schema_version"] = CHECKPOINT_SCHEMA_VERSION
             checkpoint[CHECKPOINT_STAGE_KEY] = stage
             checkpoint[CHECKPOINT_CURRICULUM_ITERATION_KEY] = int(self._g1_curriculum_iteration)
-            checkpoint[CHECKPOINT_STABILITY_REWARDS_ACTIVE_KEY] = bool(self._g1_stability_rewards_active)
             checkpoint[TRAINING_CONFIGURATION_KEY] = dict(training_configuration)
             checkpoint[CHECKPOINT_LINEAGE_KEY] = lineage
             attach_checkpoint_metadata(checkpoint, metadata, replace=True)
@@ -266,13 +223,12 @@ def create_rickshaw_runner_type(
                     expected_stage=loaded_stage,
                 )
             )
-            if training_configuration is not None:
-                if loaded_configuration["training_parameters"] != training_configuration["training_parameters"]:
-                    raise RuntimeError("loaded checkpoint training parameters differ from the active run")
-                if reward_weight_overrides_from_configuration(
-                    loaded_configuration
-                ) != reward_weight_overrides_from_configuration(training_configuration):
-                    raise RuntimeError("loaded checkpoint reward weights differ from the active run")
+            if (
+                training_configuration is not None
+                and loaded_configuration["training_parameters"]
+                != training_configuration["training_parameters"]
+            ):
+                raise RuntimeError("loaded checkpoint training parameters differ from the active run")
             if loaded_stage in {"s2_bootstrap", "s2_student_ppo"}:
                 validate_student_checkpoint_architecture(checkpoint, loaded_configuration)
             elif loaded_stage == "s0_teacher":
@@ -309,8 +265,6 @@ def create_rickshaw_runner_type(
                 if self._g1_curriculum_start_iteration < 0:
                     raise RuntimeError("loaded checkpoint curriculum precedes its completed sample budget")
                 self.current_learning_iteration = self._g1_training_iterations
-            if self._g1_stability_reward_curriculum:
-                self._set_stability_rewards(bool(checkpoint.get(CHECKPOINT_STABILITY_REWARDS_ACTIVE_KEY, False)))
             return result
 
         def export_policy_to_jit(self, path: str, filename: str = "policy.pt"):

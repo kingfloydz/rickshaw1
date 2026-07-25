@@ -57,9 +57,9 @@ def test_deployment_manifest_uses_the_policy_schema() -> None:
             TRAINING_CONFIGURATION_KEY: {
                 "stage": "s2_student_ppo",
                 "training_parameters": {
-                    "fat2_weight": 0.1,
                     "rollout_steps": 48,
                     "latent_dim": 24,
+                    "history_length": 61,
                 },
             }
         }
@@ -81,6 +81,8 @@ def test_deployment_manifest_uses_the_policy_schema() -> None:
     assert manifest["action"]["scale_rad_per_normalized_action"] == list(
         policy_schema.ACTION_SCALE
     )
+    assert max(abs(value) for value in manifest["action"]["q_ref"]) <= 2.0
+    assert len(manifest["action"]["static_position_offset_rad"]) == policy_schema.ACTION_DIM
     butterworth = manifest["action"]["butterworth"]
     assert {name: butterworth[name] for name in ("b0", "b1", "a1")} == {
         "b0": policy_schema.BUTTERWORTH_B0,

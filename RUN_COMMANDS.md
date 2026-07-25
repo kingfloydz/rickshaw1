@@ -9,10 +9,10 @@ python -m pip install -e source/g1_rickshaw_lab
 Validate the MuJoCo assets, fixed grippers, point connections, collision masks, and hitch geometry:
 
 ```bash
-python scripts/validate_mjlab_assets.py --output mjlab_asset_validation.json
+python scripts/validate_mjlab_assets.py
 ```
 
-Validate all 19 MuJoCo static equilibria:
+Validate and persist the flat-ground MuJoCo static equilibrium:
 
 ```bash
 python scripts/validate_static_initialization.py
@@ -36,5 +36,6 @@ Render the solved initialization state:
 python scripts/render_initialization.py --output outputs/initialization.png
 ```
 
-Initialization precomputes all 19 MuJoCo inverse-dynamics equilibria at startup.
-There is no asset conversion, reset-pose file, gain ramp, or settling controller.
+Initialization loads the model-bound reset pose from
+`config/static_rest_poses.json`. There is no asset conversion, gain ramp, or
+settling controller.

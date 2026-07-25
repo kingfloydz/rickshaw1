@@ -10,7 +10,6 @@ from __future__ import annotations
 import importlib.metadata
 import inspect
 import json
-import math
 import os
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -19,7 +18,8 @@ from typing import Any
 import torch
 
 from .artifact_io import write_json_atomic
-from .configuration import FIXED_G1_JOINT_ORDER, load_feasibility_envelope
+from .configuration import G1_JOINT_ORDER, load_feasibility_envelope
+from .g1_motor_defaults import G1_JOINT_STIFFNESS
 from .policy_schema import (
     ACTION_DIM,
     ACTION_SCALE,
@@ -43,54 +43,37 @@ from .provenance import (
     extract_checkpoint_metadata,
     load_checkpoint_with_validation,
 )
-from .reward_profile import (
-    REWARD_WEIGHT_OVERRIDES_KEY,
-    reward_weight_overrides_from_configuration,
-)
-from .slope_contract import (
-    SLOPE_GRADIENTS,
-    SLOPE_LABELS,
-    balanced_slope_counts,
-)
 
 CHECKPOINT_SCHEMA_VERSION = 1
 CHECKPOINT_STAGE_KEY = "g1_rickshaw_stage"
 CHECKPOINT_LINEAGE_KEY = "g1_rickshaw_lineage"
 CHECKPOINT_CURRICULUM_ITERATION_KEY = "g1_rickshaw_curriculum_iteration"
-CHECKPOINT_STABILITY_REWARDS_ACTIVE_KEY = "g1_rickshaw_stability_rewards_active"
 TRAINING_CONFIGURATION_KEY = "g1_rickshaw_training_configuration"
-TRAINING_CONFIGURATION_SCHEMA_VERSION = 9
-LEGACY_TRAINING_CONFIGURATION_SCHEMA_VERSION = 8
+TRAINING_CONFIGURATION_SCHEMA_VERSION = 11
 EXPECTED_RSL_RL_DISTRIBUTION_VERSION = RSL_RL_VERSION.removeprefix("v")
 
 REPOSITORY_ROOT = PROJECT_ROOT
 DEFAULT_FEASIBILITY_PATH = CONFIG_ROOT / "feasibility_envelope.yaml"
-GUIDE_TRAINING_TASK = "Mjlab-G1-Rickshaw-Directional-Slope-Teacher"
+GUIDE_TRAINING_TASK = "Mjlab-G1-Rickshaw-Flat-Teacher"
 GUIDE_TRAINING_NUM_ENVS = 8192
 TRAINING_ARTIFACT_INTERVAL = 200
 S1_DETERMINISTIC_ALGORITHMS = False
 
-SIGNED_SLOPE_LABELS = SLOPE_LABELS
-ROLLOUT_MANIFEST_SCHEMA_VERSION = 4
-ROLLOUT_SAMPLE_AUDIT_SCHEMA_VERSION = 4
+ROLLOUT_MANIFEST_SCHEMA_VERSION = 5
+ROLLOUT_SAMPLE_AUDIT_SCHEMA_VERSION = 5
 ROLLOUT_DEFAULT_NUM_ENVS = GUIDE_TRAINING_NUM_ENVS
 DISTILLATION_ROLLOUT_STEPS = 64
 ROLLOUT_STAGE_SEQUENCE = ("TRAINING",)
 TRAINING_PARAMETER_KEYS = (
-    "fat2_weight",
     "rollout_steps",
     "latent_dim",
     "history_length",
-    "stability_reward_curriculum",
 )
 DEFAULT_TRAINING_PARAMETERS = {
-    "fat2_weight": 0.0,
     "rollout_steps": 48,
     "latent_dim": DEFAULT_CONTEXT_DIM,
     "history_length": HISTORY_LENGTH,
-    "stability_reward_curriculum": False,
 }
-SUPPORTED_FAT2_WEIGHTS = (0.0, 0.1, 0.2)
 SUPPORTED_ROLLOUT_STEPS = (24, 48, 64)
 TRAINING_CONFIGURATION_FIELDS = {
     "schema_version",
@@ -108,7 +91,7 @@ TRAINING_CONFIGURATION_FIELDS = {
 GUIDE_TRAINING_PARAMETERS = {
     "s0_teacher": {
         "domain_randomization": "startup_fixed",
-        "terrain_slopes": "startup_center_weighted_fixed",
+        "terrain": "flat_plane",
         "observation_noise": "unitree_g1_uniform",
     },
     "s1_context_distillation": {
@@ -196,11 +179,9 @@ def build_training_configuration(
     resolved_parameters: Mapping[str, Any],
     actor_initialized_from_teacher: bool | None,
     stage_coverage: Mapping[str, Any] | None,
-    fat2_weight: float = float(DEFAULT_TRAINING_PARAMETERS["fat2_weight"]),
     latent_dim: int = int(DEFAULT_TRAINING_PARAMETERS["latent_dim"]),
     rollout_steps: int = int(DEFAULT_TRAINING_PARAMETERS["rollout_steps"]),
     history_length: int = int(DEFAULT_TRAINING_PARAMETERS["history_length"]),
-    stability_reward_curriculum: bool = bool(DEFAULT_TRAINING_PARAMETERS["stability_reward_curriculum"]),
 ) -> dict[str, Any]:
     """Build the canonical configuration shared by every training stage."""
 
@@ -217,11 +198,9 @@ def build_training_configuration(
             "actor_initialized_from_teacher": actor_initialized_from_teacher,
             "stage_coverage": None if stage_coverage is None else dict(stage_coverage),
             "training_parameters": {
-                "fat2_weight": fat2_weight,
                 "rollout_steps": rollout_steps,
                 "latent_dim": latent_dim,
                 "history_length": history_length,
-                "stability_reward_curriculum": stability_reward_curriculum,
             },
         }
     )
@@ -265,12 +244,6 @@ def validate_training_configuration(
 
     if not isinstance(value, Mapping):
         raise ValueError("training configuration must be a mapping")
-    if value.get("schema_version") == LEGACY_TRAINING_CONFIGURATION_SCHEMA_VERSION:
-        value = dict(value)
-        parameters = dict(value["training_parameters"])
-        parameters["history_length"] = HISTORY_LENGTH
-        value["training_parameters"] = parameters
-        value["schema_version"] = TRAINING_CONFIGURATION_SCHEMA_VERSION
     if value.get("schema_version") != TRAINING_CONFIGURATION_SCHEMA_VERSION:
         raise ValueError(f"training configuration requires schema_version: {TRAINING_CONFIGURATION_SCHEMA_VERSION}")
     if set(value) != TRAINING_CONFIGURATION_FIELDS:
@@ -310,20 +283,11 @@ def validate_training_configuration(
         raise ValueError("latent_dim must be an integer")
     if type(training_parameters["history_length"]) is not int:
         raise ValueError("history_length must be an integer")
-    if type(training_parameters["stability_reward_curriculum"]) is not bool:
-        raise ValueError("stability_reward_curriculum must be boolean")
-    raw_fat2_weight = training_parameters["fat2_weight"]
-    if isinstance(raw_fat2_weight, bool) or not isinstance(raw_fat2_weight, (int, float)):
-        raise ValueError("fat2_weight must be numeric")
     normalized_parameters = {
-        "fat2_weight": float(raw_fat2_weight),
         "rollout_steps": int(training_parameters["rollout_steps"]),
         "latent_dim": int(training_parameters["latent_dim"]),
         "history_length": int(training_parameters["history_length"]),
-        "stability_reward_curriculum": training_parameters["stability_reward_curriculum"],
     }
-    if normalized_parameters["fat2_weight"] not in SUPPORTED_FAT2_WEIGHTS:
-        raise ValueError(f"fat2_weight must be one of {SUPPORTED_FAT2_WEIGHTS}")
     if normalized_parameters["rollout_steps"] not in SUPPORTED_ROLLOUT_STEPS:
         raise ValueError(f"rollout_steps must be one of {SUPPORTED_ROLLOUT_STEPS}")
     validate_context_dim(normalized_parameters["latent_dim"])
@@ -457,9 +421,6 @@ def validate_rollout_stage_coverage(manifest: Mapping[str, Any]) -> dict[str, in
             f"{ROLLOUT_DEFAULT_NUM_ENVS} environments x "
             f"{DISTILLATION_ROLLOUT_STEPS} steps"
         )
-    expected_slopes = list(SLOPE_GRADIENTS)
-    if manifest.get("signed_slopes") != expected_slopes:
-        raise ValueError(f"rollout manifest must contain exactly all {len(SLOPE_GRADIENTS)} slopes")
     expected_samples = num_envs * num_steps
     if (
         segment.get("valid_samples") != expected_samples
@@ -468,27 +429,6 @@ def validate_rollout_stage_coverage(manifest: Mapping[str, Any]) -> dict[str, in
         or segment.get("reset_policy_steps") != 0
     ):
         raise ValueError("TRAINING rollout segment did not meet its reset/sample quota")
-
-    expected_environments = {
-        label: count
-        for label, count in zip(
-            SIGNED_SLOPE_LABELS,
-            balanced_slope_counts(num_envs),
-            strict=True,
-        )
-    }
-    expected_slope_samples = {label: count * num_steps for label, count in expected_environments.items()}
-    if segment.get("slope_environment_distribution") != expected_environments:
-        raise ValueError("TRAINING rollout lacks the balanced slope allocation")
-    if segment.get("slope_sample_distribution") != expected_slope_samples:
-        raise ValueError("TRAINING rollout lacks the exact slope sample quotas")
-    episodes = segment.get("slope_episode_distribution")
-    if (
-        not isinstance(episodes, Mapping)
-        or set(episodes) != set(SIGNED_SLOPE_LABELS)
-        or any(isinstance(count, bool) or not isinstance(count, int) or count <= 0 for count in episodes.values())
-    ):
-        raise ValueError(f"TRAINING rollout lacks episode evidence for all {len(SLOPE_GRADIENTS)} slopes")
 
     environment_stages = segment.get("per_environment_stage_distribution")
     sample_stages = segment.get("valid_sample_stage_distribution")
@@ -500,13 +440,6 @@ def validate_rollout_stage_coverage(manifest: Mapping[str, Any]) -> dict[str, in
         raise ValueError("rollout aggregate stage distribution differs from its segment")
     if manifest.get("num_samples") != expected_samples:
         raise ValueError("rollout manifest num_samples differs from its segment")
-    for name, expected in (
-        ("slope_sample_distribution", expected_slope_samples),
-        ("slope_environment_distribution", expected_environments),
-        ("slope_episode_distribution", dict(episodes)),
-    ):
-        if manifest.get(name) != expected:
-            raise ValueError(f"rollout aggregate {name} differs from its segment")
     return {"TRAINING": expected_samples}
 
 
@@ -537,10 +470,10 @@ def require_pinned_rsl_rl() -> str:
         from rsl_rl.models import MLPModel  # noqa: F401
         from rsl_rl.runners import OnPolicyRunner
     except (ImportError, ModuleNotFoundError) as exc:
-        raise RuntimeError("the installed rsl-rl-lib does not expose the pinned 5.0.1 actor/critic API") from exc
+        raise RuntimeError("the installed rsl-rl-lib does not expose the pinned 5.4.0 actor/critic API") from exc
     load_parameters = inspect.signature(OnPolicyRunner.load).parameters
     if "load_cfg" not in load_parameters or "strict" not in load_parameters:
-        raise RuntimeError("RSL-RL OnPolicyRunner.load does not match the pinned 5.0.1 ABI")
+        raise RuntimeError("RSL-RL OnPolicyRunner.load does not match the pinned 5.4.0 ABI")
     return installed
 
 
@@ -555,7 +488,7 @@ def collect_runtime_metadata() -> CheckpointMetadata:
     """Collect complete provenance after validating the pinned runtime version."""
 
     require_pinned_rsl_rl()
-    return collect_checkpoint_metadata(joint_order=FIXED_G1_JOINT_ORDER)
+    return collect_checkpoint_metadata(joint_order=G1_JOINT_ORDER)
 
 
 def _torch_load(path: str | Path) -> dict[str, Any]:
@@ -713,10 +646,6 @@ def build_s2_bootstrap_checkpoint(
     training_parameters = dict(context_training_configuration["training_parameters"])
     if teacher_training_configuration["training_parameters"] != training_parameters:
         raise ValueError("S0 and S1 training parameters differ")
-    teacher_reward_overrides = reward_weight_overrides_from_configuration(teacher_training_configuration)
-    context_reward_overrides = reward_weight_overrides_from_configuration(context_training_configuration)
-    if teacher_reward_overrides != context_reward_overrides:
-        raise ValueError("S0 and S1 reward profiles differ")
     teacher_metadata = extract_checkpoint_metadata(teacher)
     context_metadata = extract_checkpoint_metadata(context)
     if teacher_metadata.to_mapping() != context_metadata.to_mapping():
@@ -755,9 +684,7 @@ def build_s2_bootstrap_checkpoint(
                     "source_stage": "s1_context_distillation",
                     "source_checkpoint": os.fspath(context_file),
                 },
-                "resolved_parameters": {
-                    REWARD_WEIGHT_OVERRIDES_KEY: context_reward_overrides,
-                },
+                "resolved_parameters": {},
                 "actor_initialized_from_teacher": True,
                 "stage_coverage": context_training_configuration["stage_coverage"],
                 "training_parameters": training_parameters,
@@ -783,32 +710,20 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
     history_length = int(training_configuration["training_parameters"].get("history_length", HISTORY_LENGTH))
     feasibility = load_feasibility_envelope(feasibility_config_path())
     calibration = feasibility.calibration
-    ranges = feasibility.ranges
-    from .static_equilibrium import solve_mujoco_static_equilibria
+    from .static_equilibrium import load_mujoco_static_equilibrium
     from .tasks.manager_based.rickshaw_velocity.closed_chain import (
         build_assembled_spec,
     )
 
     model = build_assembled_spec().compile()
-    static_solutions = solve_mujoco_static_equilibria(model, SLOPE_GRADIENTS)
-    command_ranges: dict[str, dict[str, Any]] = {}
-    for name, source_name, unit in (
-        ("acceleration_limit", "command.acceleration_limit", "m/s^2"),
-        ("jerk_limit", "command.jerk_limit", "m/s^3"),
-    ):
-        interval = ranges.get(source_name)
-        if interval is None:
-            raise ValueError(f"feasibility envelope is missing ranges.{source_name}")
-        minimum = float(interval.minimum)
-        maximum = float(interval.maximum)
-        if not math.isfinite(minimum) or not math.isfinite(maximum) or minimum <= 0.0 or minimum > maximum:
-            raise ValueError(f"feasibility envelope has invalid ranges.{source_name}")
-        command_ranges[name] = {
-            "min": minimum,
-            "max": maximum,
-            "unit": unit,
-            "source": f"ranges.{source_name}",
-        }
+    static_solution = load_mujoco_static_equilibrium(model)
+    static_q_ref = [
+        static_solution.qpos[int(model.joint(f"robot/{name}").qposadr[0])]
+        for name in G1_JOINT_ORDER
+    ]
+    static_position_offset = (
+        static_solution.joint_actuator_torque / G1_JOINT_STIFFNESS
+    ).tolist()
     safety = {key.removeprefix("safety."): value for key, value in calibration.items() if key.startswith("safety.")}
     return {
         "schema_version": 1,
@@ -858,24 +773,18 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
                 },
             ],
         },
-        "command": command_ranges,
+        "command": {
+            "tracked_body": "rickshaw",
+            "speed_range_mps": [0.0, 1.0],
+            "standing_fraction": 0.1,
+            "resampling_time_range_s": [3.0, 8.0],
+        },
         "action": {
-            "joint_order": list(FIXED_G1_JOINT_ORDER),
+            "joint_order": list(G1_JOINT_ORDER),
             "scale_rad_per_normalized_action": list(ACTION_SCALE),
-            "q_ref_by_gradient": [
-                {
-                    "gradient": solution.gradient,
-                    "q_ref": solution.joint_position_target.tolist(),
-                }
-                for solution in static_solutions
-            ],
-            "feedforward_torque_by_gradient": [
-                {
-                    "gradient": solution.gradient,
-                    "torque_nm": solution.joint_actuator_torque.tolist(),
-                }
-                for solution in static_solutions
-            ],
+            "q_ref": static_q_ref,
+            "static_position_offset_rad": static_position_offset,
+            "feedforward_torque_nm": static_solution.joint_actuator_torque.tolist(),
             "butterworth": {
                 "sample_rate_hz": 50.0,
                 "cutoff_hz": 4.0,
@@ -926,7 +835,6 @@ __all__ = [
     "BASELINE_ROLLOUT_STEPS",
     "DEFAULT_TRAINING_PARAMETERS",
     "DISTILLATION_ROLLOUT_STEPS",
-    "SIGNED_SLOPE_LABELS",
     "ROLLOUT_DEFAULT_NUM_ENVS",
     "ROLLOUT_MANIFEST_SCHEMA_VERSION",
     "ROLLOUT_SAMPLE_AUDIT_SCHEMA_VERSION",
@@ -937,10 +845,8 @@ __all__ = [
     "TRAINING_ARTIFACT_INTERVAL",
     "SUPPORTED_CONTEXT_DIMS",
     "SUPPORTED_HISTORY_LENGTHS",
-    "SUPPORTED_FAT2_WEIGHTS",
     "SUPPORTED_ROLLOUT_STEPS",
     "CHECKPOINT_CURRICULUM_ITERATION_KEY",
-    "CHECKPOINT_STABILITY_REWARDS_ACTIVE_KEY",
     "CHECKPOINT_LINEAGE_KEY",
     "CHECKPOINT_SCHEMA_VERSION",
     "CHECKPOINT_STAGE_KEY",

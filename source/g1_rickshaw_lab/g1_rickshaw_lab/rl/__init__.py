@@ -1,6 +1,7 @@
 """Pure-PyTorch policy models for the G1 rickshaw task."""
 
 from .actor_critic import (
+    CRITIC_PRIVILEGE_DIM,
     G1RickshawStudentActor,
     GaussianActor,
     PrivilegedCritic,
@@ -20,6 +21,7 @@ from .teacher_model import (
 __all__ = [
     "CausalBlock",
     "ContextEncoder",
+    "CRITIC_PRIVILEGE_DIM",
     "DYNAMIC_PRIVILEGE_DIM",
     "G1RickshawStudentActor",
     "G1RickshawTeacherActor",

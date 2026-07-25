@@ -1,8 +1,5 @@
-# Feasibility envelope for the fixed 40.04 kg cart and MuJoCo connections.
-# Runtime domain parameters are scanned over the 19-slope Mjlab sweep.
-schema_version: 1
-slopes:
-  [-0.08, -0.07, -0.06, -0.05, -0.04, -0.03, -0.02, -0.01, 0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
+# Feasibility envelope for the fixed 35.04 kg cart on flat ground.
+schema_version: 2
 joint_order:
   - left_hip_pitch_joint
   - left_hip_roll_joint
@@ -43,26 +40,20 @@ ranges:
   terrain.friction: {min: 0.6, max: 1.1}
   wheel.left_damping: {min: 0.015, max: 0.025}
   wheel.right_damping: {min: 0.015, max: 0.025}
-  command.acceleration_limit: {min: 0.12, max: 0.12}
-  command.jerk_limit: {min: 0.6, max: 0.6}
 calibration:
-  rickshaw.pitch_inertia_about_axle: 45.0862594122927
-  # Selected from the fixed-vehicle static-torque search; vehicle mass, CoM,
-  # axle and hitch geometry are unchanged.
-  rickshaw_pose.hitch_height_target: 0.85
+  rickshaw.pitch_inertia_about_axle: 23.114540082188146
   rickshaw_pose.hitch_height_tolerance: 0.005
   rickshaw_pose.hitch_vertical_speed_tolerance: 0.02
   rolling_resistance.c_rr_nominal: 0.02
   terrain.friction_nominal: 1.0
   fat.robot_mass: 34.1299349
   fat.com_radius: 0.715092420262594
-  # Broad physical guard around the observed 19-slope reset range. Runtime uses
-  # the filtered sagittal support-to-CoM distance rather than this nominal value.
+  # Runtime uses the filtered sagittal support-to-CoM distance.
   fat.com_radius_bounds: [0.5, 0.85]
   # Runtime normalization uses mean(abs(T)) so acceleration/braking transients
   # cannot make the denominator collapse through signed-force cancellation.
   fat.wrench_consistency_relative_tolerance: 0.35
-  # FAT2 is a weak whole-body posture prior. Normalize its low-force regime by
+  # Normalize the FAT2 diagnostic's low-force regime by
   # one nominal G1 body weight (34.1299349 kg * 9.81 m/s^2 = 334.81 N), rounded
   # upward. This does not relax the independent 12 N measured/analytic gate.
   fat.wrench_consistency_absolute_floor_n: 335.0

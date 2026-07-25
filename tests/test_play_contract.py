@@ -33,7 +33,7 @@ def test_play_allows_only_operational_arguments() -> None:
     "argument",
     (
         "env.rolling_resistance.enabled=false",
-        "env.rewards.fat2_prior_exp.weight=0.0",
+        "env.rewards.upright.weight=0.0",
         "agent.actor.latent_dim=24",
         "--agent",
         "rsl_rl_cfg_entry_point",

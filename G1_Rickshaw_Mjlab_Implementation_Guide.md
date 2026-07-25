@@ -1,16 +1,16 @@
 # G1 Rickshaw Mjlab Implementation Guide
 
-The task uses MuJoCo 3.5.0, Mjlab 1.2.0, MuJoCo-Warp 3.5.0, and RSL-RL
-5.0.1. The registered tasks are:
+The task is locked to MuJoCo 3.10.0, Mjlab 1.5.3, MuJoCo-Warp 3.10.0.3,
+and RSL-RL 5.4.0. The registered tasks are:
 
-- `Mjlab-G1-Rickshaw-Directional-Slope-Teacher`
-- `Mjlab-G1-Rickshaw-Directional-Slope-Student`
+- `Mjlab-G1-Rickshaw-Flat-Teacher`
+- `Mjlab-G1-Rickshaw-Flat-Student`
 - the corresponding `-H91` history variants
 
 ## Physical Contract
 
 The rickshaw wheel diameter is 0.6 m and each wheel center remains 0.3 m above
-the local terrain plane. The rickshaw center of mass is shifted rearward by
+the ground plane. The rickshaw center of mass is shifted rearward by
 0.02 m.
 
 The body-mesh tow points are `(0.276, -1.664929, 0.180746)` and
@@ -27,13 +27,15 @@ roll/pitch and both ankle axes use the official doubled-5020 approximation.
 
 ## Initialization
 
-At startup, MuJoCo inverse dynamics solves the constrained pose for each of the
-19 configured directional slopes. A bounded forward-dynamics solve then finds
-the actuator torque and converts it to the built-in position target
-`q_ctrl = q_static + tau / Kp`. Every reset selects the matching solution,
-writes the robot/cart state, and installs its 29-joint `q_ctrl` reference into
-the persistent Butterworth action term. The solve includes the FAT2 torso prior
-and both fixed grasp positions.
+At startup, MuJoCo inverse dynamics loads one certified flat-ground pose. The
+12 leg and three waist joints use Unitree G1's default pose exactly; only the
+14 arm joints and the two floating bases are optimized. The solve constrains
+the hitch to 0.75-0.95 m, keeps a 5 mm optimization margin at each boundary,
+and selects the valid pose with the smallest maximum normalized joint torque.
+The current certified hitch height is 0.754736 m. Initial constraint error,
+support error, acceleration, contact force, and actuator torque are certified.
+The policy reference remains the physical pose `q_static`; the actuator layer
+separately applies the static offset `tau / Kp` to its built-in position target.
 
 Run the physical validations before training:
 
@@ -50,6 +52,10 @@ python scripts/finetune_student.py --teacher <teacher.pt> --context <context.pt>
 python scripts/play_student.py --checkpoint <student.pt>
 ```
 
-The Mjlab runtime owns terrain assignment, startup-fixed nine-parameter domain
-randomization, online FAT2/ZMP state, observations, rewards, curriculum, and
-RSL-RL rollout state. There is no secondary simulator runtime path.
+The Mjlab runtime owns the flat plane, startup-fixed nine-parameter domain
+randomization, online FAT2/ZMP diagnostics, observations, rewards, and RSL-RL
+rollout state. Rewards use the Mjlab 1.5.3 G1 flat definitions directly, with
+upright weight 0.2, foot swing target 0.08 m, and the two rickshaw hitch-height
+terms. Commands are sampled directly every 3-8 s with 10% standing commands;
+the tracked entity is the rickshaw. There is no secondary simulator runtime
+path or runtime reward override.

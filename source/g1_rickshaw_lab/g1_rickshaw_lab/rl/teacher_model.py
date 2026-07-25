@@ -9,11 +9,11 @@ from torch.distributions import Independent
 
 from g1_rickshaw_lab.policy_schema import (
     DEFAULT_CONTEXT_DIM,
+    HISTORY_LENGTH,
     TEACHER_DYNAMIC_DIM,
     TEACHER_STATIC_DIM,
-    HISTORY_LENGTH,
-    validate_history_length,
     validate_context_dim,
+    validate_history_length,
 )
 
 from .actor_critic import GaussianActor
@@ -25,7 +25,6 @@ from .context_encoder import (
     CausalBlock,
     validate_history,
 )
-
 
 DYNAMIC_PRIVILEGE_DIM = TEACHER_DYNAMIC_DIM
 STATIC_PRIVILEGE_DIM = TEACHER_STATIC_DIM

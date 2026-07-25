@@ -8,7 +8,6 @@ import pytest
 from g1_rickshaw_lab.training_contract import (
     DEFAULT_TRAINING_PARAMETERS,
     GUIDE_TRAINING_PARAMETERS,
-    SUPPORTED_FAT2_WEIGHTS,
     TRAINING_CONFIGURATION_SCHEMA_VERSION,
     finalize_training_configuration,
     validate_guide_training_configuration,
@@ -29,7 +28,7 @@ def _configuration() -> dict:
     return {
         "schema_version": TRAINING_CONFIGURATION_SCHEMA_VERSION,
         "stage": "s0_teacher",
-        "task": "Mjlab-G1-Rickshaw-Directional-Slope-Teacher",
+        "task": "Mjlab-G1-Rickshaw-Flat-Teacher",
         "num_envs": 32,
         "seed": 42,
         "max_iterations": 10,
@@ -59,7 +58,7 @@ def test_s0_configuration_binds_startup_randomization() -> None:
 
     assert validated["guide_parameters"] == {
         "domain_randomization": "startup_fixed",
-        "terrain_slopes": "startup_center_weighted_fixed",
+        "terrain": "flat_plane",
         "observation_noise": "unitree_g1_uniform",
     }
     configuration["guide_parameters"] = {}
@@ -83,18 +82,15 @@ def test_training_configuration_rejects_unknown_or_non_mainline_fields() -> None
 
 @pytest.mark.parametrize("latent_dim", (8, 16, 24, 32))
 @pytest.mark.parametrize("rollout_steps", (24, 48, 64))
-@pytest.mark.parametrize("fat2_weight", SUPPORTED_FAT2_WEIGHTS)
 def test_training_configuration_accepts_supported_variants(
-    fat2_weight: float, latent_dim: int, rollout_steps: int
+    latent_dim: int, rollout_steps: int
 ) -> None:
     configuration = _configuration()
     configuration["training_parameters"].update(
-        fat2_weight=fat2_weight,
         latent_dim=latent_dim,
         rollout_steps=rollout_steps,
     )
     normalized = validate_launcher_training_configuration(configuration)
-    assert normalized["training_parameters"]["fat2_weight"] == fat2_weight
     assert normalized["training_parameters"]["latent_dim"] == latent_dim
     assert normalized["training_parameters"]["rollout_steps"] == rollout_steps
 
@@ -105,17 +101,6 @@ def test_training_configuration_rejects_non_integer_variants(field: str) -> None
     configuration["training_parameters"][field] = 24.5
     with pytest.raises(ValueError, match="must be an integer"):
         validate_launcher_training_configuration(configuration)
-
-
-@pytest.mark.parametrize("fat2_weight", (-0.1, 0.3, True, "0.1"))
-def test_training_configuration_rejects_unsupported_fat2_weight(
-    fat2_weight: object,
-) -> None:
-    configuration = _configuration()
-    configuration["training_parameters"]["fat2_weight"] = fat2_weight
-    with pytest.raises(ValueError, match="fat2_weight"):
-        validate_launcher_training_configuration(configuration)
-
 
 def test_training_configuration_finalize_rejects_non_json_values() -> None:
     with pytest.raises(TypeError):

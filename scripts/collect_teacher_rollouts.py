@@ -24,10 +24,6 @@ add_project_source_to_path()
 
 from g1_rickshaw_lab.provenance import atomic_torch_save, extract_checkpoint_metadata  # noqa: E402
 from g1_rickshaw_lab.rl.runner import RunnerContext, create_rickshaw_runner_type  # noqa: E402
-from g1_rickshaw_lab.reward_profile import (  # noqa: E402
-    apply_reward_weight_overrides,
-    reward_weight_overrides_from_configuration,
-)
 from g1_rickshaw_lab.training_contract import (  # noqa: E402
     CHECKPOINT_CURRICULUM_ITERATION_KEY,
     DISTILLATION_ROLLOUT_STEPS,
@@ -44,17 +40,12 @@ from _rollout_audit import (  # noqa: E402
     INTEGER_AUDIT_TENSORS,
     ROLLOUT_MANIFEST_SCHEMA_VERSION,
     ROLLOUT_SAMPLE_AUDIT_SCHEMA_VERSION,
-    SIGNED_SLOPES,
-    SLOPE_LABELS,
-    SLOPE_TERRAIN_LEVELS,
-    SLOPE_TERRAIN_TYPES,
-    slope_environment_assignment,
     summarize_segment_samples,
     validate_rollout_sample_audit,
 )
 
 
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Directional-Slope-Teacher"
+DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Teacher"
 
 
 def _step_teacher_policy(
@@ -157,10 +148,6 @@ def main() -> int:  # noqa: C901
         from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 
         import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity  # noqa: F401
-        from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mjlab_events import (
-            assign_mjlab_slope_slots,
-        )
-
         random.seed(args.seed)
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
@@ -173,16 +160,6 @@ def main() -> int:  # noqa: C901
             num_envs=args.num_envs,
             seed=args.seed,
             history_length=history_length,
-        )
-        # Rollout samples bind immutable slopes. This prevents auto-resets
-        # from advancing terrain difficulty during a short segment.
-        env_cfg.curriculum = {}
-        apply_reward_weight_overrides(
-            env_cfg,
-            reward_weight_overrides_from_configuration(teacher_training_configuration),
-        )
-        env_cfg.rewards["fat2_prior_exp"].weight = float(
-            training_parameters["fat2_weight"]
         )
         agent_cfg.actor.latent_dim = latent_dim
         agent_cfg = normalize_rsl_rl_runner_configuration(agent_cfg)
@@ -210,10 +187,6 @@ def main() -> int:  # noqa: C901
             },
         )
         actor = runner.alg.actor.eval()
-        base_env = raw_env.unwrapped
-        fixed_assignment = slope_environment_assignment(
-            args.num_envs, device=device
-        )
         storage_dtype = (
             torch.float16 if args.storage_dtype == "float16" else torch.float32
         )
@@ -264,36 +237,12 @@ def main() -> int:  # noqa: C901
             collected_samples += samples
             pending.clear()
 
-        def install_fixed_rollout_assignment() -> None:
-            """Install the deterministic configured-slope allocation before reset."""
-
-            assign_mjlab_slope_slots(base_env, fixed_assignment["slope_index"])
-
-        def assert_fixed_rollout_assignment() -> None:
-            terrain = base_env.scene.terrain
-            if not torch.equal(
-                terrain.terrain_levels, fixed_assignment["terrain_level"]
-            ):
-                raise RuntimeError("rollout terrain levels changed during collection")
-            if not torch.equal(terrain.terrain_types, fixed_assignment["terrain_type"]):
-                raise RuntimeError("rollout terrain types changed during collection")
-            if not torch.allclose(
-                base_env.slope,
-                fixed_assignment["slope"],
-                atol=1.0e-7,
-                rtol=0.0,
-            ):
-                raise RuntimeError("rollout slopes changed during collection")
-
         def reset_at_static_fixed_point() -> object:
             observation, _ = env.reset()
             return observation.to(device)
 
         sample_audit_contract = {
             "schema_version": ROLLOUT_SAMPLE_AUDIT_SCHEMA_VERSION,
-            "signed_slopes": list(SIGNED_SLOPES),
-            "terrain_levels": list(SLOPE_TERRAIN_LEVELS),
-            "terrain_types": list(SLOPE_TERRAIN_TYPES),
             "collection_seed": args.seed,
             "episode_binding": "environment_id + monotonically assigned reset episode_id",
             "source": "per-transition shard tensors",
@@ -307,9 +256,7 @@ def main() -> int:  # noqa: C901
         ):
             actual_global_stage = expected_stage
 
-            install_fixed_rollout_assignment()
             observation = reset_at_static_fixed_point()
-            assert_fixed_rollout_assignment()
             stage_valid_samples = 0
             stage_collection_steps = 0
             per_environment_samples = torch.zeros(
@@ -336,7 +283,6 @@ def main() -> int:  # noqa: C901
                     raise RuntimeError(
                         f"stage {expected_stage} failed to collect {target_samples} valid samples"
                     )
-                assert_fixed_rollout_assignment()
                 valid = torch.ones(
                     args.num_envs, dtype=torch.bool, device=device
                 )
@@ -359,13 +305,6 @@ def main() -> int:  # noqa: C901
                         ),
                         "environment_id": selected.unsqueeze(-1).clone(),
                         "episode_id": episode_ids[selected].unsqueeze(-1).clone(),
-                        "slope": base_env.slope[selected].unsqueeze(-1).clone(),
-                        "terrain_level": base_env.scene.terrain.terrain_levels[selected]
-                        .unsqueeze(-1)
-                        .clone(),
-                        "terrain_type": base_env.scene.terrain.terrain_types[selected]
-                        .unsqueeze(-1)
-                        .clone(),
                     }
 
                 (
@@ -444,21 +383,6 @@ def main() -> int:  # noqa: C901
                     "valid_samples": stage_valid_samples,
                     "per_environment_stage_distribution": per_env_stage,
                     "valid_sample_stage_distribution": sample_distribution,
-                    "slope_sample_distribution": actual_sample_audit[
-                        "slope_sample_distribution"
-                    ],
-                    "slope_environment_distribution": actual_sample_audit[
-                        "slope_environment_distribution"
-                    ],
-                    "slope_episode_distribution": actual_sample_audit[
-                        "slope_episode_distribution"
-                    ],
-                    "terrain_level_distribution": actual_sample_audit[
-                        "terrain_level_distribution"
-                    ],
-                    "terrain_type_distribution": actual_sample_audit[
-                        "terrain_type_distribution"
-                    ],
                     "episode_count": actual_sample_audit["episodes"],
                     "actual_sample_audit": actual_sample_audit,
                 }
@@ -467,27 +391,6 @@ def main() -> int:  # noqa: C901
             flush()
         flush()
 
-        global_slope_samples = {
-            label: sum(
-                segment["slope_sample_distribution"][label]
-                for segment in stage_segments
-            )
-            for label in SLOPE_LABELS
-        }
-        global_slope_environments = {
-            label: sum(
-                segment["slope_environment_distribution"][label]
-                for segment in stage_segments
-            )
-            for label in SLOPE_LABELS
-        }
-        global_slope_episodes = {
-            label: sum(
-                segment["slope_episode_distribution"][label]
-                for segment in stage_segments
-            )
-            for label in SLOPE_LABELS
-        }
         manifest = {
             "schema_version": ROLLOUT_MANIFEST_SCHEMA_VERSION,
             "task": args.task,
@@ -502,10 +405,6 @@ def main() -> int:  # noqa: C901
             "teacher_latent_dim": latent_dim,
             "num_policy_steps": collected_steps,
             "num_samples": collected_samples,
-            "signed_slopes": list(SIGNED_SLOPES),
-            "slope_sample_distribution": global_slope_samples,
-            "slope_environment_distribution": global_slope_environments,
-            "slope_episode_distribution": global_slope_episodes,
             "stage_segments": stage_segments,
             "stage_sample_distribution": stage_sample_distribution,
             "storage_dtype": args.storage_dtype,

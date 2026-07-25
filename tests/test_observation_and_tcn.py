@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import inspect
-from types import SimpleNamespace
-
 import pytest
 import torch
 from torch import nn
 
+from g1_rickshaw_lab.rl import DYNAMIC_PRIVILEGE_DIM, STATIC_PRIVILEGE_DIM
 from g1_rickshaw_lab.rl.actor_critic import G1RickshawStudentActor
 from g1_rickshaw_lab.rl.teacher_model import G1RickshawTeacherActor
 from g1_rickshaw_lab.rl.context_encoder import (
@@ -18,7 +16,6 @@ from g1_rickshaw_lab.rl.context_encoder import (
     ContextEncoder,
     temporal_receptive_field,
 )
-from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp import rewards
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.observations import (
     ACTOR_OBSERVATION_DIM,
     BASE_ANGULAR_VELOCITY_SLICE,
@@ -79,33 +76,6 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
         observation[:, PREVIOUS_ACTION_SLICE], previous_processed_action
     )
     torch.testing.assert_close(observation[:, GAIT_PHASE_SLICE], gait_phase)
-
-
-def test_observation_and_reward_interfaces_do_not_read_v_sample() -> None:
-    assert "v_sample" not in inspect.signature(assemble_actor_observation).parameters
-
-    command = SimpleNamespace(
-        v_ref=torch.tensor([0.7], dtype=torch.float64),
-        v_sample=torch.tensor([100.0], dtype=torch.float64),
-    )
-    env = SimpleNamespace(
-        command_state=command,
-        policy_robot_speed_s=torch.tensor([0.5], dtype=torch.float64),
-    )
-    lateral_speed = torch.zeros_like(env.policy_robot_speed_s)
-    before = rewards.track_speed_exp_value(
-        env.command_state.v_ref, env.policy_robot_speed_s, lateral_speed
-    )
-    command.v_sample[:] = -100.0
-    after_sample_change = rewards.track_speed_exp_value(
-        env.command_state.v_ref, env.policy_robot_speed_s, lateral_speed
-    )
-    torch.testing.assert_close(before, after_sample_change)
-    command.v_ref[:] = 0.5
-    after_reference_change = rewards.track_speed_exp_value(
-        env.command_state.v_ref, env.policy_robot_speed_s, lateral_speed
-    )
-    assert after_reference_change.item() > before.item()
 
 
 def test_history_excludes_current_observation() -> None:
@@ -192,8 +162,8 @@ def test_fixed_teacher_and_student_context_interfaces() -> None:
     student = G1RickshawStudentActor().eval()
     current = torch.zeros(2, ACTOR_OBSERVATION_DIM)
     observation_history = torch.zeros(2, 61, ACTOR_OBSERVATION_DIM)
-    dynamic_history = torch.zeros(2, 61, 21)
-    static_privilege = torch.zeros(2, 10)
+    dynamic_history = torch.zeros(2, 61, DYNAMIC_PRIVILEGE_DIM)
+    static_privilege = torch.zeros(2, STATIC_PRIVILEGE_DIM)
     with torch.no_grad():
         teacher_distribution, teacher_context = teacher.forward_with_context(
             current,
@@ -228,8 +198,8 @@ def test_teacher_and_student_use_the_selected_latent_width(latent_dim: int) -> N
         teacher_distribution, teacher_context = teacher.forward_with_context(
             current,
             history,
-            torch.zeros(2, 61, 21),
-            torch.zeros(2, 10),
+            torch.zeros(2, 61, DYNAMIC_PRIVILEGE_DIM),
+            torch.zeros(2, STATIC_PRIVILEGE_DIM),
         )
         student_distribution, student_context = student.forward_with_context(
             current, history

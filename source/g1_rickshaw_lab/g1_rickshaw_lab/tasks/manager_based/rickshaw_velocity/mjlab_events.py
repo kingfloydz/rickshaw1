@@ -1,18 +1,15 @@
-"""Mjlab lifecycle for the 19-slope rigid robot-rickshaw task."""
+"""Mjlab lifecycle for the flat-ground rigid robot-rickshaw task."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import torch
 from mjlab.managers.event_manager import RecomputeLevel, requires_model_fields
 from mjlab.utils.lab_api.math import (
     matrix_from_quat,
-    quat_from_euler_xyz,
     quat_from_matrix,
-    quat_mul,
 )
 
 from g1_rickshaw_lab.assets.g1_dex1 import GRASP_SITE_NAMES
@@ -26,17 +23,11 @@ from g1_rickshaw_lab.assets.rickshaw import (
     WHEEL_LINK_NAMES,
 )
 from g1_rickshaw_lab.configuration import G1_JOINT_ORDER
+from g1_rickshaw_lab.g1_motor_defaults import G1_JOINT_STIFFNESS
 from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH, TEACHER_DYNAMIC_DIM
-from g1_rickshaw_lab.slope_contract import (
-    SLOPE_COUNT,
-    SLOPE_GRADIENTS,
-    SLOPE_TERRAIN_LEVELS,
-    SLOPE_TERRAIN_TYPES,
-)
-from g1_rickshaw_lab.static_equilibrium import MujocoStaticEquilibrium, solve_mujoco_static_equilibria
+from g1_rickshaw_lab.static_equilibrium import MujocoStaticEquilibrium, load_mujoco_static_equilibrium
 
 from .closed_chain import build_assembled_spec
-from .mdp.curricula import apply_terrain_assignment, balanced_slope_assignment, weighted_slope_assignment
 from .mdp.dynamics import (
     AnalyticForceCfg,
     AnalyticHandleForceState,
@@ -57,21 +48,18 @@ from .mdp.dynamics import (
     rickshaw_pitch_from_quaternion,
     rolling_resistance_wrench,
     sagittal_com_radius,
-    slope_zmp,
     torso_pitch_from_world_vertical,
     update_analytic_handle_force_state,
     update_wrench_consistency_state,
+    zmp_from_hand_wrench,
 )
 from .mdp.events import (
-    CommandState,
     DomainRandomizationCfg,
     PathTrackingState,
     RickshawRuntimeState,
-    SpeedCommandSamplingCfg,
     StabilityState,
     _update_teacher_static_domain,
     compute_path_tracking_errors,
-    resample_speed_command,
     sample_domain_parameters,
 )
 from .mdp.observations import ObservationHistoryState
@@ -81,16 +69,12 @@ from .task_spec import RickshawPoseTargetCfg
 @dataclass(frozen=True)
 class MjlabTaskRuntimeCfg:
     domain: DomainRandomizationCfg
-    command: SpeedCommandSamplingCfg
-    speed_acceleration_limit: float
-    speed_jerk_limit: float
     rickshaw_pose: RickshawPoseTargetCfg
     analytic_force: AnalyticForceCfg
     fat2: FAT2Cfg
     support: SupportPolygonCfg
     zmp: ZMPCfg
     history_length: int = HISTORY_LENGTH
-    shuffle_slopes: bool = True
     play: bool = False
 
 
@@ -100,37 +84,6 @@ def _ids(entity: Any, kind: str, names: tuple[str, ...]) -> torch.Tensor:
     if tuple(resolved) != names:
         raise RuntimeError(f"{kind} order mismatch: expected {names}, got {tuple(resolved)}")
     return torch.as_tensor(indices, device=entity.data.device, dtype=torch.long)
-
-
-def _slope_frame(gradient: torch.Tensor) -> tuple[torch.Tensor, ...]:
-    gamma = torch.atan(gradient)
-    zeros = torch.zeros_like(gamma)
-    tangent = torch.stack((torch.cos(gamma), zeros, torch.sin(gamma)), dim=-1)
-    lateral = torch.stack((zeros, torch.ones_like(gamma), zeros), dim=-1)
-    normal = torch.stack((-torch.sin(gamma), zeros, torch.cos(gamma)), dim=-1)
-    quat = quat_from_euler_xyz(zeros, -gamma, zeros)
-    return gamma, tangent, lateral, normal, quat
-
-
-def assign_mjlab_slope_slots(env: Any, slots: torch.Tensor) -> None:
-    """Apply one canonical slope slot and matching reset library entry per environment."""
-
-    slots = torch.as_tensor(slots, device=env.device, dtype=torch.long).reshape(-1)
-    if slots.shape != (env.num_envs,) or torch.any((slots < 0) | (slots >= SLOPE_COUNT)):
-        raise ValueError("slope slots must have shape [num_envs] and lie in the 19-slope grid")
-    levels = torch.tensor(SLOPE_TERRAIN_LEVELS, device=env.device)[slots]
-    terrain_types = torch.tensor(SLOPE_TERRAIN_TYPES, device=env.device)[slots]
-    apply_terrain_assignment(env, levels, terrain_types)
-    gradients = torch.tensor(SLOPE_GRADIENTS, device=env.device, dtype=torch.float32)
-    env.slope_slot = slots
-    env.slope = gradients[slots]
-    (
-        env.gamma,
-        env.path_tangent_w,
-        env.path_lateral_w,
-        env.path_normal_w,
-        env.slope_quat_w,
-    ) = _slope_frame(env.slope)
 
 
 def _body_mass_kinematics(env: Any, entity_name: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -144,30 +97,22 @@ def _body_mass_kinematics(env: Any, entity_name: str) -> tuple[torch.Tensor, tor
     return position, velocity, total
 
 
-def _precompute_statics() -> tuple[Any, tuple[MujocoStaticEquilibrium, ...]]:
+def _load_static() -> tuple[Any, MujocoStaticEquilibrium]:
     model = build_assembled_spec(with_ground=True).compile()
     model.opt.timestep = 0.002
     model.opt.iterations = 100
     model.opt.ls_iterations = 50
-    result = solve_mujoco_static_equilibria(model, SLOPE_GRADIENTS)
-    if len(result) != SLOPE_COUNT or tuple(item.gradient for item in result) != SLOPE_GRADIENTS:
-        raise RuntimeError("MuJoCo static library must contain exactly the configured 19 slopes")
-    return model, result
+    return model, load_mujoco_static_equilibrium(model)
 
 
 def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTaskRuntimeCfg) -> None:
-    """Assign slopes, solve all equilibria, and allocate policy-rate state."""
+    """Load the certified rest pose and allocate policy-rate state."""
 
     del env_ids
-    if cfg.play:
-        slots, _, _ = balanced_slope_assignment(
-            env.num_envs, device=env.device, shuffle=False
-        )
-    else:
-        slots, _, _ = weighted_slope_assignment(
-            env.num_envs, device=env.device, shuffle=cfg.shuffle_slopes
-        )
-    assign_mjlab_slope_slots(env, slots)
+    path_frame = torch.eye(3, device=env.device, dtype=torch.float32)
+    env.path_tangent_w = path_frame[0].expand(env.num_envs, -1)
+    env.path_lateral_w = path_frame[1].expand(env.num_envs, -1)
+    env.path_normal_w = path_frame[2].expand(env.num_envs, -1)
 
     robot = env.scene["robot"]
     cart = env.scene["rickshaw"]
@@ -184,39 +129,26 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
 
     if tuple(robot.joint_names) != G1_JOINT_ORDER:
         raise RuntimeError("fixed-gripper MuJoCo robot must expose exactly the 29 policy joints")
-    env._mujoco_static_model, env._mujoco_static_equilibria = _precompute_statics()
+    env._mujoco_static_model, env._mujoco_static_equilibrium = _load_static()
     model = env._mujoco_static_model
-    env.static_joint_position_table = torch.as_tensor(
-        np.stack(
-            [
-                [
-                    item.qpos[int(model.joint(f"robot/{name}").qposadr[0])]
-                    for name in G1_JOINT_ORDER
-                ]
-                for item in env._mujoco_static_equilibria
-            ]
-        ),
+    solution = env._mujoco_static_equilibrium
+    env.static_joint_position = torch.as_tensor(
+        [solution.qpos[int(model.joint(f"robot/{name}").qposadr[0])] for name in G1_JOINT_ORDER],
         device=env.device,
         dtype=torch.float32,
     )
-    env.static_q_ref_table = torch.as_tensor(
-        np.stack([item.joint_position_target for item in env._mujoco_static_equilibria]),
+    env.static_q_ref = env.static_joint_position.clone()
+    env.static_actuator_torque = torch.as_tensor(
+        solution.joint_actuator_torque,
         device=env.device,
         dtype=torch.float32,
     )
-    env.static_actuator_torque_table = torch.as_tensor(
-        np.stack([item.joint_actuator_torque for item in env._mujoco_static_equilibria]),
-        device=env.device,
-        dtype=torch.float32,
-    )
-    env.static_fat2_table = torch.tensor(
-        [item.fat2_reference_angle for item in env._mujoco_static_equilibria],
-        device=env.device,
-        dtype=torch.float32,
-    )
+    stiffness = torch.tensor(G1_JOINT_STIFFNESS, device=env.device, dtype=torch.float32)
+    env.static_actuator_position_offset = env.static_actuator_torque / stiffness
+    env.static_actuator_position_target = env.static_q_ref + env.static_actuator_position_offset
+    env.static_fat2 = float(solution.fat2_reference_angle)
 
     env.runtime_cfg = cfg
-    env.command_state = CommandState.zeros(env.num_envs, device=env.device)
     env.path_state = PathTrackingState.zeros(env.num_envs, device=env.device)
     env.rickshaw_state = RickshawRuntimeState.zeros(env.num_envs, device=env.device)
     env.stability_state = StabilityState.zeros(env.num_envs, device=env.device)
@@ -230,6 +162,7 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
         device=env.device,
     )
     env.rickshaw_pose_cfg = cfg.rickshaw_pose
+    env.hitch_height_target = float(solution.hitch_height)
     env.fat2_wrench_consistency_state = WrenchConsistencyState.zeros(
         env.num_envs, cfg.fat2.wrench_consistency_window_steps, device=env.device
     )
@@ -247,9 +180,8 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     env.cart_previous_com_velocity_w = torch.zeros((env.num_envs, 3), device=env.device)
     env.cart_interaction_wrench_valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
     env.last_rolling_force_w = torch.zeros((env.num_envs, 2, 3), device=env.device)
-    env.policy_robot_speed_s = zeros.clone()
-    env.policy_robot_speed_l = zeros.clone()
-    env.policy_robot_velocity_n = zeros.clone()
+    env.rickshaw_speed_s = zeros.clone()
+    env.rickshaw_speed_l = zeros.clone()
     env._mjlab_physical_state_step = -1
     env._mjlab_observation_state_step = -1
 
@@ -359,27 +291,17 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
 
 
 def _transform_pose(env: Any, local_pose: torch.Tensor, env_ids: torch.Tensor) -> torch.Tensor:
-    tangent = env.path_tangent_w[env_ids]
-    lateral = env.path_lateral_w[env_ids]
-    normal = env.path_normal_w[env_ids]
-    position = (
-        env.scene.env_origins[env_ids]
-        + tangent * local_pose[:, 0:1]
-        + lateral * local_pose[:, 1:2]
-        + normal * local_pose[:, 2:3]
-    )
-    quaternion = quat_mul(env.slope_quat_w[env_ids], local_pose[:, 3:7])
-    return torch.cat((position, quaternion), dim=-1)
+    position = env.scene.env_origins[env_ids] + local_pose[:, :3]
+    return torch.cat((position, local_pose[:, 3:7]), dim=-1)
 
 
-def reset_from_mujoco_statics(env: Any, env_ids: torch.Tensor | None) -> None:
-    """Reset each environment from its own precomputed slope equilibrium."""
+def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
+    """Reset environments from the certified flat-ground equilibrium."""
 
     if env_ids is None:
         env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
     else:
         env_ids = env_ids.to(device=env.device, dtype=torch.long)
-    slots = env.slope_slot[env_ids]
     robot = env.scene["robot"]
     cart = env.scene["rickshaw"]
     model = env._mujoco_static_model
@@ -387,9 +309,11 @@ def reset_from_mujoco_statics(env: Any, env_ids: torch.Tensor | None) -> None:
     def qadr(name: str) -> int:
         return int(model.joint(name).qposadr[0])
 
-    qpos = torch.stack(
-        [torch.as_tensor(env._mujoco_static_equilibria[int(slot)].qpos) for slot in slots.cpu()], dim=0
-    ).to(device=env.device, dtype=torch.float32)
+    qpos = torch.as_tensor(
+        env._mujoco_static_equilibrium.qpos,
+        device=env.device,
+        dtype=torch.float32,
+    ).expand(env_ids.numel(), -1)
     robot_root = qadr("robot/floating_base_joint")
     cart_root = qadr("rickshaw/floating_base_joint")
     robot_pose = _transform_pose(env, qpos[:, robot_root : robot_root + 7], env_ids)
@@ -400,7 +324,7 @@ def reset_from_mujoco_statics(env: Any, env_ids: torch.Tensor | None) -> None:
     cart.write_root_link_pose_to_sim(cart_pose, env_ids=env_ids)
     cart.write_root_link_velocity_to_sim(zeros6, env_ids=env_ids)
 
-    robot_joint_pos = env.static_joint_position_table[slots]
+    robot_joint_pos = env.static_joint_position.expand(env_ids.numel(), -1)
     robot.write_joint_state_to_sim(robot_joint_pos, torch.zeros_like(robot_joint_pos), env_ids=env_ids)
     wheel_pos = torch.stack(
         (qpos[:, qadr("rickshaw/left_wheel_joint")], qpos[:, qadr("rickshaw/right_wheel_joint")]), dim=-1
@@ -408,17 +332,16 @@ def reset_from_mujoco_statics(env: Any, env_ids: torch.Tensor | None) -> None:
     cart.write_joint_state_to_sim(
         wheel_pos, torch.zeros_like(wheel_pos), joint_ids=env.wheel_joint_ids, env_ids=env_ids
     )
-    q_ref = env.static_q_ref_table[slots]
-    env.action_manager.get_term("joint_pos").set_reference(q_ref, env_ids)
+    q_ref = env.static_q_ref.expand(env_ids.numel(), -1)
+    static_offset = env.static_actuator_position_offset.expand(env_ids.numel(), -1)
+    env.action_manager.get_term("joint_pos").set_reference(q_ref, static_offset, env_ids)
     # Entity.set_joint_position_target uses direct tensor indexing, unlike the
     # write_* state helpers.  Explicitly form the env-by-joint outer product.
     robot.set_joint_position_target(
-        q_ref,
+        q_ref + static_offset - robot.data.encoder_bias[env_ids][:, env.policy_joint_ids],
         joint_ids=env.policy_joint_ids.unsqueeze(0),
         env_ids=env_ids.unsqueeze(1),
     )
-    env.command_state.reset(env_ids)
-    resample_speed_command(env, env_ids, env.runtime_cfg.command)
     env.path_state.lateral_error[env_ids] = 0.0
     env.path_state.heading_error[env_ids] = 0.0
     env.rickshaw_state.wheel_normal_force[env_ids] = 0.0
@@ -427,7 +350,7 @@ def reset_from_mujoco_statics(env: Any, env_ids: torch.Tensor | None) -> None:
     env.rickshaw_state.connection_truth_wrench_w[env_ids] = 0.0
     env.rickshaw_state.hand_force_w[env_ids] = 0.0
     env.rickshaw_state.hand_torque_w[env_ids] = 0.0
-    env.stability_state.theta_fat[env_ids] = env.static_fat2_table[slots]
+    env.stability_state.theta_fat[env_ids] = env.static_fat2
     env.stability_state.fat_valid[env_ids] = False
     env.stability_state.zmp_valid[env_ids] = False
     env.observation_history_state.reset(env_ids)
@@ -452,10 +375,6 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     cart = env.scene["rickshaw"]
     origin = env.scene.env_origins
 
-    robot_velocity = robot.data.root_link_lin_vel_w
-    env.policy_robot_speed_s[:] = torch.sum(robot_velocity * env.path_tangent_w, dim=-1)
-    env.policy_robot_speed_l[:] = torch.sum(robot_velocity * env.path_lateral_w, dim=-1)
-    env.policy_robot_velocity_n[:] = torch.sum(robot_velocity * env.path_normal_w, dim=-1)
     lateral_error, heading_error = compute_path_tracking_errors(
         robot.data.root_link_pos_w,
         cart.data.root_link_pos_w,
@@ -491,6 +410,8 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     env.rickshaw_state.wheel_normal_force[:] = wheel_normal
     env.rickshaw_state.two_wheel_contact[:] = torch.all(wheel_normal > 1.0, dim=-1)
     cart_com, cart_velocity, cart_mass = _body_mass_kinematics(env, "rickshaw")
+    env.rickshaw_speed_s[:] = torch.sum(cart_velocity * env.path_tangent_w, dim=-1)
+    env.rickshaw_speed_l[:] = torch.sum(cart_velocity * env.path_lateral_w, dim=-1)
     acceleration = (cart_velocity - env.cart_previous_com_velocity_w) / env.step_dt
     gravity = torch.tensor((0.0, 0.0, -9.81), device=env.device)
     force_on_cart = (
@@ -511,7 +432,7 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     env.rickshaw_state.connection_wrench_w[:] = env.rickshaw_state.connection_truth_wrench_w
     env.cart_previous_com_velocity_w[:] = cart_velocity
 
-    foot_force = env.scene["robot_contacts"].data.force
+    foot_force = env.scene["feet_ground_contact"].data.force
     foot_contact = torch.linalg.vector_norm(foot_force, dim=-1) > 1.0
     points, mask, support_center = foot_support_polygon(
         robot.data.body_link_pos_w[:, env.foot_body_ids],
@@ -528,12 +449,10 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     env.stability_state.support_point_mask[:] = mask
     env.stability_state.support_center_w[:] = support_center
 
-    cart_speed = torch.sum(cart_velocity * env.path_tangent_w, dim=-1)
     update_analytic_handle_force_state(
         env.analytic_force_state,
-        cart_speed,
+        env.rickshaw_speed_s,
         pitch,
-        env.gamma,
         env.c_rr,
         wheel_normal,
         env.rickshaw_mass_properties,
@@ -601,7 +520,7 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     hand_force = env.rickshaw_state.hand_force_w
     fs = torch.sum(hand_force * env.path_tangent_w, dim=-1)
     fn = torch.sum(hand_force * env.path_normal_w, dim=-1)
-    zmp_s, _, reaction_n, dynamics_valid = slope_zmp(
+    zmp_s, _, reaction_n, dynamics_valid = zmp_from_hand_wrench(
         com_s,
         com_n,
         acceleration_s,
@@ -612,7 +531,6 @@ def ensure_mjlab_physical_state(env: Any) -> None:
         fn,
         torch.zeros_like(fs),
         robot_mass,
-        env.gamma,
         min_ground_reaction=env.runtime_cfg.zmp.min_ground_reaction,
     )
     support_relative = support_center - origin
@@ -642,36 +560,17 @@ def ensure_mjlab_physical_state(env: Any) -> None:
 
 
 def advance_mjlab_policy_state(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTaskRuntimeCfg) -> None:
-    """Advance commands and the online FAT2/ZMP state once per policy step."""
+    """Advance the online FAT2/ZMP state once per policy step."""
 
-    del env_ids
-    env.command_state.resampling_elapsed_s += env.step_dt
-    due = torch.nonzero(
-        env.command_state.resampling_elapsed_s >= cfg.command.resampling_time_s - 1.0e-9,
-        as_tuple=False,
-    ).flatten()
-    if due.numel():
-        resample_speed_command(env, due, cfg.command)
-    from .mdp.dynamics import SpeedReferenceCfg, update_speed_reference
-
-    update_speed_reference(
-        env.command_state,
-        env.command_state.v_sample,
-        env.step_dt,
-        SpeedReferenceCfg(
-            acceleration_limit=cfg.speed_acceleration_limit,
-            jerk_limit=cfg.speed_jerk_limit,
-        ),
-    )
+    del env_ids, cfg
     ensure_mjlab_physical_state(env)
 
 
 __all__ = [
     "MjlabTaskRuntimeCfg",
     "advance_mjlab_policy_state",
-    "assign_mjlab_slope_slots",
     "ensure_mjlab_physical_state",
     "initialize_mjlab_domain",
     "initialize_mjlab_task",
-    "reset_from_mujoco_statics",
+    "reset_from_mujoco_static",
 ]

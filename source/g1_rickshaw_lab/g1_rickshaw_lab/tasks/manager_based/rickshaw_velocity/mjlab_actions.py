@@ -25,6 +25,7 @@ class StaticReferenceJointPositionAction(BaseAction):
         super().__init__(cfg, env)
         q_ref = self._entity.data.default_joint_pos[:, self._target_ids].clone()
         self.state = ButterworthActionState.create(q_ref)
+        self._static_position_offset = torch.zeros_like(q_ref)
         self._scale = action_scale_vector(device=self.device).unsqueeze(0)
         if self.action_dim != self._scale.shape[-1]:
             raise ValueError("static-reference action must control the fixed 29-joint policy order")
@@ -34,8 +35,14 @@ class StaticReferenceJointPositionAction(BaseAction):
     def processed_actions(self) -> torch.Tensor:
         return self.state.target
 
-    def set_reference(self, q_ref: torch.Tensor, env_ids: torch.Tensor | None = None) -> None:
+    def set_reference(
+        self,
+        q_ref: torch.Tensor,
+        static_position_offset: torch.Tensor,
+        env_ids: torch.Tensor,
+    ) -> None:
         self.state.reset(q_ref, env_ids)
+        self._static_position_offset[env_ids] = static_position_offset
 
     def process_actions(self, actions: torch.Tensor) -> None:
         self._raw_actions[:] = actions
@@ -44,7 +51,7 @@ class StaticReferenceJointPositionAction(BaseAction):
     def apply_actions(self) -> None:
         encoder_bias = self._entity.data.encoder_bias[:, self._target_ids]
         self._entity.set_joint_position_target(
-            self.state.target - encoder_bias,
+            self.state.target + self._static_position_offset - encoder_bias,
             joint_ids=self._target_ids,
         )
 

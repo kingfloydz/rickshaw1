@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 import math
+from collections.abc import Sequence
 
 import torch
 from torch import nn
@@ -19,7 +19,6 @@ from g1_rickshaw_lab.policy_schema import (
 )
 
 from .context_encoder import ContextEncoder
-
 
 CURRENT_OBSERVATION_DIM = ACTOR_OBSERVATION_DIM
 LOWER_BODY_ACTION_DIM = 12
