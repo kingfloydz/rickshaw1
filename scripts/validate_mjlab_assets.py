@@ -18,7 +18,6 @@ from g1_rickshaw_lab.assets import (  # noqa: E402
     validate_g1_urdf,
     validate_rickshaw_urdf,
 )
-from g1_rickshaw_lab.assets.rickshaw import TOW_ROD_COLLISION_GEOM_NAMES  # noqa: E402
 from g1_rickshaw_lab.project_paths import ASSET_ROOT  # noqa: E402
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.closed_chain import (  # noqa: E402
     build_assembled_spec,
@@ -65,9 +64,8 @@ def main() -> int:
             "neq": model.neq,
         },
         "collision_filter": {
-            "g1_rickshaw_pairs": "tow_rods_only",
-            "tow_rod_geoms": list(TOW_ROD_COLLISION_GEOM_NAMES),
-            "gripper_rickshaw_collision": False,
+            "g1_rickshaw_pairs": "disabled",
+            "ground_contacts": True,
         },
         "hitches": hitch_mesh_evidence(),
     }

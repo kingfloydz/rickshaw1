@@ -25,7 +25,6 @@ from ..rickshaw_spec import (
 from .mujoco_spec import (
     GROUND_COLLISION_BIT,
     RICKSHAW_COLLISION_BIT,
-    ROBOT_COLLISION_BIT,
     add_free_joint,
     load_urdf_spec,
 )
@@ -39,7 +38,6 @@ WHEEL_JOINT_NAMES = ("left_wheel_joint", "right_wheel_joint")
 HITCH_LINK_NAMES = ("left_tow_hitch_link", "right_tow_hitch_link")
 HITCH_JOINT_NAMES = ("left_tow_hitch_joint", "right_tow_hitch_joint")
 HITCH_SITE_NAMES = ("left_hitch_site", "right_hitch_site")
-TOW_ROD_COLLISION_GEOM_NAMES = ("left_tow_rod_collision", "right_tow_rod_collision")
 
 
 def _vector(element: ET.Element | None, attribute: str) -> tuple[float, ...]:
@@ -154,17 +152,6 @@ def get_rickshaw_spec() -> mujoco.MjSpec:
     for geom in spec.body(BASE_LINK_NAME).geoms:
         geom.contype = 0
         geom.conaffinity = 0
-    for name, lateral in zip(TOW_ROD_COLLISION_GEOM_NAMES, (0.276, -0.276), strict=True):
-        spec.body(BASE_LINK_NAME).add_geom(
-            name=name,
-            type=mujoco.mjtGeom.mjGEOM_CAPSULE,
-            size=(0.016, 0.0, 0.0),
-            fromto=(0.676, lateral, 0.214, 1.94034, lateral, 0.105747),
-            contype=RICKSHAW_COLLISION_BIT,
-            conaffinity=ROBOT_COLLISION_BIT,
-            group=3,
-            rgba=(0.0, 0.0, 0.0, 0.0),
-        )
     visual_meshes = (
         (
             BASE_LINK_NAME,
@@ -235,7 +222,6 @@ __all__ = [
     "HITCH_HALF_WIDTH",
     "HITCH_LINK_NAMES",
     "HITCH_SITE_NAMES",
-    "TOW_ROD_COLLISION_GEOM_NAMES",
     "HITCH_X",
     "HITCH_Z",
     "RICKSHAW_ASSET_DIR",

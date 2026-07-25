@@ -10,11 +10,7 @@ from g1_rickshaw_lab.assets.mujoco_spec import (
     GROUND_COLLISION_BIT,
     ROBOT_COLLISION_BIT,
 )
-from g1_rickshaw_lab.assets.rickshaw import (
-    HITCH_SITE_NAMES,
-    TOW_ROD_COLLISION_GEOM_NAMES,
-    get_rickshaw_spec,
-)
+from g1_rickshaw_lab.assets.rickshaw import HITCH_SITE_NAMES, get_rickshaw_spec
 
 ROBOT_ENTITY_NAME = "robot"
 RICKSHAW_ENTITY_NAME = "rickshaw"
@@ -84,10 +80,6 @@ def validate_assembled_model(model: mujoco.MjModel) -> tuple[str, ...]:
         mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[index])) or ""
         for index in range(model.ngeom)
     ]
-    geom_names = [
-        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, index) or ""
-        for index in range(model.ngeom)
-    ]
     robot_geoms = [index for index, name in enumerate(body_names) if name.startswith("robot/")]
     rickshaw_geoms = [index for index, name in enumerate(body_names) if name.startswith("rickshaw/")]
     if not robot_geoms or not rickshaw_geoms:
@@ -97,29 +89,15 @@ def validate_assembled_model(model: mujoco.MjModel) -> tuple[str, ...]:
         or model.geom_conaffinity[index] != GROUND_COLLISION_BIT
         for index in robot_geoms
     ):
-        issues.append("G1 geoms must use ground/tow-rod collision filtering without self collision")
-    tow_rods = {
-        f"rickshaw/{name}" for name in TOW_ROD_COLLISION_GEOM_NAMES
-    }
-    colliding_with_robot = {
-        geom_names[index]
-        for index in rickshaw_geoms
-        if model.geom_conaffinity[index] == ROBOT_COLLISION_BIT
-    }
-    if colliding_with_robot != tow_rods:
-        issues.append("only the two tow-rod geoms may collide with G1")
+        issues.append("G1 geoms must use ground-only collision filtering without self collision")
     for robot_geom in robot_geoms:
         for rickshaw_geom in rickshaw_geoms:
             enabled = bool(
                 model.geom_contype[robot_geom] & model.geom_conaffinity[rickshaw_geom]
                 or model.geom_contype[rickshaw_geom] & model.geom_conaffinity[robot_geom]
             )
-            should_collide = (
-                model.geom_contype[robot_geom] == ROBOT_COLLISION_BIT
-                and geom_names[rickshaw_geom] in tow_rods
-            )
-            if enabled != should_collide:
-                issues.append("G1-rickshaw collision filtering must retain only non-gripper/tow-rod pairs")
+            if enabled:
+                issues.append("G1-rickshaw collisions must be disabled for the equality-connected system")
                 return tuple(issues)
     return tuple(issues)
 

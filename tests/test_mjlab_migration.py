@@ -145,28 +145,21 @@ def test_training_enables_mjlab_nan_guard() -> None:
     assert not playback.sim.nan_guard.enabled
 
 
-def test_assembled_model_uses_two_connections_and_only_tow_rod_collision() -> None:
+def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> None:
     model = build_assembled_spec().compile()
     assert validate_assembled_model(model) == ()
     assert model.neq == 2
     assert model.nu == 29
-    base_id = model.body("rickshaw/base_link").id
-    base_geoms = range(
-        model.body_geomadr[base_id],
-        model.body_geomadr[base_id] + model.body_geomnum[base_id],
-    )
-    tow_rod_geoms = {
-        model.geom("rickshaw/left_tow_rod_collision").id,
-        model.geom("rickshaw/right_tow_rod_collision").id,
-    }
+    body_names = [model.body(model.geom_bodyid[index]).name for index in range(model.ngeom)]
+    robot_geoms = [index for index, name in enumerate(body_names) if name.startswith("robot/")]
+    rickshaw_geoms = [index for index, name in enumerate(body_names) if name.startswith("rickshaw/")]
     assert all(
-        model.geom_contype[geom_id] == 0 and model.geom_conaffinity[geom_id] == 0
-        for geom_id in base_geoms
-        if geom_id not in tow_rod_geoms
-    )
-    assert all(
-        model.geom_contype[geom_id] != 0 and model.geom_conaffinity[geom_id] != 0
-        for geom_id in tow_rod_geoms
+        not (
+            model.geom_contype[robot_geom] & model.geom_conaffinity[rickshaw_geom]
+            or model.geom_contype[rickshaw_geom] & model.geom_conaffinity[robot_geom]
+        )
+        for robot_geom in robot_geoms
+        for rickshaw_geom in rickshaw_geoms
     )
 
 
