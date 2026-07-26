@@ -194,11 +194,19 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
                     ".*wrist.*",
                 )
             }
-            for pattern in (".*waist_pitch.*", ".*wrist.*"):
-                mjlab_params["std_standing"][pattern] *= math.sqrt(2.0)
+            relaxed_patterns = (
+                ".*waist_pitch.*",
+                ".*shoulder_pitch.*",
+                ".*shoulder_roll.*",
+                ".*shoulder_yaw.*",
+                ".*elbow.*",
+                ".*wrist.*",
+            )
+            for pattern in relaxed_patterns:
+                mjlab_params["std_standing"][pattern] *= math.sqrt(3.0)
             for key in ("std_walking", "std_running"):
-                for pattern in (".*waist_pitch.*", ".*wrist.*"):
-                    mjlab_params[key][pattern] *= math.sqrt(2.0)
+                for pattern in relaxed_patterns:
+                    mjlab_params[key][pattern] *= math.sqrt(3.0)
         if name == "foot_swing_height":
             mjlab_params["target_height"] = 0.08
         assert local_params == mjlab_params
