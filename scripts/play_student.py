@@ -23,7 +23,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
 )
 from g1_rickshaw_lab.workflows.rsl_rl import PlayOptions  # noqa: E402
 
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Student"
+DEFAULT_TASK = "Mjlab-G1-Rickshaw-Slopes-Student"
 _OPERATIONAL_FLAGS = {
     "--headless",
     "--enable_cameras",

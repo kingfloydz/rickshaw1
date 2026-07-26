@@ -34,7 +34,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     training_mimic_enabled,
 )
 
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Student"
+DEFAULT_TASK = "Mjlab-G1-Rickshaw-Slopes-Student"
 STUDENT_AGENT_KEY = "rsl_rl_student_cfg_entry_point"
 S2_GUIDE_PARAMETERS = GUIDE_TRAINING_PARAMETERS["s2_student_ppo"]
 

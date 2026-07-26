@@ -29,7 +29,7 @@ def _configuration() -> dict:
     return {
         "schema_version": TRAINING_CONFIGURATION_SCHEMA_VERSION,
         "stage": "s0_teacher",
-        "task": "Mjlab-G1-Rickshaw-Flat-Teacher",
+        "task": "Mjlab-G1-Rickshaw-Slopes-Teacher",
         "num_envs": 32,
         "seed": 42,
         "max_iterations": 10,
@@ -66,7 +66,7 @@ def test_s0_configuration_binds_startup_randomization() -> None:
 
     assert validated["guide_parameters"] == {
         "domain_randomization": "startup_fixed",
-        "terrain": "flat_plane",
+        "terrain": "nineteen_slopes",
         "observation_noise": "unitree_g1_uniform",
     }
     configuration["guide_parameters"] = {}

@@ -3,14 +3,14 @@
 The task is locked to MuJoCo 3.10.0, Mjlab 1.5.3, MuJoCo-Warp 3.10.0.3,
 and RSL-RL 5.4.0. The registered tasks are:
 
-- `Mjlab-G1-Rickshaw-Flat-Teacher`
-- `Mjlab-G1-Rickshaw-Flat-Student`
+- `Mjlab-G1-Rickshaw-Slopes-Teacher`
+- `Mjlab-G1-Rickshaw-Slopes-Student`
 - the corresponding `-H91` history variants
 
 ## Physical Contract
 
-The rickshaw wheel diameter is 0.6 m and each wheel center remains 0.3 m above
-the ground plane. The rickshaw center of mass is shifted rearward by
+The rickshaw wheel diameter is 0.6 m and each wheel center remains 0.3 m along
+the ground normal. The rickshaw center of mass is shifted rearward by
 0.02 m.
 
 The body-mesh tow points are `(0.276, -1.664929, 0.180746)` and
@@ -38,8 +38,13 @@ the hitch to 0.75-0.95 m, keeps a 5 mm optimization margin at each boundary,
 and selects the valid pose with the smallest maximum normalized joint torque.
 The current certified hitch height is 0.750492 m. Initial constraint error,
 support error, acceleration, contact force, and actuator torque are certified.
-The policy reference remains the physical pose `q_static`. Actions map directly
-to `q_static + normalized_action * G1_ACTION_SCALE`; there is no torque-derived
+Each sloped environment keeps the G1 root orientation from this same
+flat-ground solution and changes only the two ankle-pitch joints to align the
+foot soles. The rickshaw rotates about the hitch line so its wheels meet the
+same slope without moving either hand connection; all other G1 joints remain
+unchanged. The policy reference is `q_static` with `-terrain_slope` added to
+both ankle-pitch joints. Actions map directly to
+`q_ref + normalized_action * G1_ACTION_SCALE`; there is no torque-derived
 position offset, action filter, or action clipping.
 
 Run the physical validations before training:
@@ -57,11 +62,11 @@ python scripts/finetune_student.py --teacher <teacher.pt> --context <context.pt>
 python scripts/play_student.py --checkpoint <student.pt>
 ```
 
-The Mjlab runtime owns the flat plane, startup-fixed nine-parameter domain
+The Mjlab runtime owns 19 fixed slopes from -0.08 to 0.10 rad, startup-fixed nine-parameter domain
 randomization, online FAT2/ZMP diagnostics, observations, rewards, and RSL-RL
 rollout state. The command observation contains only rickshaw `lin_vel_x` and
-`ang_vel_z`; their tracking rewards use the rickshaw axle frame on the flat
-plane. The 100-D actor observation includes the command and measured rickshaw
+`ang_vel_z`; their tracking rewards use the rickshaw axle and terrain-normal
+frame. The 100-D actor observation includes the command and measured rickshaw
 velocities, G1 base linear/angular velocity, and the normalized previous action.
 The clean critic observation adds official foot height, air time, contact state,
 and signed-log contact force terms. Rewards otherwise use the Mjlab 1.5.3 G1

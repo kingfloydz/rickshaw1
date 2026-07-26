@@ -68,7 +68,7 @@ def summarize_segment_samples(
     num_envs: int,
     samples_per_environment: int,
 ) -> dict[str, Any]:
-    """Validate and summarize the flat-ground TRAINING segment."""
+    """Validate and summarize the nineteen-slope TRAINING segment."""
 
     if segment_index != 0:
         raise ValueError("collection segment must be 0")

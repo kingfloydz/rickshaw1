@@ -30,7 +30,7 @@ def enable_mimic(env_cfg):
     )
     env_cfg.rewards["mimic_joint_position"] = RewardTermCfg(
         func=mjlab_mdp.mimic_joint_position_exp,
-        weight=1.0,
+        weight=2.0,
         params={
             "command_name": "twist",
             "std": 0.3,
@@ -39,7 +39,7 @@ def enable_mimic(env_cfg):
     )
     env_cfg.rewards["mimic_joint_velocity"] = RewardTermCfg(
         func=mjlab_mdp.mimic_joint_velocity_exp,
-        weight=1.0,
+        weight=30.0,
         params={
             "command_name": "twist",
             "std": 1.0,
@@ -119,7 +119,7 @@ def g1_rickshaw_env_cfg(
     history_length: int = HISTORY_LENGTH,
     mimic: bool = False,
 ):
-    """Create the flat-ground rickshaw velocity task using mjlab 1.5.3 APIs."""
+    """Create the nineteen-slope rickshaw velocity task using mjlab 1.5.3 APIs."""
 
     from mjlab.envs import ManagerBasedRlEnvCfg
     from mjlab.managers.curriculum_manager import CurriculumTermCfg
@@ -158,6 +158,7 @@ def g1_rickshaw_env_cfg(
         initialize_mjlab_task,
         reset_from_mujoco_static,
     )
+    from .terrain import make_sloped_terrain_cfg
 
     runtime = _runtime_cfg(play=play, history_length=history_length)
     observations = {
@@ -482,7 +483,8 @@ def g1_rickshaw_env_cfg(
     cfg = ManagerBasedRlEnvCfg(
         scene=SceneCfg(
             terrain=TerrainEntityCfg(
-                terrain_type="plane",
+                terrain_type="generator",
+                terrain_generator=make_sloped_terrain_cfg(),
             ),
             entities={"robot": get_g1_robot_cfg(), "rickshaw": get_rickshaw_cfg()},
             sensors=(feet, foot_height, self_collision, wheels),
@@ -564,17 +566,17 @@ def g1_rickshaw_env_cfg(
     return cfg
 
 
-def G1RickshawFlatEnvCfg():
+def G1RickshawSlopesEnvCfg():
     return g1_rickshaw_env_cfg(play=False)
 
 
-def G1RickshawFlatPlayEnvCfg():
+def G1RickshawSlopesPlayEnvCfg():
     return g1_rickshaw_env_cfg(play=True)
 
 
 __all__ = [
-    "G1RickshawFlatEnvCfg",
-    "G1RickshawFlatPlayEnvCfg",
+    "G1RickshawSlopesEnvCfg",
+    "G1RickshawSlopesPlayEnvCfg",
     "MIMIC_MOTION_PATH",
     "enable_mimic",
     "g1_rickshaw_env_cfg",

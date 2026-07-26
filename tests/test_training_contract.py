@@ -51,7 +51,7 @@ def test_observation_normalizer_state_survives_s0_s1_s2_handoff() -> None:
         torch.testing.assert_close(bootstrap[f"policy_obs_normalizer.{key}"], value)
 
 
-def test_mainline_has_fixed_stage_budgets_and_flat_terrain() -> None:
+def test_mainline_has_fixed_stage_budgets_and_sloped_terrain() -> None:
     assert GUIDE_MAX_ITERATIONS == {
         "s0_teacher": 30000,
         "s1_context_distillation": 2000,
@@ -61,7 +61,7 @@ def test_mainline_has_fixed_stage_budgets_and_flat_terrain() -> None:
     assert guide_max_iterations("s0_teacher") == 30000
     assert GUIDE_TRAINING_PARAMETERS["s0_teacher"] == {
         "domain_randomization": "startup_fixed",
-        "terrain": "flat_plane",
+        "terrain": "nineteen_slopes",
         "observation_noise": "unitree_g1_uniform",
     }
     with pytest.raises(ValueError, match="unknown training stage"):

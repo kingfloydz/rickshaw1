@@ -1,4 +1,4 @@
-"""Mjlab lifecycle for the flat-ground rigid robot-rickshaw task."""
+"""Mjlab lifecycle for the inclined rigid robot-rickshaw task."""
 
 from __future__ import annotations
 
@@ -65,7 +65,9 @@ from .mdp.events import (
 )
 from .mdp.observations import ObservationHistoryState
 from .mjlab_commands import rickshaw_velocity
+from .sloped_reset import TERRAIN_SLOPES, build_sloped_reset_templates
 from .task_spec import RickshawPoseTargetCfg
+from .terrain import terrain_frame
 
 
 @dataclass(frozen=True)
@@ -108,10 +110,10 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     """Load the certified rest pose and allocate policy-rate state."""
 
     del env_ids
-    path_frame = torch.eye(3, device=env.device, dtype=torch.float32)
-    env.path_tangent_w = path_frame[0].expand(env.num_envs, -1)
-    env.path_lateral_w = path_frame[1].expand(env.num_envs, -1)
-    env.path_normal_w = path_frame[2].expand(env.num_envs, -1)
+    env.path_tangent_w, env.path_lateral_w, env.path_normal_w = terrain_frame(
+        env.scene["terrain"].terrain_types,
+        dtype=torch.float32,
+    )
 
     robot = env.scene["robot"]
     cart = env.scene["rickshaw"]
@@ -131,11 +133,18 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     env._mujoco_static_model, env._mujoco_static_equilibrium = _load_static()
     model = env._mujoco_static_model
     solution = env._mujoco_static_equilibrium
+    templates = build_sloped_reset_templates(model, solution.qpos, TERRAIN_SLOPES)
+    terrain_types = env.scene["terrain"].terrain_types
+    env.static_robot_pose = torch.as_tensor(templates.robot_root_pose, device=env.device, dtype=torch.float32)[
+        terrain_types
+    ]
+    env.static_cart_pose = torch.as_tensor(templates.cart_root_pose, device=env.device, dtype=torch.float32)[
+        terrain_types
+    ]
     env.static_joint_position = torch.as_tensor(
-        [solution.qpos[int(model.joint(f"robot/{name}").qposadr[0])] for name in G1_JOINT_ORDER],
-        device=env.device,
-        dtype=torch.float32,
-    )
+        templates.robot_joint_position, device=env.device, dtype=torch.float32
+    )[terrain_types]
+    robot.data.default_joint_pos[:, env.policy_joint_ids] = env.static_joint_position
     env.static_q_ref = env.static_joint_position.clone()
     env.static_fat2 = float(solution.fat2_reference_angle)
     env.connection_equality_ids = torch.as_tensor(
@@ -143,16 +152,15 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
         device=env.device,
         dtype=torch.long,
     )
-    static_qpos = torch.as_tensor(solution.qpos, device=env.device, dtype=torch.float32)
-    robot_root = int(model.joint("robot/floating_base_joint").qposadr[0])
-    cart_root = int(model.joint("rickshaw/floating_base_joint").qposadr[0])
-    static_robot_pose = static_qpos[robot_root : robot_root + 7]
-    static_cart_pose = static_qpos[cart_root : cart_root + 7]
     env.static_relative_position_b = relative_position_in_yaw_frame(
-        static_robot_pose[:3], static_cart_pose[:3], static_cart_pose[3:7]
+        env.static_robot_pose[:, :3], env.static_cart_pose[:, :3], env.static_cart_pose[:, 3:7]
     )
-    env.static_relative_yaw = relative_yaw_from_quaternions(static_robot_pose[3:7], static_cart_pose[3:7])
-    env.static_rickshaw_pitch = rickshaw_pitch_from_quaternion(static_cart_pose[3:7], path_frame[0], path_frame[2])
+    env.static_relative_yaw = relative_yaw_from_quaternions(
+        env.static_robot_pose[:, 3:7], env.static_cart_pose[:, 3:7]
+    )
+    env.static_rickshaw_pitch = rickshaw_pitch_from_quaternion(
+        env.static_cart_pose[:, 3:7], env.path_tangent_w, env.path_normal_w
+    )
 
     env.runtime_cfg = cfg
     env.rickshaw_state = RickshawRuntimeState.zeros(env.num_envs, device=env.device)
@@ -281,12 +289,13 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
 
 
 def _transform_pose(env: Any, local_pose: torch.Tensor, env_ids: torch.Tensor) -> torch.Tensor:
-    position = env.scene.env_origins[env_ids] + local_pose[:, :3]
-    return torch.cat((position, local_pose[:, 3:7]), dim=-1)
+    local_pose = local_pose.clone()
+    local_pose[:, :3] += env.scene.env_origins[env_ids]
+    return local_pose
 
 
 def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
-    """Reset environments from the certified flat-ground equilibrium."""
+    """Keep the G1 root upright and incline only its ankle-pitch joints."""
 
     if env_ids is None:
         env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
@@ -304,17 +313,15 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
         device=env.device,
         dtype=torch.float32,
     ).expand(env_ids.numel(), -1)
-    robot_root = qadr("robot/floating_base_joint")
-    cart_root = qadr("rickshaw/floating_base_joint")
-    robot_pose = _transform_pose(env, qpos[:, robot_root : robot_root + 7], env_ids)
-    cart_pose = _transform_pose(env, qpos[:, cart_root : cart_root + 7], env_ids)
+    robot_pose = _transform_pose(env, env.static_robot_pose[env_ids], env_ids)
+    cart_pose = _transform_pose(env, env.static_cart_pose[env_ids], env_ids)
     zeros6 = torch.zeros((env_ids.numel(), 6), device=env.device)
     robot.write_root_link_pose_to_sim(robot_pose, env_ids=env_ids)
     robot.write_root_link_velocity_to_sim(zeros6, env_ids=env_ids)
     cart.write_root_link_pose_to_sim(cart_pose, env_ids=env_ids)
     cart.write_root_link_velocity_to_sim(zeros6, env_ids=env_ids)
 
-    robot_joint_pos = env.static_joint_position.expand(env_ids.numel(), -1)
+    robot_joint_pos = env.static_joint_position[env_ids]
     robot.write_joint_state_to_sim(robot_joint_pos, torch.zeros_like(robot_joint_pos), env_ids=env_ids)
     wheel_pos = torch.stack(
         (qpos[:, qadr("rickshaw/left_wheel_joint")], qpos[:, qadr("rickshaw/right_wheel_joint")]), dim=-1
@@ -322,7 +329,7 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
     cart.write_joint_state_to_sim(
         wheel_pos, torch.zeros_like(wheel_pos), joint_ids=env.wheel_joint_ids, env_ids=env_ids
     )
-    q_ref = env.static_q_ref.expand(env_ids.numel(), -1)
+    q_ref = env.static_q_ref[env_ids]
     env.action_manager.get_term("joint_pos").set_reference(q_ref, env_ids)
     # Entity.set_joint_position_target uses direct tensor indexing, unlike the
     # write_* state helpers.  Explicitly form the env-by-joint outer product.
@@ -336,9 +343,9 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
     env.rickshaw_state.two_wheel_contact[env_ids] = False
     env.rickshaw_state.hand_force_w[env_ids] = 0.0
     env.rickshaw_state.connection_force_w[env_ids] = 0.0
-    env.rickshaw_state.relative_position_b[env_ids] = env.static_relative_position_b
-    env.rickshaw_state.relative_yaw[env_ids] = env.static_relative_yaw
-    env.rickshaw_state.pitch[env_ids] = env.static_rickshaw_pitch
+    env.rickshaw_state.relative_position_b[env_ids] = env.static_relative_position_b[env_ids]
+    env.rickshaw_state.relative_yaw[env_ids] = env.static_relative_yaw[env_ids]
+    env.rickshaw_state.pitch[env_ids] = env.static_rickshaw_pitch[env_ids]
     env.stability_state.theta_fat[env_ids] = env.static_fat2
     env.stability_state.fat_valid[env_ids] = False
     env.stability_state.fat_force_consistent[env_ids] = False

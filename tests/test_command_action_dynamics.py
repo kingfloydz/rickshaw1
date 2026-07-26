@@ -300,7 +300,7 @@ def test_connect_constraint_forces_select_each_hand_and_ignore_padding() -> None
     )
 
 
-def test_flat_zmp_uses_hand_force_moment() -> None:
+def test_ground_aligned_zmp_uses_hand_force_moment() -> None:
     zmp, _, reaction, valid = zmp_from_hand_force(
         torch.tensor([0.0], dtype=torch.float64),
         torch.tensor([1.0], dtype=torch.float64),

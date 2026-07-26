@@ -45,12 +45,12 @@ CHECKPOINT_STAGE_KEY = "g1_rickshaw_stage"
 CHECKPOINT_LINEAGE_KEY = "g1_rickshaw_lineage"
 CHECKPOINT_CURRICULUM_ITERATION_KEY = "g1_rickshaw_curriculum_iteration"
 TRAINING_CONFIGURATION_KEY = "g1_rickshaw_training_configuration"
-TRAINING_CONFIGURATION_SCHEMA_VERSION = 13
+TRAINING_CONFIGURATION_SCHEMA_VERSION = 14
 EXPECTED_RSL_RL_DISTRIBUTION_VERSION = RSL_RL_VERSION.removeprefix("v")
 
 REPOSITORY_ROOT = PROJECT_ROOT
 DEFAULT_FEASIBILITY_PATH = CONFIG_ROOT / "feasibility_envelope.yaml"
-GUIDE_TRAINING_TASK = "Mjlab-G1-Rickshaw-Flat-Teacher"
+GUIDE_TRAINING_TASK = "Mjlab-G1-Rickshaw-Slopes-Teacher"
 GUIDE_TRAINING_NUM_ENVS = 8192
 TRAINING_ARTIFACT_INTERVAL = 50
 S1_DETERMINISTIC_ALGORITHMS = False
@@ -87,7 +87,7 @@ TRAINING_CONFIGURATION_FIELDS = {
 GUIDE_TRAINING_PARAMETERS = {
     "s0_teacher": {
         "domain_randomization": "startup_fixed",
-        "terrain": "flat_plane",
+        "terrain": "nineteen_slopes",
         "observation_noise": "unitree_g1_uniform",
     },
     "s1_context_distillation": {

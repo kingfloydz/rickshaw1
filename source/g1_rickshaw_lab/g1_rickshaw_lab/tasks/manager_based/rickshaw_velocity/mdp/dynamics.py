@@ -284,7 +284,7 @@ def analytic_handle_force(
 
     The stored CoM and handle coordinates are cart-frame vectors from the axle.
     They are rotated by the current front-lift pitch before evaluating moments
-    in the flat-ground path frame.
+    in the ground-aligned path frame.
     """
 
     if velocity_epsilon <= 0.0:
@@ -615,7 +615,7 @@ def zmp_from_hand_force(
     *,
     min_ground_reaction: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Compute flat-ground ZMP for the cart-on-robot hand force."""
+    """Compute sagittal ZMP in the ground-aligned frame."""
 
     mass = torch.as_tensor(robot_mass, device=com_s.device, dtype=com_s.dtype)
     r_s = mass * com_acceleration_s - hand_force_s

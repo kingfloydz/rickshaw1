@@ -46,7 +46,7 @@ from _rollout_audit import (  # noqa: E402
 )
 
 
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Teacher"
+DEFAULT_TASK = "Mjlab-G1-Rickshaw-Slopes-Teacher"
 
 
 def _step_teacher_policy(

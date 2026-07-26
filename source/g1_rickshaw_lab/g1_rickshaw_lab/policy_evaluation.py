@@ -14,8 +14,9 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 import numpy as np
+
 POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 4
-GUIDE_POLICY_EVALUATION_TASK: Final[str] = "Mjlab-G1-Rickshaw-Flat-Student"
+GUIDE_POLICY_EVALUATION_TASK: Final[str] = "Mjlab-G1-Rickshaw-Slopes-Student"
 COMMAND_PHASE_LABELS: Final[tuple[str, ...]] = (
     "standing",
     "moving",

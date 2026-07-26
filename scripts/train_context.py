@@ -534,7 +534,7 @@ def main() -> int:
         required=True,
         help="S0 teacher checkpoint with provenance metadata.",
     )
-    parser.add_argument("--task", default="Mjlab-G1-Rickshaw-Flat-Teacher")
+    parser.add_argument("--task", default="Mjlab-G1-Rickshaw-Slopes-Teacher")
     parser.add_argument(
         "--rollout-dir",
         required=False,

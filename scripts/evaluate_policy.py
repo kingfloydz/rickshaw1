@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Produce fixed-seed flat-ground policy diagnostics in Mjlab."""
+"""Produce fixed-seed nineteen-slope policy diagnostics in Mjlab."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ from g1_rickshaw_lab.artifact_io import (  # noqa: E402
 )
 
 
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Student"
+DEFAULT_TASK = "Mjlab-G1-Rickshaw-Slopes-Student"
 SUPPORTED_STAGES = {
     "s0_teacher",
     "s1_context_distillation",

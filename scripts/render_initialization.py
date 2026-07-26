@@ -58,7 +58,7 @@ def main() -> int:
 
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
     cfg = load_env_cfg(
-        "Mjlab-G1-Rickshaw-Flat-Student", play=True
+        "Mjlab-G1-Rickshaw-Slopes-Student", play=True
     )
     cfg.scene.num_envs = args.num_envs
     cfg.viewer.env_idx = render_indices[0]
