@@ -78,7 +78,9 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     """Create the flat-ground rickshaw velocity task using mjlab 1.5.3 APIs."""
 
     from mjlab.envs import ManagerBasedRlEnvCfg
+    from mjlab.managers.curriculum_manager import CurriculumTermCfg
     from mjlab.managers.event_manager import EventTermCfg
+    from mjlab.managers.metrics_manager import MetricsTermCfg
     from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
     from mjlab.managers.reward_manager import RewardTermCfg
     from mjlab.managers.scene_entity_config import SceneEntityCfg
@@ -93,7 +95,6 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     )
     from mjlab.sim import MujocoCfg, SimulationCfg
     from mjlab.tasks.velocity import mdp as velocity_mdp
-    from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
     from mjlab.terrains import TerrainEntityCfg
     from mjlab.utils.nan_guard import NanGuardCfg
     from mjlab.viewer import ViewerConfig
@@ -106,6 +107,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         HITCH_HEIGHT_RECOVERY_SCALE_M,
     )
     from .mjlab_actions import StaticReferenceJointPositionActionCfg
+    from .mjlab_commands import RickshawVelocityCommandCfg
     from .mjlab_events import (
         advance_mjlab_policy_state,
         initialize_mjlab_domain,
@@ -150,6 +152,11 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
             concatenate_terms=True,
             enable_corruption=False,
         ),
+        "critic_policy": ObservationGroupCfg(
+            terms={"current": ObservationTermCfg(func=mjlab_mdp.critic_actor_observation)},
+            concatenate_terms=True,
+            enable_corruption=False,
+        ),
     }
     actions = {
         "joint_pos": StaticReferenceJointPositionActionCfg(
@@ -170,21 +177,19 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     foot_site_names = ("left_foot", "right_foot")
     rewards = {
         "track_linear_velocity": RewardTermCfg(
-            func=velocity_mdp.track_linear_velocity,
+            func=mjlab_mdp.track_rickshaw_lin_vel_x,
             weight=2.0,
             params={
                 "command_name": "twist",
                 "std": math.sqrt(0.25),
-                "asset_cfg": SceneEntityCfg("rickshaw"),
             },
         ),
         "track_angular_velocity": RewardTermCfg(
-            func=velocity_mdp.track_angular_velocity,
+            func=mjlab_mdp.track_rickshaw_ang_vel_z,
             weight=2.0,
             params={
                 "command_name": "twist",
                 "std": math.sqrt(0.5),
-                "asset_cfg": SceneEntityCfg("rickshaw"),
             },
         ),
         "upright": RewardTermCfg(
@@ -199,7 +204,10 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
             func=velocity_mdp.variable_posture,
             weight=1.0,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=(r".*_(hip|knee|ankle)_.*", r"waist_.*_joint"),
+                ),
                 "command_name": "twist",
                 "std_standing": {".*": 0.05},
                 "std_walking": {
@@ -212,11 +220,6 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
                     ".*waist_yaw.*": 0.2,
                     ".*waist_roll.*": 0.08,
                     ".*waist_pitch.*": 0.1,
-                    ".*shoulder_pitch.*": 0.15,
-                    ".*shoulder_roll.*": 0.15,
-                    ".*shoulder_yaw.*": 0.1,
-                    ".*elbow.*": 0.15,
-                    ".*wrist.*": 0.3,
                 },
                 "std_running": {
                     ".*hip_pitch.*": 0.5,
@@ -228,11 +231,6 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
                     ".*waist_yaw.*": 0.3,
                     ".*waist_roll.*": 0.08,
                     ".*waist_pitch.*": 0.2,
-                    ".*shoulder_pitch.*": 0.5,
-                    ".*shoulder_roll.*": 0.2,
-                    ".*shoulder_yaw.*": 0.15,
-                    ".*elbow.*": 0.35,
-                    ".*wrist.*": 0.3,
                 },
                 "walking_threshold": 0.05,
                 "running_threshold": 1.5,
@@ -322,20 +320,18 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         ),
     }
     commands = {
-        "twist": UniformVelocityCommandCfg(
+        "twist": RickshawVelocityCommandCfg(
             entity_name="rickshaw",
             resampling_time_range=(3.0, 8.0),
             rel_standing_envs=0.1,
-            rel_heading_envs=0.3,
+            rel_heading_envs=0.0,
             rel_forward_envs=0.2,
-            heading_command=True,
-            heading_control_stiffness=0.5,
+            heading_command=False,
             debug_vis=True,
-            ranges=UniformVelocityCommandCfg.Ranges(
+            ranges=RickshawVelocityCommandCfg.Ranges(
                 lin_vel_x=(-1.0, 1.0),
-                lin_vel_y=(-1.0, 1.0),
+                lin_vel_y=(0.0, 0.0),
                 ang_vel_z=(-0.5, 0.5),
-                heading=(-math.pi, math.pi),
             ),
         )
     }
@@ -410,8 +406,20 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         events=events,
         rewards=rewards,
         terminations=terminations,
-        curriculum={},
-        metrics={},
+        curriculum={
+            "command_vel": CurriculumTermCfg(
+                func=velocity_mdp.commands_vel,
+                params={
+                    "command_name": "twist",
+                    "velocity_stages": [
+                        {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
+                        {"step": 5000 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
+                        {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
+                    ],
+                },
+            )
+        },
+        metrics={"mean_action_acc": MetricsTermCfg(func=velocity_mdp.mean_action_acc)},
         viewer=ViewerConfig(
             origin_type=ViewerConfig.OriginType.ASSET_BODY,
             entity_name="robot",
@@ -445,6 +453,12 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     cfg.observation_noise_enabled = not play
     cfg.domain_randomization = runtime.domain
     cfg.policy_update = runtime
+    if play:
+        cfg.episode_length_s = int(1e9)
+        cfg.curriculum = {}
+        twist_cmd = cfg.commands["twist"]
+        twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
+        twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
     return cfg
 
 

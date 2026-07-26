@@ -63,7 +63,8 @@ def test_metric_store_excludes_nonfinite_samples_but_records_them() -> None:
     store = MetricStore()
     store.add_samples(
         {
-            "speed_error": np.asarray([1.0, np.nan, -1.0]),
+            "lin_vel_x_error": np.asarray([1.0, np.nan, -1.0]),
+            "ang_vel_z_error": np.asarray([0.2, np.nan, -0.2]),
             "overspeed": np.asarray([0.0, 1.0, 0.0]),
         }
     )
@@ -72,16 +73,22 @@ def test_metric_store_excludes_nonfinite_samples_but_records_them() -> None:
     assert summary["samples"] == 2
     assert summary["non_finite_sample_counts"] == {
         "overspeed": 0,
-        "speed_error": 1,
+        "ang_vel_z_error": 1,
+        "lin_vel_x_error": 1,
     }
-    assert summary["tracking"]["speed_rmse_mps"] == pytest.approx(1.0)
+    assert summary["tracking"]["lin_vel_x_rmse_mps"] == pytest.approx(1.0)
+    assert summary["tracking"]["ang_vel_z_rmse_radps"] == pytest.approx(0.2)
     assert summary["episodes"]["return"]["mean"] == pytest.approx(2.0)
 
 
 def test_accumulator_keeps_global_and_phase_diagnostics() -> None:
     accumulator = PolicyEvaluationAccumulator()
     accumulator.add_step(
-        {"speed_error": [0.1, -0.2], "overspeed": [0.0, 1.0]},
+        {
+            "lin_vel_x_error": [0.1, -0.2],
+            "ang_vel_z_error": [0.0, 0.1],
+            "overspeed": [0.0, 1.0],
+        },
         stage_labels=["training", "training"],
         cross_case_labels=["RANDOM", "RANDOM"],
         phase_labels=["standing", "moving"],
@@ -101,4 +108,4 @@ def test_accumulator_keeps_global_and_phase_diagnostics() -> None:
 def test_accumulator_rejects_mismatched_sample_lengths() -> None:
     accumulator = PolicyEvaluationAccumulator()
     with pytest.raises(ValueError, match="equal length"):
-        accumulator.add_step({"speed_error": [0.0], "overspeed": [0.0, 1.0]})
+        accumulator.add_step({"lin_vel_x_error": [0.0], "overspeed": [0.0, 1.0]})

@@ -9,10 +9,7 @@ from torch import nn
 from g1_rickshaw_lab import policy_schema
 from g1_rickshaw_lab.rl import actor_critic, context_encoder, teacher_model
 from g1_rickshaw_lab.rl.rsl_rl_models import _DeploymentController
-from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp import (
-    actions,
-    observations,
-)
+from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp import observations
 from g1_rickshaw_lab.training_contract import (
     TRAINING_CONFIGURATION_KEY,
     _deployment_contract,
@@ -40,15 +37,21 @@ def test_policy_dimensions_are_shared_across_runtime_layers() -> None:
         policy_schema.validate_context_dim(8.0)
 
 
-def test_action_filter_contract_is_shared_by_simulation_and_deployment() -> None:
-    expected_scale = torch.tensor(policy_schema.ACTION_SCALE)
-    torch.testing.assert_close(actions.action_scale_vector(), expected_scale)
+def test_direct_action_contract_is_shared_by_simulation_and_deployment() -> None:
+    class Policy(nn.Module):
+        def forward(self, current: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
+            del history
+            return current[:, : policy_schema.ACTION_DIM]
 
-    controller = _DeploymentController(nn.Identity())
+    expected_scale = torch.tensor(policy_schema.ACTION_SCALE)
+    controller = _DeploymentController(Policy())
     torch.testing.assert_close(controller.action_scale, expected_scale)
-    assert controller.b0 == pytest.approx(policy_schema.BUTTERWORTH_B0)
-    assert controller.b1 == pytest.approx(policy_schema.BUTTERWORTH_B1)
-    assert controller.a1 == pytest.approx(policy_schema.BUTTERWORTH_A1)
+    current = torch.ones(2, policy_schema.ACTOR_OBSERVATION_DIM)
+    history = torch.zeros(2, 61, policy_schema.ACTOR_OBSERVATION_DIM)
+    q_ref = torch.zeros(2, policy_schema.ACTION_DIM)
+    action, target = controller(current, history, q_ref)
+    torch.testing.assert_close(action, torch.ones_like(action))
+    torch.testing.assert_close(target, expected_scale.expand_as(target))
 
 
 def test_deployment_manifest_uses_the_policy_schema() -> None:
@@ -57,7 +60,7 @@ def test_deployment_manifest_uses_the_policy_schema() -> None:
             TRAINING_CONFIGURATION_KEY: {
                 "stage": "s2_student_ppo",
                 "training_parameters": {
-                    "rollout_steps": 48,
+                    "rollout_steps": 24,
                     "latent_dim": 24,
                     "history_length": 61,
                 },
@@ -82,10 +85,8 @@ def test_deployment_manifest_uses_the_policy_schema() -> None:
         policy_schema.ACTION_SCALE
     )
     assert max(abs(value) for value in manifest["action"]["q_ref"]) <= 2.0
-    assert len(manifest["action"]["static_position_offset_rad"]) == policy_schema.ACTION_DIM
-    butterworth = manifest["action"]["butterworth"]
-    assert {name: butterworth[name] for name in ("b0", "b1", "a1")} == {
-        "b0": policy_schema.BUTTERWORTH_B0,
-        "b1": policy_schema.BUTTERWORTH_B1,
-        "a1": policy_schema.BUTTERWORTH_A1,
-    }
+    assert manifest["action"]["mapping"] == "joint_target=q_ref+normalized_action*scale"
+    assert manifest["deployment_controller"]["outputs"] == [
+        "normalized_action",
+        "joint_target",
+    ]

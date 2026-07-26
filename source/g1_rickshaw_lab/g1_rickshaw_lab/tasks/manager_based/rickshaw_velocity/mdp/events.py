@@ -14,25 +14,6 @@ from g1_rickshaw_lab.assets.rickshaw import (
     RICKSHAW_TOTAL_MASS,
 )
 
-from .dynamics import quat_apply_wxyz
-
-
-@dataclass
-class PathTrackingState:
-    lateral_error: torch.Tensor
-    heading_error: torch.Tensor
-
-    @classmethod
-    def zeros(
-        cls,
-        num_envs: int,
-        *,
-        device: torch.device | str | None = None,
-        dtype: torch.dtype = torch.float32,
-    ) -> PathTrackingState:
-        zeros = torch.zeros(num_envs, device=device, dtype=dtype)
-        return cls(zeros.clone(), zeros.clone())
-
 
 @dataclass
 class RickshawRuntimeState:
@@ -123,28 +104,6 @@ class StabilityState:
                 (num_envs, 8), device=device, dtype=torch.bool
             ),
         )
-
-
-def compute_path_tracking_errors(
-    robot_position_w: torch.Tensor,
-    cart_position_w: torch.Tensor,
-    robot_quaternion_wxyz: torch.Tensor,
-    path_origin_w: torch.Tensor,
-    path_tangent_w: torch.Tensor,
-    path_lateral_w: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    midpoint = 0.5 * (robot_position_w + cart_position_w)
-    lateral_error = torch.sum(
-        (midpoint - path_origin_w) * path_lateral_w, dim=-1
-    )
-    local_x = torch.zeros_like(path_tangent_w)
-    local_x[:, 0] = 1.0
-    robot_forward_w = quat_apply_wxyz(robot_quaternion_wxyz, local_x)
-    heading_error = torch.atan2(
-        torch.sum(robot_forward_w * path_lateral_w, dim=-1),
-        torch.sum(robot_forward_w * path_tangent_w, dim=-1),
-    )
-    return lateral_error, heading_error
 
 
 DOMAIN_RANDOMIZATION_NAMES = (
@@ -310,10 +269,8 @@ __all__ = [
     "DOMAIN_PARAMETER_NAMES",
     "DOMAIN_RANDOMIZATION_NAMES",
     "DomainRandomizationCfg",
-    "PathTrackingState",
     "RickshawRuntimeState",
     "StabilityState",
-    "compute_path_tracking_errors",
     "effective_cart_mass_com_bounds",
     "sample_domain_parameters",
 ]

@@ -38,8 +38,9 @@ the hitch to 0.75-0.95 m, keeps a 5 mm optimization margin at each boundary,
 and selects the valid pose with the smallest maximum normalized joint torque.
 The current certified hitch height is 0.750492 m. Initial constraint error,
 support error, acceleration, contact force, and actuator torque are certified.
-The policy reference remains the physical pose `q_static`; the actuator layer
-separately applies the static offset `tau / Kp` to its built-in position target.
+The policy reference remains the physical pose `q_static`. Actions map directly
+to `q_static + normalized_action * G1_ACTION_SCALE`; there is no torque-derived
+position offset, action filter, or action clipping.
 
 Run the physical validations before training:
 
@@ -58,8 +59,16 @@ python scripts/play_student.py --checkpoint <student.pt>
 
 The Mjlab runtime owns the flat plane, startup-fixed nine-parameter domain
 randomization, online FAT2/ZMP diagnostics, observations, rewards, and RSL-RL
-rollout state. Rewards use the Mjlab 1.5.3 G1 flat definitions directly, with
-upright weight 0.2, foot swing target 0.08 m, and the two rickshaw hitch-height
-terms. Commands are sampled directly every 3-8 s with 10% standing commands;
-the tracked entity is the rickshaw. There is no secondary simulator runtime
-path or runtime reward override.
+rollout state. The command observation contains only rickshaw `lin_vel_x` and
+`ang_vel_z`; their tracking rewards use the rickshaw axle frame on the flat
+plane. The actor observation is 95-D and uses the normalized previous action.
+The clean critic observation adds official foot height, air time, contact state,
+and signed-log contact force terms. Rewards otherwise use the Mjlab 1.5.3 G1
+flat definitions, with upright weight 0.2, lower-body/waist-only pose tracking,
+foot swing target 0.08 m, and the two rickshaw hitch-height terms.
+
+The command curriculum, play episode/ranges, 24-step rollout, 50-iteration
+checkpoint interval, 30,000 iterations, actor/critic MLPs, empirical
+normalization, Gaussian standard deviation, and PPO hyperparameters match Mjlab
+1.5.3 G1 Flat. There is no secondary simulator runtime path or runtime reward
+override.

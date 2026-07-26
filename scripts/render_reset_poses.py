@@ -43,6 +43,9 @@ def main() -> int:
     camera = mujoco.MjvCamera()
     mujoco.mjv_defaultCamera(camera)
     camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+    scene_option = mujoco.MjvOption()
+    mujoco.mjv_defaultOption(scene_option)
+    scene_option.geomgroup[3] = 1
     if args.view == "front":
         camera.azimuth = 180.0
         camera.elevation = -5.0
@@ -60,7 +63,7 @@ def main() -> int:
         cart = np.asarray(data.body("rickshaw/base_link").xpos)
         camera.lookat[:] = 0.5 * (pelvis + cart)
         camera.lookat[2] = max(0.65, camera.lookat[2])
-        renderer.update_scene(data, camera=camera)
+        renderer.update_scene(data, camera=camera, scene_option=scene_option)
         image = Image.fromarray(renderer.render())
         draw = ImageDraw.Draw(image)
         label = (

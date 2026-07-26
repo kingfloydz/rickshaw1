@@ -37,6 +37,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     TRAINING_CONFIGURATION_KEY as TRAINING_CONFIGURATION_CHECKPOINT_KEY,
     build_training_configuration,
     extract_gaussian_actor_state,
+    extract_policy_observation_normalizer_state,
     load_stage_checkpoint,
     validate_guide_training_configuration,
     validate_rollout_stage_coverage,
@@ -250,6 +251,9 @@ def initialize_actor_from_checkpoint(
     student: G1RickshawStudentActor, checkpoint: Mapping[str, Any]
 ) -> None:
     student.actor.load_state_dict(extract_gaussian_actor_state(checkpoint), strict=True)
+    student.obs_normalizer.load_state_dict(
+        extract_policy_observation_normalizer_state(checkpoint), strict=True
+    )
 
 
 def _batch(

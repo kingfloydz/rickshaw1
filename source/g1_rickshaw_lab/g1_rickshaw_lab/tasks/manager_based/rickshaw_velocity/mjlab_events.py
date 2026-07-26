@@ -23,8 +23,7 @@ from g1_rickshaw_lab.assets.rickshaw import (
     WHEEL_LINK_NAMES,
 )
 from g1_rickshaw_lab.configuration import G1_JOINT_ORDER
-from g1_rickshaw_lab.g1_motor_defaults import G1_JOINT_STIFFNESS
-from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH, TEACHER_DYNAMIC_DIM
+from g1_rickshaw_lab.policy_schema import ACTOR_OBSERVATION_DIM, HISTORY_LENGTH, TEACHER_DYNAMIC_DIM
 from g1_rickshaw_lab.static_equilibrium import MujocoStaticEquilibrium, load_mujoco_static_equilibrium
 
 from .closed_chain import build_assembled_spec
@@ -55,14 +54,13 @@ from .mdp.dynamics import (
 )
 from .mdp.events import (
     DomainRandomizationCfg,
-    PathTrackingState,
     RickshawRuntimeState,
     StabilityState,
     _update_teacher_static_domain,
-    compute_path_tracking_errors,
     sample_domain_parameters,
 )
 from .mdp.observations import ObservationHistoryState
+from .mjlab_commands import rickshaw_velocity
 from .task_spec import RickshawPoseTargetCfg
 
 
@@ -135,22 +133,16 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
         dtype=torch.float32,
     )
     env.static_q_ref = env.static_joint_position.clone()
-    env.static_actuator_torque = torch.as_tensor(
-        solution.joint_actuator_torque,
-        device=env.device,
-        dtype=torch.float32,
-    )
-    stiffness = torch.tensor(G1_JOINT_STIFFNESS, device=env.device, dtype=torch.float32)
-    env.static_actuator_position_offset = env.static_actuator_torque / stiffness
-    env.static_actuator_position_target = env.static_q_ref + env.static_actuator_position_offset
     env.static_fat2 = float(solution.fat2_reference_angle)
 
     env.runtime_cfg = cfg
-    env.path_state = PathTrackingState.zeros(env.num_envs, device=env.device)
     env.rickshaw_state = RickshawRuntimeState.zeros(env.num_envs, device=env.device)
     env.stability_state = StabilityState.zeros(env.num_envs, device=env.device)
     env.observation_history_state = ObservationHistoryState.zeros(
         env.num_envs, history_length=cfg.history_length, device=env.device
+    )
+    env.critic_policy_observation = torch.zeros(
+        (env.num_envs, ACTOR_OBSERVATION_DIM), device=env.device
     )
     env.teacher_dynamic_history_state = ObservationHistoryState.zeros(
         env.num_envs,
@@ -179,6 +171,7 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     env.last_rolling_force_w = torch.zeros((env.num_envs, 2, 3), device=env.device)
     env.rickshaw_speed_s = zeros.clone()
     env.rickshaw_speed_l = zeros.clone()
+    env.rickshaw_ang_vel_z = zeros.clone()
     env._mjlab_physical_state_step = -1
     env._mjlab_observation_state_step = -1
 
@@ -330,17 +323,14 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
         wheel_pos, torch.zeros_like(wheel_pos), joint_ids=env.wheel_joint_ids, env_ids=env_ids
     )
     q_ref = env.static_q_ref.expand(env_ids.numel(), -1)
-    static_offset = env.static_actuator_position_offset.expand(env_ids.numel(), -1)
-    env.action_manager.get_term("joint_pos").set_reference(q_ref, static_offset, env_ids)
+    env.action_manager.get_term("joint_pos").set_reference(q_ref, env_ids)
     # Entity.set_joint_position_target uses direct tensor indexing, unlike the
     # write_* state helpers.  Explicitly form the env-by-joint outer product.
     robot.set_joint_position_target(
-        q_ref + static_offset - robot.data.encoder_bias[env_ids][:, env.policy_joint_ids],
+        q_ref - robot.data.encoder_bias[env_ids][:, env.policy_joint_ids],
         joint_ids=env.policy_joint_ids.unsqueeze(0),
         env_ids=env_ids.unsqueeze(1),
     )
-    env.path_state.lateral_error[env_ids] = 0.0
-    env.path_state.heading_error[env_ids] = 0.0
     env.rickshaw_state.wheel_normal_force[env_ids] = 0.0
     env.rickshaw_state.two_wheel_contact[env_ids] = False
     env.rickshaw_state.connection_wrench_w[env_ids] = 0.0
@@ -351,6 +341,7 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
     env.stability_state.fat_valid[env_ids] = False
     env.stability_state.zmp_valid[env_ids] = False
     env.observation_history_state.reset(env_ids)
+    env.critic_policy_observation[env_ids] = 0.0
     env.teacher_dynamic_history_state.reset(env_ids)
     env.fat2_wrench_consistency_state.reset(env_ids)
     env.fat2_com_radius_state.reset(env_ids)
@@ -371,17 +362,6 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     robot = env.scene["robot"]
     cart = env.scene["rickshaw"]
     origin = env.scene.env_origins
-
-    lateral_error, heading_error = compute_path_tracking_errors(
-        robot.data.root_link_pos_w,
-        cart.data.root_link_pos_w,
-        robot.data.root_link_quat_w,
-        origin,
-        env.path_tangent_w,
-        env.path_lateral_w,
-    )
-    env.path_state.lateral_error[:] = lateral_error
-    env.path_state.heading_error[:] = heading_error
 
     hitch_position = torch.mean(cart.data.site_pos_w[:, env.hitch_site_ids], dim=1)
     hitch_velocity = torch.mean(cart.data.site_lin_vel_w[:, env.hitch_site_ids], dim=1)
@@ -407,8 +387,10 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     env.rickshaw_state.wheel_normal_force[:] = wheel_normal
     env.rickshaw_state.two_wheel_contact[:] = torch.all(wheel_normal > 1.0, dim=-1)
     cart_com, cart_velocity, cart_mass = _body_mass_kinematics(env, "rickshaw")
-    env.rickshaw_speed_s[:] = torch.sum(cart_velocity * env.path_tangent_w, dim=-1)
-    env.rickshaw_speed_l[:] = torch.sum(cart_velocity * env.path_lateral_w, dim=-1)
+    lin_vel_x, lin_vel_y, ang_vel_z = rickshaw_velocity(cart)
+    env.rickshaw_speed_s[:] = lin_vel_x
+    env.rickshaw_speed_l[:] = lin_vel_y
+    env.rickshaw_ang_vel_z[:] = ang_vel_z
     acceleration = (cart_velocity - env.cart_previous_com_velocity_w) / env.step_dt
     gravity = torch.tensor((0.0, 0.0, -9.81), device=env.device)
     force_on_cart = (

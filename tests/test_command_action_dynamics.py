@@ -13,15 +13,7 @@ from g1_rickshaw_lab.g1_motor_defaults import (
     G1_JOINT_STIFFNESS,
 )
 from g1_rickshaw_lab.policy_schema import ACTION_SCALE
-from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.actions import (
-    ACTION_DIM,
-    ACTION_GROUP_DIMS,
-    ButterworthActionState,
-    action_scale_vector,
-    butterworth_dc_gain,
-    butterworth_gain,
-    canonicalize_action_scale,
-)
+from g1_rickshaw_lab.policy_schema import ACTION_DIM
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.dynamics import (
     FAT2ComRadiusState,
     WrenchConsistencyState,
@@ -34,14 +26,7 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.dynamics import (
     zmp_from_hand_wrench,
 )
 def test_action_scale_matches_unitree_motor_defaults() -> None:
-    assert ACTION_GROUP_DIMS == {
-        "lower": 12,
-        "waist": 3,
-        "shoulder": 6,
-        "elbow": 2,
-        "wrist": 6,
-    }
-    assert sum(ACTION_GROUP_DIMS.values()) == ACTION_DIM == 29
+    assert ACTION_DIM == 29
     expected = tuple(
         0.25 * effort / stiffness
         for effort, stiffness in zip(
@@ -50,34 +35,9 @@ def test_action_scale_matches_unitree_motor_defaults() -> None:
     )
     assert ACTION_SCALE == G1_ACTION_SCALE == expected
     torch.testing.assert_close(
-        action_scale_vector(dtype=torch.float64),
+        torch.tensor(ACTION_SCALE, dtype=torch.float64),
         torch.tensor(expected, dtype=torch.float64),
     )
-
-
-def test_butterworth_filter_response_and_reset() -> None:
-    assert math.isclose(butterworth_dc_gain(), 1.0, abs_tol=3.0e-8)
-    assert math.isclose(butterworth_gain(4.0), 1.0 / math.sqrt(2.0), abs_tol=3.0e-8)
-    q_ref = torch.linspace(-0.6, 0.6, ACTION_DIM, dtype=torch.float64).unsqueeze(0)
-    state = ButterworthActionState.create(q_ref)
-    torch.testing.assert_close(
-        state.process(torch.zeros_like(q_ref), action_scale_vector(dtype=torch.float64)),
-        q_ref,
-        rtol=0.0,
-        atol=3.0e-8,
-    )
-    replacement = q_ref + 0.25
-    state.reset(replacement)
-    torch.testing.assert_close(state.target, replacement)
-
-
-def test_canonicalize_action_scale_rejects_environment_variation() -> None:
-    expected = torch.linspace(0.15, 0.30, 14)
-    batched = expected.unsqueeze(0).expand(13, -1).clone()
-    torch.testing.assert_close(canonicalize_action_scale(batched, 14, 13), expected)
-    batched[7, 3] = 0.5
-    with pytest.raises(ValueError, match="differs between environments"):
-        canonicalize_action_scale(batched, 14, 13)
 
 
 def test_rolling_resistance_opposes_each_wheel() -> None:

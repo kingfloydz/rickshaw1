@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 
 import torch
@@ -21,13 +20,9 @@ from g1_rickshaw_lab.policy_schema import (
 from .context_encoder import ContextEncoder
 
 CURRENT_OBSERVATION_DIM = ACTOR_OBSERVATION_DIM
-LOWER_BODY_ACTION_DIM = 12
 CRITIC_PRIVILEGE_DIM = CRITIC_PRIVILEGED_DIM
 ACTOR_HIDDEN_DIMS = (512, 256, 128)
-CRITIC_HIDDEN_DIMS = (256, 128)
-MIN_ACTION_STD = 0.05
-LOWER_BODY_MAX_ACTION_STD = 0.8
-UPPER_BODY_MAX_ACTION_STD = 0.5
+CRITIC_HIDDEN_DIMS = (512, 256, 128)
 
 
 def _build_mlp(
@@ -49,6 +44,21 @@ def _matrix(tensor: torch.Tensor, width: int, name: str) -> None:
         raise ValueError(f"{name} must have shape [N, {width}]")
 
 
+class PolicyObservationNormalizer(nn.Module):
+    """Frozen-compatible copy of RSL-RL's empirical normalizer state."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        shape = (1, ACTOR_OBSERVATION_DIM)
+        self.register_buffer("_mean", torch.zeros(shape))
+        self.register_buffer("_var", torch.ones(shape))
+        self.register_buffer("_std", torch.ones(shape))
+        self.register_buffer("count", torch.tensor(0, dtype=torch.long))
+
+    def forward(self, observation: torch.Tensor) -> torch.Tensor:
+        return (observation - self._mean) / (self._std + 1.0e-2)
+
+
 class GaussianActor(nn.Module):
     """Map the current observation and selected context to 29 actions."""
 
@@ -63,15 +73,7 @@ class GaussianActor(nn.Module):
             ACTOR_HIDDEN_DIMS,
             ACTION_DIM,
         )
-        initial_std = torch.full((ACTION_DIM,), 0.25)
-        initial_std[:LOWER_BODY_ACTION_DIM] = 0.4
-        self.log_std = nn.Parameter(initial_std.log())
-
-    def _bounded_log_std(self) -> torch.Tensor:
-        maximum = torch.full_like(self.log_std, UPPER_BODY_MAX_ACTION_STD)
-        maximum[:LOWER_BODY_ACTION_DIM] = LOWER_BODY_MAX_ACTION_STD
-        minimum = self.log_std.new_full(self.log_std.shape, math.log(MIN_ACTION_STD))
-        return torch.minimum(torch.maximum(self.log_std, minimum), torch.log(maximum))
+        self.std_param = nn.Parameter(torch.ones(ACTION_DIM))
 
     def distribution(
         self, current: torch.Tensor, context: torch.Tensor
@@ -81,7 +83,7 @@ class GaussianActor(nn.Module):
         if current.shape[0] != context.shape[0]:
             raise ValueError("current and context batch dimensions differ")
         mean = self.network(torch.cat((current, context), dim=-1))
-        std = self._bounded_log_std().exp().to(dtype=mean.dtype).expand_as(mean)
+        std = self.std_param.clamp(1.0e-6, 1.0e6).to(dtype=mean.dtype).expand_as(mean)
         return Independent(Normal(mean, std, validate_args=False), 1)
 
     def forward(self, current: torch.Tensor, context: torch.Tensor) -> Independent:
@@ -99,7 +101,7 @@ class GaussianActor(nn.Module):
 
     @property
     def std(self) -> torch.Tensor:
-        return self._bounded_log_std().exp()
+        return self.std_param.clamp(1.0e-6, 1.0e6)
 
 
 class PrivilegedCritic(nn.Module):
@@ -135,22 +137,23 @@ class G1RickshawStudentActor(nn.Module):
         history_length: int = HISTORY_LENGTH,
     ) -> None:
         super().__init__()
+        self.obs_normalizer = PolicyObservationNormalizer()
         self.context_encoder = ContextEncoder(latent_dim, history_length)
         self.actor = GaussianActor(latent_dim)
 
     def encode(self, history: torch.Tensor) -> torch.Tensor:
-        return self.context_encoder(history)
+        return self.context_encoder(self.obs_normalizer(history))
 
     def forward_with_context(
         self, current: torch.Tensor, history: torch.Tensor
     ) -> tuple[Independent, torch.Tensor]:
         context = self.encode(history)
-        return self.actor(current, context), context
+        return self.actor(self.obs_normalizer(current), context), context
 
     def forward(
         self, current: torch.Tensor, history: torch.Tensor
     ) -> Independent:
-        return self.actor(current, self.encode(history))
+        return self.actor(self.obs_normalizer(current), self.encode(history))
 
     def act(
         self,
@@ -160,7 +163,9 @@ class G1RickshawStudentActor(nn.Module):
         deterministic: bool = False,
     ) -> torch.Tensor:
         return self.actor.act(
-            current, self.encode(history), deterministic=deterministic
+            self.obs_normalizer(current),
+            self.encode(history),
+            deterministic=deterministic,
         )
 
 
@@ -170,10 +175,7 @@ __all__ = [
     "CRITIC_PRIVILEGE_DIM",
     "CRITIC_HIDDEN_DIMS",
     "CURRENT_OBSERVATION_DIM",
-    "LOWER_BODY_ACTION_DIM",
-    "MIN_ACTION_STD",
-    "LOWER_BODY_MAX_ACTION_STD",
-    "UPPER_BODY_MAX_ACTION_STD",
+    "PolicyObservationNormalizer",
     "G1RickshawStudentActor",
     "GaussianActor",
     "PrivilegedCritic",

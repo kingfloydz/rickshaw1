@@ -12,11 +12,10 @@ from torch.distributions import Independent, Normal
 from g1_rickshaw_lab.policy_schema import (
     ACTION_SCALE,
     ACTOR_OBSERVATION_DIM,
-    BUTTERWORTH_A1,
-    BUTTERWORTH_B0,
-    BUTTERWORTH_B1,
     DEFAULT_CONTEXT_DIM,
     HISTORY_LENGTH,
+    TEACHER_DYNAMIC_DIM,
+    TEACHER_STATIC_DIM,
     validate_context_dim,
     validate_history_length,
 )
@@ -85,13 +84,11 @@ class RslRickshawActorModel(_RslModelContract):
             raise ValueError(f"rickshaw action dimension is fixed to {ACTION_DIM}, got {output_dim}")
         if tuple(hidden_dims) != (512, 256, 128) or activation.lower() != "elu":
             raise ValueError("rickshaw actor architecture is fixed to [512,256,128] with ELU")
-        if obs_normalization:
-            raise ValueError("runtime empirical observation normalization is forbidden")
         if distribution_cfg is None:
             raise ValueError("the PPO actor requires a Gaussian distribution configuration")
         self.latent_dim = validate_context_dim(latent_dim)
         self.history_length = validate_history_length(history_length)
-
+        self.obs_normalization = obs_normalization
         self.obs_groups = list(obs_groups[obs_set])
         if (
             "policy" not in self.obs_groups
@@ -125,17 +122,40 @@ class RslRickshawActorModel(_RslModelContract):
                 )
             self.encoder = ContextEncoder(self.latent_dim, self.history_length)
             self.stage = "student"
+        if obs_normalization:
+            from rsl_rl.modules import EmpiricalNormalization
+
+            self.policy_obs_normalizer = EmpiricalNormalization(ACTOR_OBSERVATION_DIM)
+            if self.stage == "teacher":
+                self.dynamic_obs_normalizer = EmpiricalNormalization(TEACHER_DYNAMIC_DIM)
+                self.static_obs_normalizer = EmpiricalNormalization(TEACHER_STATIC_DIM)
+            else:
+                self.dynamic_obs_normalizer = nn.Identity()
+                self.static_obs_normalizer = nn.Identity()
+        else:
+            self.policy_obs_normalizer = nn.Identity()
+            self.dynamic_obs_normalizer = nn.Identity()
+            self.static_obs_normalizer = nn.Identity()
         self.policy = GaussianActor(self.latent_dim)
         self._distribution: Independent | None = None
 
     def encode(self, obs) -> torch.Tensor:
+        history = self.policy_obs_normalizer(obs["history"])
         if self.stage == "teacher":
             return self.encoder(
-                obs["history"],
-                obs["teacher_dynamic_history"],
-                obs["teacher_static"],
+                history,
+                self.dynamic_obs_normalizer(obs["teacher_dynamic_history"]),
+                self.static_obs_normalizer(obs["teacher_static"]),
             )
-        return self.encoder(obs["history"])
+        return self.encoder(history)
+
+    def update_normalization(self, obs) -> None:
+        if not self.obs_normalization:
+            return
+        self.policy_obs_normalizer.update(obs["policy"])
+        if self.stage == "teacher":
+            self.dynamic_obs_normalizer.update(obs["teacher_dynamic_history"][:, -1])
+            self.static_obs_normalizer.update(obs["teacher_static"])
 
     def forward(
         self,
@@ -149,7 +169,8 @@ class RslRickshawActorModel(_RslModelContract):
             from rsl_rl.utils import unpad_trajectories
 
             obs = unpad_trajectories(obs, masks)
-        self._distribution = self.policy.distribution(obs["policy"], self.encode(obs))
+        current = self.policy_obs_normalizer(obs["policy"])
+        self._distribution = self.policy.distribution(current, self.encode(obs))
         return self._distribution.sample() if stochastic_output else self._distribution.mean
 
     def _checked_distribution(self) -> Independent:
@@ -215,7 +236,7 @@ class RslRickshawCriticModel(_RslModelContract):
         obs_groups: dict[str, list[str]],
         obs_set: str,
         output_dim: int,
-        hidden_dims=(256, 128),
+        hidden_dims=(512, 256, 128),
         activation: str = "elu",
         obs_normalization: bool = False,
         distribution_cfg: dict | None = None,
@@ -229,18 +250,31 @@ class RslRickshawCriticModel(_RslModelContract):
         _require_rsl_rl()
         if output_dim != 1 or distribution_cfg is not None:
             raise ValueError("critic must be deterministic with scalar output")
-        if tuple(hidden_dims) != (256, 128) or activation.lower() != "elu":
-            raise ValueError("rickshaw critic architecture is fixed to [256,128] with ELU")
+        if tuple(hidden_dims) != (512, 256, 128) or activation.lower() != "elu":
+            raise ValueError("rickshaw critic architecture is fixed to [512,256,128] with ELU")
+        self.obs_normalization = obs_normalization
         if obs_normalization:
-            raise ValueError("runtime empirical observation normalization is forbidden")
+            from rsl_rl.modules import EmpiricalNormalization
+
+            self.policy_obs_normalizer = EmpiricalNormalization(ACTOR_OBSERVATION_DIM)
+            self.privileged_obs_normalizer = EmpiricalNormalization(CRITIC_PRIVILEGE_DIM)
+        else:
+            self.policy_obs_normalizer = nn.Identity()
+            self.privileged_obs_normalizer = nn.Identity()
         self.obs_groups = list(obs_groups[obs_set])
-        if set(self.obs_groups) != {"policy", "critic"}:
-            raise ValueError("critic observation set requires only policy and critic")
+        if set(self.obs_groups) != {"critic_policy", "critic"}:
+            raise ValueError("critic observation set requires only critic_policy and critic")
         if obs["critic"].shape[-1] != CRITIC_PRIVILEGE_DIM:
             raise ValueError(
                 f"critic privilege must have width {CRITIC_PRIVILEGE_DIM}"
             )
         self.value = PrivilegedCritic()
+
+    def update_normalization(self, obs) -> None:
+        if not self.obs_normalization:
+            return
+        self.policy_obs_normalizer.update(obs["critic_policy"])
+        self.privileged_obs_normalizer.update(obs["critic"])
 
     def forward(self, obs, masks: torch.Tensor | None = None, hidden_state: Any = None) -> torch.Tensor:
         del hidden_state
@@ -248,7 +282,10 @@ class RslRickshawCriticModel(_RslModelContract):
             from rsl_rl.utils import unpad_trajectories
 
             obs = unpad_trajectories(obs, masks)
-        return self.value(obs["policy"], obs["critic"])
+        return self.value(
+            self.policy_obs_normalizer(obs["critic_policy"]),
+            self.privileged_obs_normalizer(obs["critic"]),
+        )
 
 
 class _RelativeLearningRateAdam(torch.optim.Adam):
@@ -308,7 +345,7 @@ class RickshawPPO:
         critic,
         storage,
         context_learning_rate: float | None = None,
-        learning_rate: float = 3.0e-4,
+        learning_rate: float = 1.0e-3,
         optimizer: str = "adam",
         **kwargs,
     ):
@@ -349,11 +386,14 @@ class _StudentExport(nn.Module):
     def __init__(self, model: RslRickshawActorModel) -> None:
         super().__init__()
         self.context_encoder = _DeploymentContextEncoder(model.encoder)
+        self.obs_normalizer = copy.deepcopy(model.policy_obs_normalizer)
         self.policy = copy.deepcopy(model.policy.network)
 
     def forward(self, current: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
+        current = self.obs_normalizer(current)
+        history = self.obs_normalizer(history)
         context = self.context_encoder(history)
-        return self.policy(torch.cat((current, context), dim=-1)).clamp(-1.0, 1.0)
+        return self.policy(torch.cat((current, context), dim=-1))
 
     @torch.jit.export
     def reset(self) -> None:
@@ -381,7 +421,7 @@ class _StudentOnnxExport(_StudentExport):
 
 
 class _DeploymentController(nn.Module):
-    """Stateless policy and 4 Hz action-filter step for deployment runtimes."""
+    """Stateless policy and joint-position mapping for deployment runtimes."""
 
     def __init__(self, policy: nn.Module) -> None:
         super().__init__()
@@ -389,23 +429,17 @@ class _DeploymentController(nn.Module):
         self.register_buffer(
             "action_scale", torch.tensor(ACTION_SCALE, dtype=torch.float32)
         )
-        self.b0 = BUTTERWORTH_B0
-        self.b1 = BUTTERWORTH_B1
-        self.a1 = BUTTERWORTH_A1
 
     def forward(
         self,
         current: torch.Tensor,
         history: torch.Tensor,
         q_ref: torch.Tensor,
-        x_prev: torch.Tensor,
-        y_prev: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        normalized_action = torch.clamp(self.policy(current, history), -1.0, 1.0)
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        normalized_action = self.policy(current, history)
         scale = self.action_scale.to(dtype=normalized_action.dtype)
-        x_next = normalized_action * scale + q_ref
-        y_next = self.b0 * x_next + self.b1 * x_prev - self.a1 * y_prev
-        return normalized_action, y_next, x_next, y_next
+        joint_target = normalized_action * scale + q_ref
+        return normalized_action, joint_target
 
     @torch.jit.export
     def reset(self) -> None:

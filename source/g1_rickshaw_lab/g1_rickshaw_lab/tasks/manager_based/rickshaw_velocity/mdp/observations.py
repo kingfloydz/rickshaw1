@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import torch
 
 from g1_rickshaw_lab.policy_schema import (
+    ACTION_DIM,
     ACTOR_OBSERVATION_DIM,
     HISTORY_LENGTH,
     TEACHER_DYNAMIC_DIM,
@@ -14,23 +15,18 @@ from g1_rickshaw_lab.policy_schema import (
     validate_history_length,
 )
 
-from .actions import ACTION_DIM
-
-GAIT_PERIOD_S = 1.0
-
 TEACHER_STATIC_DOMAIN_DIM = TEACHER_STATIC_DIM
 
 BASE_ANGULAR_VELOCITY_SLICE = slice(0, 3)
 PROJECTED_GRAVITY_SLICE = slice(3, 6)
-TASK_SIGNAL_SLICE = slice(6, 9)
-JOINT_POSITION_SLICE = slice(9, 38)
-JOINT_VELOCITY_SLICE = slice(38, 67)
-PREVIOUS_ACTION_SLICE = slice(67, 67 + ACTION_DIM)
-GAIT_PHASE_SLICE = slice(67 + ACTION_DIM, ACTOR_OBSERVATION_DIM)
+COMMAND_SLICE = slice(6, 8)
+JOINT_POSITION_SLICE = slice(8, 37)
+JOINT_VELOCITY_SLICE = slice(37, 66)
+PREVIOUS_ACTION_SLICE = slice(66, ACTOR_OBSERVATION_DIM)
 
 BASE_ANGULAR_VELOCITY_SCALE = 0.25
 PROJECTED_GRAVITY_SCALE = 1.0
-TASK_SIGNAL_SCALE = (2.0, 2.0, 1.0)
+COMMAND_SCALE = 1.0
 JOINT_POSITION_SCALE = 1.0
 JOINT_VELOCITY_SCALE = 0.05
 PREVIOUS_ACTION_SCALE = 1.0
@@ -40,11 +36,10 @@ PREVIOUS_ACTION_SCALE = 1.0
 ACTOR_OBSERVATION_NOISE_SCALE = (
     (0.2 * BASE_ANGULAR_VELOCITY_SCALE,) * 3
     + (0.05 * PROJECTED_GRAVITY_SCALE,) * 3
-    + (0.0,) * 3
+    + (0.0,) * 2
     + (0.01 * JOINT_POSITION_SCALE,) * ACTION_DIM
     + (1.5 * JOINT_VELOCITY_SCALE,) * ACTION_DIM
     + (0.0,) * ACTION_DIM
-    + (0.0,) * 2
 )
 
 TEACHER_STATIC_FEATURE_NAMES = (
@@ -81,99 +76,25 @@ if len(TEACHER_DYNAMIC_FEATURE_NAMES) != TEACHER_DYNAMIC_DIM:
     raise RuntimeError("teacher dynamic feature schema is not 21-D")
 
 
-def wrap_to_pi(angle: torch.Tensor) -> torch.Tensor:
-    return torch.atan2(torch.sin(angle), torch.cos(angle))
-
-
-def gait_phase_observation(episode_time_s: torch.Tensor) -> torch.Tensor:
-    phase = torch.remainder(episode_time_s, GAIT_PERIOD_S) / GAIT_PERIOD_S
-    angle = 2.0 * torch.pi * phase
-    return torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
-
-
 def assemble_actor_observation(
     base_angular_velocity_b: torch.Tensor,
     projected_gravity_b: torch.Tensor,
-    v_ref: torch.Tensor,
-    lateral_error: torch.Tensor,
-    heading_error: torch.Tensor,
+    command: torch.Tensor,
     joint_position: torch.Tensor,
     q_ref: torch.Tensor,
     joint_velocity_value: torch.Tensor,
-    previous_processed_action: torch.Tensor,
-    gait_phase: torch.Tensor,
+    previous_action: torch.Tensor,
 ) -> torch.Tensor:
-    """Assemble the only deployment observation, in the fixed 98-D order."""
+    """Assemble the 95-D deployment observation in policy order."""
 
-    batch_shape = base_angular_velocity_b.shape[:-1]
-    if base_angular_velocity_b.shape[-1] != 3:
-        raise ValueError("base angular velocity must end in dimension 3")
-    if projected_gravity_b.shape != base_angular_velocity_b.shape:
-        raise ValueError("projected gravity shape differs from angular velocity")
-    for name, value in (
-        ("joint_position", joint_position),
-        ("q_ref", q_ref),
-        ("joint_velocity", joint_velocity_value),
-        ("previous_processed_action", previous_processed_action),
-    ):
-        if value.shape != (*batch_shape, ACTION_DIM):
-            raise ValueError(f"{name} must have shape {(*batch_shape, ACTION_DIM)}")
-    if gait_phase.shape != (*batch_shape, 2):
-        raise ValueError(f"gait_phase must have shape {(*batch_shape, 2)}")
-    for name, value in (
-        ("v_ref", v_ref),
-        ("lateral_error", lateral_error),
-        ("heading_error", heading_error),
-    ):
-        if value.shape != batch_shape:
-            raise ValueError(f"{name} must have batch shape {batch_shape}")
-
-    return _assemble_actor_observation(
-        base_angular_velocity_b,
-        projected_gravity_b,
-        v_ref,
-        lateral_error,
-        heading_error,
-        joint_position,
-        q_ref,
-        joint_velocity_value,
-        previous_processed_action,
-        gait_phase,
-    )
-
-
-def _assemble_actor_observation(
-    base_angular_velocity_b: torch.Tensor,
-    projected_gravity_b: torch.Tensor,
-    v_ref: torch.Tensor,
-    lateral_error: torch.Tensor,
-    heading_error: torch.Tensor,
-    joint_position: torch.Tensor,
-    q_ref: torch.Tensor,
-    joint_velocity_value: torch.Tensor,
-    previous_processed_action: torch.Tensor,
-    gait_phase: torch.Tensor,
-) -> torch.Tensor:
-    """Hot-path observation assembly after startup schema validation."""
-
-    position_error = joint_position - q_ref
-    task = torch.stack(
-        (
-            v_ref * TASK_SIGNAL_SCALE[0],
-            lateral_error * TASK_SIGNAL_SCALE[1],
-            wrap_to_pi(heading_error) * TASK_SIGNAL_SCALE[2],
-        ),
-        dim=-1,
-    )
     return torch.cat(
         (
             base_angular_velocity_b * BASE_ANGULAR_VELOCITY_SCALE,
             projected_gravity_b * PROJECTED_GRAVITY_SCALE,
-            task,
-            position_error * JOINT_POSITION_SCALE,
+            command * COMMAND_SCALE,
+            (joint_position - q_ref) * JOINT_POSITION_SCALE,
             joint_velocity_value * JOINT_VELOCITY_SCALE,
-            previous_processed_action * PREVIOUS_ACTION_SCALE,
-            gait_phase,
+            previous_action * PREVIOUS_ACTION_SCALE,
         ),
         dim=-1,
     )
@@ -294,7 +215,7 @@ def normalize_features(
 
 __all__ = [
     "ACTOR_OBSERVATION_DIM",
-    "GAIT_PHASE_SLICE",
+    "COMMAND_SLICE",
     "HISTORY_LENGTH",
     "TEACHER_DYNAMIC_FEATURE_NAMES",
     "TEACHER_STATIC_DIM",
@@ -303,7 +224,5 @@ __all__ = [
     "ACTOR_OBSERVATION_NOISE_SCALE",
     "ObservationHistoryState",
     "assemble_actor_observation",
-    "gait_phase_observation",
     "normalize_features",
-    "wrap_to_pi",
 ]

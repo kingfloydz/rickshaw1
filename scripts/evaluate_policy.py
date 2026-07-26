@@ -259,9 +259,11 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     state = base_env.rickshaw_state
     stability = base_env.stability_state
     analytic = base_env.analytic_force_state
+    command = base_env.command_manager.get_command("twist")
     actual_speed = base_env.rickshaw_speed_s
-    speed_command = base_env.command_manager.get_command("twist")[:, 0]
-    speed_error = actual_speed - speed_command
+    speed_command = command[:, 0]
+    lin_vel_x_error = actual_speed - speed_command
+    ang_vel_z_error = base_env.rickshaw_ang_vel_z - command[:, 2]
     overspeed_margin = float(
         base_env.runtime_cfg.domain.calibration["safety.overspeed_margin"]
     )
@@ -279,10 +281,16 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     foot_slip = torch.sum(torch.sqrt(foot_s.square() + foot_y.square()) * foot_contact, dim=-1)
 
     dt = float(base_env.step_dt)
-    action = base_env.action_state
-    action_rate = torch.sqrt(torch.mean(((action.target - action.prev_target) / dt).square(), dim=-1))
+    action = base_env.action_manager
+    action_rate = torch.sqrt(torch.mean(((action.action - action.prev_action) / dt).square(), dim=-1))
     action_jerk = torch.sqrt(
-        torch.mean(((action.target - 2.0 * action.prev_target + action.prev_prev_target) / (dt * dt)).square(), dim=-1)
+        torch.mean(
+            (
+                (action.action - 2.0 * action.prev_action + action.prev_prev_action)
+                / (dt * dt)
+            ).square(),
+            dim=-1,
+        )
     )
 
     ids = base_env.policy_joint_ids
@@ -318,18 +326,17 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     sign_n = torch.where(sign_active_n, torch.sign(analytic.t_n) == torch.sign(projected_t_n), torch.ones_like(sign_active_n))
 
     result = {
-        "speed_error": speed_error,
+        "lin_vel_x_error": lin_vel_x_error,
+        "ang_vel_z_error": ang_vel_z_error,
         "overspeed": overspeed,
-        "lateral_error": base_env.path_state.lateral_error,
-        "heading_error": torch.atan2(torch.sin(base_env.path_state.heading_error), torch.cos(base_env.path_state.heading_error)),
         "pitch_error": pitch_error,
         "hitch_height_error": hitch_error,
         "two_wheel_contact": state.two_wheel_contact,
         "wheel_normal_force_left": state.wheel_normal_force[:, 0],
         "wheel_normal_force_right": state.wheel_normal_force[:, 1],
         "foot_slip": foot_slip,
-        "processed_action_rate": action_rate,
-        "processed_action_jerk": action_jerk,
+        "normalized_action_rate": action_rate,
+        "normalized_action_jerk": action_jerk,
         "power": power,
         "connection_residual": state.connection_residual,
         "connection_force": connection_force,

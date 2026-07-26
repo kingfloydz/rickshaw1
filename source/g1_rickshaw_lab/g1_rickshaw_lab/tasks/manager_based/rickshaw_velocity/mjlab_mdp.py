@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+from mjlab.tasks.velocity import mdp as velocity_mdp
 
 from g1_rickshaw_lab.policy_schema import (
     ACTOR_OBSERVATION_DIM,
@@ -17,7 +18,6 @@ from g1_rickshaw_lab.policy_schema import (
 from .mdp.observations import (
     ACTOR_OBSERVATION_NOISE_SCALE,
     assemble_actor_observation,
-    gait_phase_observation,
 )
 from .mdp.rewards import (
     HITCH_HEIGHT_RECOVERY_DEADBAND_M,
@@ -75,18 +75,18 @@ def _update_observation_state(env: Any) -> None:
     env._mjlab_observation_state_step = step
     robot = env.scene["robot"]
     command = env.command_manager.get_command("twist")
-    current = assemble_actor_observation(
+    action_term = env.action_manager.get_term("joint_pos")
+    clean_current = assemble_actor_observation(
         robot.data.root_link_ang_vel_b,
         robot.data.projected_gravity_b,
-        command[:, 0],
-        env.path_state.lateral_error,
-        env.path_state.heading_error,
+        command[:, (0, 2)],
         robot.data.joint_pos[:, env.policy_joint_ids],
-        env.action_state.q_ref,
+        action_term.q_ref,
         robot.data.joint_vel[:, env.policy_joint_ids],
-        env.action_state.target,
-        gait_phase_observation(env.episode_length_buf * env.step_dt),
+        env.action_manager.action,
     )
+    env.critic_policy_observation[:] = clean_current
+    current = clean_current
     if env.cfg.observation_noise_enabled:
         noise = torch.tensor(ACTOR_OBSERVATION_NOISE_SCALE, device=env.device)
         current = current + torch.empty_like(current).uniform_(-1.0, 1.0) * noise
@@ -109,6 +109,13 @@ def actor_observation_history(env: Any, history_length: int = HISTORY_LENGTH) ->
     if history is None:
         raise RuntimeError("actor history is disabled")
     return history
+
+
+def critic_actor_observation(env: Any) -> torch.Tensor:
+    if not hasattr(env, "critic_policy_observation"):
+        return _shape_probe(env, ACTOR_OBSERVATION_DIM)
+    _update_observation_state(env)
+    return env.critic_policy_observation
 
 
 def teacher_dynamic_history(env: Any, history_length: int = HISTORY_LENGTH) -> torch.Tensor:
@@ -138,12 +145,28 @@ def critic_privileged_state(env: Any) -> torch.Tensor:
             env.rickshaw_state.connection_residual[:, None],
             env.stability_state.zmp_margin[:, None],
             env.analytic_force_state.a_s[:, None],
+            velocity_mdp.foot_height(env, "foot_height_scan"),
+            velocity_mdp.foot_air_time(env, "feet_ground_contact"),
+            velocity_mdp.foot_contact(env, "feet_ground_contact"),
+            velocity_mdp.foot_contact_forces(env, "feet_ground_contact"),
         ),
         dim=-1,
     )
     if result.shape != (env.num_envs, CRITIC_PRIVILEGED_DIM):
-        raise RuntimeError("critic privileged observation is not 33-D")
+        raise RuntimeError("critic privileged observation is not 45-D")
     return result
+
+
+def track_rickshaw_lin_vel_x(env: Any, command_name: str, std: float) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    command = env.command_manager.get_command(command_name)
+    return torch.exp(-torch.square(env.rickshaw_speed_s - command[:, 0]) / std**2)
+
+
+def track_rickshaw_ang_vel_z(env: Any, command_name: str, std: float) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    command = env.command_manager.get_command(command_name)
+    return torch.exp(-torch.square(env.rickshaw_ang_vel_z - command[:, 2]) / std**2)
 
 
 def hitch_height_exp(env: Any, std: float) -> torch.Tensor:
@@ -172,10 +195,13 @@ def hitch_height_recovery_l2(
 
 __all__ = [
     "actor_observation_history",
+    "critic_actor_observation",
     "critic_privileged_state",
     "current_actor_observation",
     "hitch_height_exp",
     "hitch_height_recovery_l2",
     "teacher_dynamic_history",
     "teacher_static",
+    "track_rickshaw_ang_vel_z",
+    "track_rickshaw_lin_vel_x",
 ]

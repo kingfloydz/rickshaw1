@@ -32,7 +32,7 @@ class _FakeEnvironment:
 
 
 def _install_fake_runner(
-    rollout_steps: int = 48,
+    rollout_steps: int = 24,
 ) -> type:
     class FakeOnPolicyRunner:
         def __init__(self, env: Any, *args: Any, **kwargs: Any) -> None:

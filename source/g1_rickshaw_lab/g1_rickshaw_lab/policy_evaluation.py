@@ -16,7 +16,7 @@ from typing import Any, Final
 import numpy as np
 import torch
 
-POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 2
+POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 3
 GUIDE_POLICY_EVALUATION_TASK: Final[str] = "Mjlab-G1-Rickshaw-Flat-Student"
 COMMAND_PHASE_LABELS: Final[tuple[str, ...]] = (
     "standing",
@@ -30,18 +30,17 @@ FORMAL_EVALUATION_CROSS_CASE_PROTOCOL: Final[str] = (
     "single_training_distribution"
 )
 METRIC_DEFINITIONS: Final[dict[str, str]] = {
-    "tracking.speed_rmse_mps": "sqrt(mean((v_s-v_ref)^2)) over policy samples",
+    "tracking.lin_vel_x_rmse_mps": "rickshaw forward-speed RMSE over policy samples",
+    "tracking.ang_vel_z_rmse_radps": "rickshaw yaw-rate RMSE over policy samples",
     "episodes.fall_rate": "non-timeout terminated episodes / completed episodes",
     "tracking.overspeed_rate": "samples with v_s > v_ref + configured safety margin / samples",
-    "tracking.lateral_error": "RMS and maximum absolute path lateral error",
-    "tracking.heading_error": "wrapped heading RMS and maximum absolute error",
     "rickshaw.pitch_error": "actual path-frame pitch minus alpha_target",
     "rickshaw.hitch_height_error": "actual world-vertical hitch height minus target",
     "rickshaw.two_wheel_contact_rate": "samples where both wheel normal forces pass the safety threshold",
     "rickshaw.wheel_normal_force": "per-wheel force percentiles",
     "locomotion.foot_slip": "summed ground-plane speed of contacting feet",
-    "actions.processed_rate": "RMS joint norm of (q_t-q_t-1)/policy_dt",
-    "actions.processed_jerk": "RMS joint norm of (q_t-2q_t-1+q_t-2)/policy_dt^2",
+    "actions.normalized_rate": "RMS normalized-action rate over policy joints",
+    "actions.normalized_jerk": "RMS normalized-action second derivative over policy joints",
     "actuation.power": "sum(abs(actuator_force * joint_velocity)) over the 29 policy joints",
     "connection.residual": "maximum position residual of the two MuJoCo site connections",
     "connection.force/torque": "maximum left/right connection force or torque norm",
@@ -354,9 +353,8 @@ class MetricStore:
         return np.concatenate(chunks) if chunks else np.empty(0, dtype=np.float32)
 
     def summary(self) -> dict[str, Any]:  # noqa: C901 - mirrors the guide's metric list.
-        speed_error = self.values("speed_error")
-        lateral = self.values("lateral_error")
-        heading = self.values("heading_error")
+        lin_vel_x_error = self.values("lin_vel_x_error")
+        ang_vel_z_error = self.values("ang_vel_z_error")
         pitch = self.values("pitch_error")
         hitch = self.values("hitch_height_error")
         returns = np.asarray(self.episode_returns, dtype=np.float32)
@@ -367,7 +365,7 @@ class MetricStore:
             return {"mean": _mean(values), **_percentiles(values)}
 
         summary = {
-            "samples": int(speed_error.size),
+            "samples": int(lin_vel_x_error.size),
             "non_finite_sample_counts": dict(sorted(self.non_finite_counts.items())),
             "episodes": {
                 "completed": episodes,
@@ -377,10 +375,9 @@ class MetricStore:
                 "termination_cause_histogram": dict(sorted(self.termination_causes.items())),
             },
             "tracking": {
-                "speed_rmse_mps": _rms(speed_error),
+                "lin_vel_x_rmse_mps": _rms(lin_vel_x_error),
+                "ang_vel_z_rmse_radps": _rms(ang_vel_z_error),
                 "overspeed_rate": _mean(self.values("overspeed")),
-                "lateral_error": {"rms_m": _rms(lateral), "max_abs_m": _maximum_absolute(lateral)},
-                "heading_error": {"rms_rad": _rms(heading), "max_abs_rad": _maximum_absolute(heading)},
             },
             "rickshaw": {
                 "pitch_error": {"rms_rad": _rms(pitch), "max_abs_rad": _maximum_absolute(pitch)},
@@ -393,8 +390,8 @@ class MetricStore:
             },
             "locomotion": {"foot_slip_mps": distribution("foot_slip")},
             "actions": {
-                "processed_rate_radps": distribution("processed_action_rate"),
-                "processed_jerk_radps2": distribution("processed_action_jerk"),
+                "normalized_rate_per_s": distribution("normalized_action_rate"),
+                "normalized_jerk_per_s2": distribution("normalized_action_jerk"),
             },
             "actuation": {
                 "power_w": distribution("power"),

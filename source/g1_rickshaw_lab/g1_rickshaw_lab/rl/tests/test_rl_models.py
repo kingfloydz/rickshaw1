@@ -52,19 +52,16 @@ class TestRickshawRLModels(unittest.TestCase):
             actor_shapes,
             [(ACTOR_OBSERVATION_DIM + 16, 512), (512, 256), (256, 128), (128, 29)],
         )
-        torch.testing.assert_close(actor.std[:12], torch.full((12,), 0.4))
-        torch.testing.assert_close(actor.std[12:], torch.full((17,), 0.25))
+        torch.testing.assert_close(actor.std, torch.ones(29))
 
-        actor.log_std.data.fill_(10.0)
-        self.assertLessEqual(float(actor.std[:12].max().detach()), 0.800001)
-        self.assertLessEqual(float(actor.std[12:].max().detach()), 0.500001)
-        actor.log_std.data.fill_(-10.0)
-        self.assertGreaterEqual(float(actor.std.min().detach()), 0.049999)
+        actor.std_param.data.fill_(0.25)
         distribution = actor.distribution(
             torch.zeros(2, ACTOR_OBSERVATION_DIM), torch.zeros(2, 16)
         )
-        self.assertLessEqual(float(distribution.base_dist.scale[:, :12].max().detach()), 0.050001)
-        self.assertGreaterEqual(float(distribution.base_dist.scale.min().detach()), 0.049999)
+        torch.testing.assert_close(
+            distribution.base_dist.scale,
+            torch.full((2, 29), 0.25),
+        )
 
         critic = PrivilegedCritic()
         critic_shapes = [
@@ -73,7 +70,8 @@ class TestRickshawRLModels(unittest.TestCase):
         self.assertEqual(
             critic_shapes,
             [
-                (ACTOR_OBSERVATION_DIM + CRITIC_PRIVILEGE_DIM, 256),
+                (ACTOR_OBSERVATION_DIM + CRITIC_PRIVILEGE_DIM, 512),
+                (512, 256),
                 (256, 128),
                 (128, 1),
             ],

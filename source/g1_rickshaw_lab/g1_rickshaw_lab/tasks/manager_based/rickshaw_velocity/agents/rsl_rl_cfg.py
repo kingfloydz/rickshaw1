@@ -33,45 +33,45 @@ def _runner_cfg(*, student: bool, latent_dim: int, history_length: int, rollout_
         save_interval=training_artifact_interval(rollout_steps),
         experiment_name="g1_rickshaw_student" if student else "g1_rickshaw_teacher",
         run_name="s2" if student else "s0",
-        clip_actions=1.0,
+        clip_actions=None,
         obs_groups={
             "actor": ("policy", "history")
             if student
             else ("policy", "history", "teacher_dynamic_history", "teacher_static"),
-            "critic": ("policy", "critic"),
+            "critic": ("critic_policy", "critic"),
         },
         actor=ActorCfg(
             class_name="g1_rickshaw_lab.rl.rsl_rl_models:RslRickshawActorModel",
             hidden_dims=(512, 256, 128),
             activation="elu",
-            obs_normalization=False,
+            obs_normalization=True,
             latent_dim=latent_dim,
             history_length=history_length,
             distribution_cfg={
                 "class_name": "GaussianDistribution",
-                "init_std": 0.4,
-                "std_type": "log",
+                "init_std": 1.0,
+                "std_type": "scalar",
             },
         ),
         critic=ModelCfg(
             class_name="g1_rickshaw_lab.rl.rsl_rl_models:RslRickshawCriticModel",
-            hidden_dims=(256, 128),
+            hidden_dims=(512, 256, 128),
             activation="elu",
-            obs_normalization=False,
+            obs_normalization=True,
         ),
         algorithm=AlgorithmCfg(
             class_name="g1_rickshaw_lab.rl.rsl_rl_models:RickshawPPO",
-            context_learning_rate=1.0e-4 if student else None,
+            context_learning_rate=None,
             value_loss_coef=1.0,
             use_clipped_value_loss=True,
             clip_param=0.2,
-            entropy_coef=0.001,
+            entropy_coef=0.01,
             num_learning_epochs=5,
-            num_mini_batches=8,
-            learning_rate=3.0e-4,
+            num_mini_batches=4,
+            learning_rate=1.0e-3,
             schedule="adaptive",
             gamma=0.99,
-            lam=0.97,
+            lam=0.95,
             desired_kl=0.01,
             max_grad_norm=1.0,
         ),
@@ -79,7 +79,7 @@ def _runner_cfg(*, student: bool, latent_dim: int, history_length: int, rollout_
 
 
 def g1_rickshaw_teacher_ppo_runner_cfg(
-    *, latent_dim: int = DEFAULT_CONTEXT_DIM, history_length: int = HISTORY_LENGTH, rollout_steps: int = 48
+    *, latent_dim: int = DEFAULT_CONTEXT_DIM, history_length: int = HISTORY_LENGTH, rollout_steps: int = 24
 ):
     return _runner_cfg(
         student=False,
@@ -90,7 +90,7 @@ def g1_rickshaw_teacher_ppo_runner_cfg(
 
 
 def g1_rickshaw_student_ppo_runner_cfg(
-    *, latent_dim: int = DEFAULT_CONTEXT_DIM, history_length: int = HISTORY_LENGTH, rollout_steps: int = 48
+    *, latent_dim: int = DEFAULT_CONTEXT_DIM, history_length: int = HISTORY_LENGTH, rollout_steps: int = 24
 ):
     return _runner_cfg(
         student=True,

@@ -19,13 +19,12 @@ from g1_rickshaw_lab.rl.context_encoder import (
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.observations import (
     ACTOR_OBSERVATION_DIM,
     BASE_ANGULAR_VELOCITY_SLICE,
-    GAIT_PHASE_SLICE,
+    COMMAND_SLICE,
     HISTORY_LENGTH,
     JOINT_POSITION_SLICE,
     JOINT_VELOCITY_SLICE,
     PREVIOUS_ACTION_SLICE,
     PROJECTED_GRAVITY_SLICE,
-    TASK_SIGNAL_SLICE,
     ObservationHistoryState,
     assemble_actor_observation,
 )
@@ -35,47 +34,39 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
     dtype = torch.float64
     angular_velocity = torch.tensor([[4.0, -2.0, 1.0]], dtype=dtype)
     gravity = torch.tensor([[0.1, 0.2, -0.9]], dtype=dtype)
-    v_ref = torch.tensor([0.7], dtype=dtype)
-    lateral_error = torch.tensor([-0.2], dtype=dtype)
-    heading_error = torch.tensor([3.0 * torch.pi], dtype=dtype)
+    command = torch.tensor([[0.7, -0.2]], dtype=dtype)
     q_ref = torch.linspace(-0.2, 0.2, 29, dtype=dtype).unsqueeze(0)
     position_error = torch.linspace(-0.1, 0.1, 29, dtype=dtype).unsqueeze(0)
     joint_position = q_ref + position_error
     joint_velocity = torch.linspace(-2.0, 2.0, 29, dtype=dtype).unsqueeze(0)
-    previous_processed_action = torch.linspace(-0.5, 0.5, 29, dtype=dtype).unsqueeze(0)
-    gait_phase = torch.tensor([[0.0, 1.0]], dtype=dtype)
+    previous_action = torch.linspace(-0.5, 0.5, 29, dtype=dtype).unsqueeze(0)
 
     observation = assemble_actor_observation(
         angular_velocity,
         gravity,
-        v_ref,
-        lateral_error,
-        heading_error,
+        command,
         joint_position,
         q_ref,
         joint_velocity,
-        previous_processed_action,
-        gait_phase,
+        previous_action,
     )
 
     assert observation.shape == (1, ACTOR_OBSERVATION_DIM)
-    assert ACTOR_OBSERVATION_DIM == 98
+    assert ACTOR_OBSERVATION_DIM == 95
     torch.testing.assert_close(
         observation[:, BASE_ANGULAR_VELOCITY_SLICE], angular_velocity * 0.25
     )
     torch.testing.assert_close(observation[:, PROJECTED_GRAVITY_SLICE], gravity)
     torch.testing.assert_close(
-        observation[:, TASK_SIGNAL_SLICE],
-        torch.tensor([[1.4, -0.4, torch.pi]], dtype=dtype),
+        observation[:, COMMAND_SLICE], command
     )
     torch.testing.assert_close(observation[:, JOINT_POSITION_SLICE], position_error)
     torch.testing.assert_close(
         observation[:, JOINT_VELOCITY_SLICE], joint_velocity * 0.05
     )
     torch.testing.assert_close(
-        observation[:, PREVIOUS_ACTION_SLICE], previous_processed_action
+        observation[:, PREVIOUS_ACTION_SLICE], previous_action
     )
-    torch.testing.assert_close(observation[:, GAIT_PHASE_SLICE], gait_phase)
 
 
 def test_history_excludes_current_observation() -> None:
@@ -86,7 +77,7 @@ def test_history_excludes_current_observation() -> None:
 
     state.advance(first)
     assert state.history.shape == (1, HISTORY_LENGTH, ACTOR_OBSERVATION_DIM)
-    assert (HISTORY_LENGTH, ACTOR_OBSERVATION_DIM) == (61, 98)
+    assert (HISTORY_LENGTH, ACTOR_OBSERVATION_DIM) == (61, 95)
     torch.testing.assert_close(state.history, first[:, None, :].expand(-1, 61, -1))
     torch.testing.assert_close(state.current, first)
 

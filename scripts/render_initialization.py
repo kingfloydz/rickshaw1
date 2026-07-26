@@ -85,7 +85,7 @@ def main() -> int:
                 dim=-1,
             )
             joint_position = env.static_joint_position.expand(args.num_envs, -1)
-            actuator_target = env.static_actuator_position_target.expand(args.num_envs, -1)
+            actuator_target = env.static_q_ref.expand(args.num_envs, -1)
             joint_reset_error = torch.abs(
                 robot.data.joint_pos[:, env.policy_joint_ids] - joint_position
             )
@@ -93,20 +93,16 @@ def main() -> int:
                 robot.data.joint_pos_target[:, env.policy_joint_ids] - actuator_target
             )
             effort_limit = torch.tensor(G1_JOINT_EFFORT_LIMITS, device=device)
-            static_torque_ratio = torch.abs(
-                env.static_actuator_torque.expand(args.num_envs, -1)
-            ) / effort_limit
             actuator_torque_ratio = torch.abs(
                 robot.data.actuator_force[:, env.policy_actuator_ids]
             ) / effort_limit
             reset_worst = joint_reset_error.argmax(dim=-1).cpu().tolist()
-            static_worst = static_torque_ratio.argmax(dim=-1).cpu().tolist()
             current_worst = torch.gather(
                 robot.data.joint_pos[:, env.policy_joint_ids],
                 1,
                 joint_reset_error.argmax(dim=-1, keepdim=True),
             ).squeeze(-1)
-            static_position_worst = torch.gather(
+            reset_position_worst = torch.gather(
                 joint_position,
                 1,
                 joint_reset_error.argmax(dim=-1, keepdim=True),
@@ -132,15 +128,11 @@ def main() -> int:
                     G1_JOINT_ORDER[index] for index in reset_worst
                 ],
                 "joint_position_worst_rad": current_worst.cpu().tolist(),
-                "joint_static_position_worst_rad": static_position_worst.cpu().tolist(),
+                "joint_reset_position_worst_rad": reset_position_worst.cpu().tolist(),
                 "joint_velocity_max_rad_s": torch.abs(
                     robot.data.joint_vel[:, env.policy_joint_ids]
                 ).max(dim=-1).values.cpu().tolist(),
                 "joint_target_error_max_rad": joint_target_error.max(dim=-1).values.cpu().tolist(),
-                "static_torque_ratio_max": static_torque_ratio.max(dim=-1).values.cpu().tolist(),
-                "static_torque_ratio_worst_joint": [
-                    G1_JOINT_ORDER[index] for index in static_worst
-                ],
                 "actuator_torque_ratio_max": actuator_torque_ratio.max(dim=-1).values.cpu().tolist(),
             }
 

@@ -19,14 +19,10 @@ import torch
 
 from .artifact_io import write_json_atomic
 from .configuration import G1_JOINT_ORDER, load_feasibility_envelope
-from .g1_motor_defaults import G1_JOINT_STIFFNESS
 from .policy_schema import (
     ACTION_DIM,
     ACTION_SCALE,
     ACTOR_OBSERVATION_DIM,
-    BUTTERWORTH_A1,
-    BUTTERWORTH_B0,
-    BUTTERWORTH_B1,
     DEFAULT_CONTEXT_DIM,
     HISTORY_LENGTH,
     SUPPORTED_CONTEXT_DIMS,
@@ -49,14 +45,14 @@ CHECKPOINT_STAGE_KEY = "g1_rickshaw_stage"
 CHECKPOINT_LINEAGE_KEY = "g1_rickshaw_lineage"
 CHECKPOINT_CURRICULUM_ITERATION_KEY = "g1_rickshaw_curriculum_iteration"
 TRAINING_CONFIGURATION_KEY = "g1_rickshaw_training_configuration"
-TRAINING_CONFIGURATION_SCHEMA_VERSION = 11
+TRAINING_CONFIGURATION_SCHEMA_VERSION = 12
 EXPECTED_RSL_RL_DISTRIBUTION_VERSION = RSL_RL_VERSION.removeprefix("v")
 
 REPOSITORY_ROOT = PROJECT_ROOT
 DEFAULT_FEASIBILITY_PATH = CONFIG_ROOT / "feasibility_envelope.yaml"
 GUIDE_TRAINING_TASK = "Mjlab-G1-Rickshaw-Flat-Teacher"
 GUIDE_TRAINING_NUM_ENVS = 8192
-TRAINING_ARTIFACT_INTERVAL = 200
+TRAINING_ARTIFACT_INTERVAL = 50
 S1_DETERMINISTIC_ALGORITHMS = False
 
 ROLLOUT_MANIFEST_SCHEMA_VERSION = 5
@@ -70,7 +66,7 @@ TRAINING_PARAMETER_KEYS = (
     "history_length",
 )
 DEFAULT_TRAINING_PARAMETERS = {
-    "rollout_steps": 48,
+    "rollout_steps": 24,
     "latent_dim": DEFAULT_CONTEXT_DIM,
     "history_length": HISTORY_LENGTH,
 }
@@ -106,17 +102,17 @@ GUIDE_TRAINING_PARAMETERS = {
         "deterministic_algorithms": S1_DETERMINISTIC_ALGORITHMS,
     },
     "s2_student_ppo": {
-        "context_learning_rate": 1.0e-4,
-        "actor_learning_rate": 3.0e-4,
-        "critic_learning_rate": 3.0e-4,
+        "context_learning_rate": 1.0e-3,
+        "actor_learning_rate": 1.0e-3,
+        "critic_learning_rate": 1.0e-3,
         "context_encoder_frozen": False,
         "distillation_loss": False,
     },
 }
 GUIDE_MAX_ITERATIONS = {
-    "s0_teacher": 2600,
+    "s0_teacher": 30000,
     "s1_context_distillation": 2000,
-    "s2_student_ppo": 1600,
+    "s2_student_ppo": 30000,
 }
 BASELINE_ROLLOUT_STEPS = DEFAULT_TRAINING_PARAMETERS["rollout_steps"]
 
@@ -147,9 +143,11 @@ def guide_max_iterations(stage: str, rollout_steps: int = BASELINE_ROLLOUT_STEPS
 
 
 def training_artifact_interval(rollout_steps: int) -> int:
-    """Return the checkpoint interval at a fixed transition cadence."""
+    """Return the official G1 Flat checkpoint interval."""
 
-    return rollout_scaled_iterations(TRAINING_ARTIFACT_INTERVAL, rollout_steps)
+    if type(rollout_steps) is not int or rollout_steps not in SUPPORTED_ROLLOUT_STEPS:
+        raise ValueError(f"rollout_steps must be one of {SUPPORTED_ROLLOUT_STEPS}")
+    return TRAINING_ARTIFACT_INTERVAL
 
 
 def _canonical_training_configuration_json(value: Mapping[str, Any]) -> bytes:
@@ -604,14 +602,27 @@ def _select_prefix(state: Mapping[str, torch.Tensor], prefix: str) -> dict[str, 
 def extract_gaussian_actor_state(checkpoint: Mapping[str, Any]) -> dict[str, torch.Tensor]:
     """Extract ``GaussianActor`` weights from the native S0 actor state."""
 
-    required_suffixes = {"network.0.weight", "network.6.bias", "log_std"}
+    required_suffixes = {"network.0.weight", "network.6.bias", "std_param"}
     state = checkpoint.get("actor_state_dict")
     if not isinstance(state, Mapping):
         raise ValueError("S0 checkpoint is missing actor_state_dict")
     candidate = _select_prefix(state, "policy.")
     if not required_suffixes.issubset(candidate):
         raise ValueError("S0 checkpoint does not contain the fixed Gaussian actor")
-    return {key: value for key, value in candidate.items() if key.startswith("network.") or key == "log_std"}
+    return {key: value for key, value in candidate.items() if key.startswith("network.") or key == "std_param"}
+
+
+def extract_policy_observation_normalizer_state(
+    checkpoint: Mapping[str, Any],
+) -> dict[str, torch.Tensor]:
+    state = checkpoint.get("actor_state_dict")
+    if not isinstance(state, Mapping):
+        raise ValueError("S0 checkpoint is missing actor_state_dict")
+    candidate = _select_prefix(state, "policy_obs_normalizer.")
+    required = {"_mean", "_var", "_std", "count"}
+    if set(candidate) != required:
+        raise ValueError("S0 checkpoint does not contain the policy observation normalizer")
+    return candidate
 
 
 def extract_student_rsl_actor_state(checkpoint: Mapping[str, Any]) -> dict[str, torch.Tensor]:
@@ -620,7 +631,11 @@ def extract_student_rsl_actor_state(checkpoint: Mapping[str, Any]) -> dict[str, 
     state = checkpoint.get("model_state_dict")
     if not isinstance(state, Mapping):
         raise ValueError("S1 checkpoint is missing model_state_dict")
-    if "context_encoder.input.weight" not in state or "actor.network.0.weight" not in state:
+    if (
+        "context_encoder.input.weight" not in state
+        or "actor.network.0.weight" not in state
+        or "obs_normalizer._mean" not in state
+    ):
         raise ValueError("S1 checkpoint does not contain the fixed student actor")
     result: dict[str, torch.Tensor] = {}
     for key, value in state.items():
@@ -630,6 +645,8 @@ def extract_student_rsl_actor_state(checkpoint: Mapping[str, Any]) -> dict[str, 
             result["encoder." + key.removeprefix("context_encoder.")] = value
         elif key.startswith("actor."):
             result["policy." + key.removeprefix("actor.")] = value
+        elif key.startswith("obs_normalizer."):
+            result["policy_obs_normalizer." + key.removeprefix("obs_normalizer.")] = value
     return result
 
 
@@ -721,12 +738,9 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
         static_solution.qpos[int(model.joint(f"robot/{name}").qposadr[0])]
         for name in G1_JOINT_ORDER
     ]
-    static_position_offset = (
-        static_solution.joint_actuator_torque / G1_JOINT_STIFFNESS
-    ).tolist()
     safety = {key.removeprefix("safety."): value for key, value in calibration.items() if key.startswith("safety.")}
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "policy": {
             "type": "deterministic_student_mean",
             "inputs": {
@@ -734,7 +748,7 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
                 "history": [None, history_length, ACTOR_OBSERVATION_DIM],
             },
             "context_dim": latent_dim,
-            "output": {"normalized_action": [None, ACTION_DIM], "clip": [-1.0, 1.0]},
+            "output": {"normalized_action": [None, ACTION_DIM], "clip": None},
             "forbidden_components": ["teacher_encoder", "critic", "privileged_observations", "auxiliary_heads"],
         },
         "deployment_controller": {
@@ -744,38 +758,31 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
                 "current": [None, ACTOR_OBSERVATION_DIM],
                 "history": [None, history_length, ACTOR_OBSERVATION_DIM],
                 "q_ref": [None, ACTION_DIM],
-                "x_prev": [None, ACTION_DIM],
-                "y_prev": [None, ACTION_DIM],
             },
-            "outputs": ["clipped_normalized_action", "filtered_joint_target", "x_next", "y_next"],
+            "outputs": ["normalized_action", "joint_target"],
         },
         "observation": {
             "history_excludes_current": True,
             "policy_hz": 50.0,
-            "runtime_empirical_normalization": False,
+            "embedded_empirical_normalization": True,
             "clip": None,
             "layout": [
                 {"name": "base_angular_velocity", "slice": [0, 3], "scale": [0.25, 0.25, 0.25]},
                 {"name": "projected_gravity", "slice": [3, 6], "scale": [1.0, 1.0, 1.0]},
-                {"name": "task_signal", "fields": ["v_ref", "e_y", "e_psi"], "slice": [6, 9], "scale": [2.0, 2.0, 1.0]},
-                {"name": "joint_position_minus_q_ref", "slice": [9, 38], "scale": [1.0] * ACTION_DIM},
-                {"name": "joint_velocity", "slice": [38, 67], "scale": [0.05] * ACTION_DIM},
+                {"name": "command", "fields": ["lin_vel_x", "ang_vel_z"], "slice": [6, 8], "scale": [1.0, 1.0]},
+                {"name": "joint_position_minus_q_ref", "slice": [8, 37], "scale": [1.0] * ACTION_DIM},
+                {"name": "joint_velocity", "slice": [37, 66], "scale": [0.05] * ACTION_DIM},
                 {
-                    "name": "previous_processed_action",
-                    "slice": [67, 67 + ACTION_DIM],
+                    "name": "previous_normalized_action",
+                    "slice": [66, ACTOR_OBSERVATION_DIM],
                     "scale": [1.0] * ACTION_DIM,
-                },
-                {
-                    "name": "gait_phase",
-                    "fields": ["sin_phase", "cos_phase"],
-                    "slice": [67 + ACTION_DIM, ACTOR_OBSERVATION_DIM],
-                    "scale": [1.0, 1.0],
                 },
             ],
         },
         "command": {
             "tracked_body": "rickshaw",
-            "speed_range_mps": [0.0, 1.0],
+            "fields": ["lin_vel_x", "ang_vel_z"],
+            "initial_ranges": {"lin_vel_x": [-1.0, 1.0], "ang_vel_z": [-0.5, 0.5]},
             "standing_fraction": 0.1,
             "resampling_time_range_s": [3.0, 8.0],
         },
@@ -783,17 +790,7 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
             "joint_order": list(G1_JOINT_ORDER),
             "scale_rad_per_normalized_action": list(ACTION_SCALE),
             "q_ref": static_q_ref,
-            "static_position_offset_rad": static_position_offset,
-            "feedforward_torque_nm": static_solution.joint_actuator_torque.tolist(),
-            "butterworth": {
-                "sample_rate_hz": 50.0,
-                "cutoff_hz": 4.0,
-                "b0": BUTTERWORTH_B0,
-                "b1": BUTTERWORTH_B1,
-                "a1": BUTTERWORTH_A1,
-                "equation": "y=b0*x+b1*x_prev-a1*y_prev",
-                "reset_x_prev_and_y_prev_to_q_ref": True,
-            },
+            "mapping": "joint_target=q_ref+normalized_action*scale",
         },
         "safety": {"persistent_steps": 10, "root_height_min_m": 0.31, **safety},
         "training_configuration": training_configuration,
@@ -860,6 +857,7 @@ __all__ = [
     "cli_value",
     "collect_runtime_metadata",
     "extract_gaussian_actor_state",
+    "extract_policy_observation_normalizer_state",
     "extract_student_rsl_actor_state",
     "finalize_training_configuration",
     "feasibility_config_path",

@@ -11,25 +11,54 @@ from g1_rickshaw_lab.training_contract import (
     ROLLOUT_DEFAULT_NUM_ENVS,
     ROLLOUT_MANIFEST_SCHEMA_VERSION,
     ROLLOUT_STAGE_SEQUENCE,
+    extract_policy_observation_normalizer_state,
+    extract_student_rsl_actor_state,
     guide_max_iterations,
     rollout_scaled_iterations,
     s0_remaining_learning_iterations,
     s2_remaining_learning_iterations,
     training_artifact_interval,
+    validate_rollout_stage_coverage,
     validate_student_checkpoint_architecture,
     validate_teacher_checkpoint_architecture,
-    validate_rollout_stage_coverage,
 )
+
+
+def test_observation_normalizer_state_survives_s0_s1_s2_handoff() -> None:
+    normalizer = {
+        "_mean": torch.randn(1, ACTOR_OBSERVATION_DIM),
+        "_var": torch.rand(1, ACTOR_OBSERVATION_DIM),
+        "_std": torch.rand(1, ACTOR_OBSERVATION_DIM),
+        "count": torch.tensor(1024),
+    }
+    teacher = {
+        "actor_state_dict": {
+            **{f"policy_obs_normalizer.{key}": value for key, value in normalizer.items()},
+        }
+    }
+    extracted = extract_policy_observation_normalizer_state(teacher)
+    assert set(extracted) == set(normalizer)
+
+    student = {
+        "model_state_dict": {
+            "context_encoder.input.weight": torch.zeros(64, ACTOR_OBSERVATION_DIM, 1),
+            "actor.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + 16),
+            **{f"obs_normalizer.{key}": value for key, value in normalizer.items()},
+        }
+    }
+    bootstrap = extract_student_rsl_actor_state(student)
+    for key, value in normalizer.items():
+        torch.testing.assert_close(bootstrap[f"policy_obs_normalizer.{key}"], value)
 
 
 def test_mainline_has_fixed_stage_budgets_and_flat_terrain() -> None:
     assert GUIDE_MAX_ITERATIONS == {
-        "s0_teacher": 2600,
+        "s0_teacher": 30000,
         "s1_context_distillation": 2000,
-        "s2_student_ppo": 1600,
+        "s2_student_ppo": 30000,
     }
     assert ROLLOUT_STAGE_SEQUENCE == ("TRAINING",)
-    assert guide_max_iterations("s0_teacher") == 2600
+    assert guide_max_iterations("s0_teacher") == 30000
     assert GUIDE_TRAINING_PARAMETERS["s0_teacher"] == {
         "domain_randomization": "startup_fixed",
         "terrain": "flat_plane",
@@ -42,9 +71,9 @@ def test_mainline_has_fixed_stage_budgets_and_flat_terrain() -> None:
 @pytest.mark.parametrize(
     ("rollout_steps", "s0_iterations", "s2_iterations", "artifact_interval"),
     (
-        (24, 5200, 3200, 400),
-        (48, 2600, 1600, 200),
-        (64, 1950, 1200, 150),
+        (24, 30000, 30000, 50),
+        (48, 15000, 15000, 50),
+        (64, 11250, 11250, 50),
     ),
 )
 def test_rollout_variants_preserve_transition_and_artifact_budgets(
@@ -55,11 +84,11 @@ def test_rollout_variants_preserve_transition_and_artifact_budgets(
 ) -> None:
     assert guide_max_iterations("s0_teacher", rollout_steps) == s0_iterations
     assert guide_max_iterations("s2_student_ppo", rollout_steps) == s2_iterations
-    assert rollout_scaled_iterations(2600, rollout_steps) == s0_iterations
+    assert rollout_scaled_iterations(30000, rollout_steps) == s0_iterations
     assert training_artifact_interval(rollout_steps) == artifact_interval
-    assert s0_iterations * rollout_steps == 2600 * 48
-    assert s2_iterations * rollout_steps == 1600 * 48
-    assert artifact_interval * rollout_steps == 200 * 48
+    assert s0_iterations * rollout_steps == 30000 * 24
+    assert s2_iterations * rollout_steps == 30000 * 24
+    assert artifact_interval == 50
 
 
 @pytest.mark.parametrize(
@@ -134,6 +163,8 @@ def test_checkpoint_tensor_widths_match_the_recorded_latent(latent_dim: int) -> 
         512, ACTOR_OBSERVATION_DIM + 16
     )
     if latent_dim == 16:
-        student["model_state_dict"]["actor.network.0.weight"] = torch.zeros(512, 111)
+        student["model_state_dict"]["actor.network.0.weight"] = torch.zeros(
+            512, ACTOR_OBSERVATION_DIM + 17
+        )
     with pytest.raises(ValueError, match="recorded latent width"):
         validate_student_checkpoint_architecture(student, configuration)
