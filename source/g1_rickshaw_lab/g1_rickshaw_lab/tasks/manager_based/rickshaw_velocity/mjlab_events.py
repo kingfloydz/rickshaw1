@@ -380,7 +380,6 @@ def ensure_mjlab_physical_state(env: Any) -> None:
 
     wheel_sensor = env.scene["wheel_contacts"]
     wheel_force = wheel_sensor.data.force
-    mean_wheel_force = torch.mean(wheel_sensor.data.force_history, dim=2)
     wheel_normal = torch.clamp(torch.sum(wheel_force * env.path_normal_w[:, None, :], dim=-1), min=0.0)
     env.rickshaw_state.wheel_normal_force[:] = wheel_normal
     env.rickshaw_state.two_wheel_contact[:] = torch.all(wheel_normal > 1.0, dim=-1)
@@ -394,7 +393,7 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     force_on_cart = (
         cart_mass[:, None] * acceleration
         - cart_mass[:, None] * gravity
-        - torch.sum(mean_wheel_force, dim=1)
+        - torch.sum(wheel_force, dim=1)
         - torch.sum(env.last_rolling_force_w, dim=1)
     )
     valid_force = step > 0

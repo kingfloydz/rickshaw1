@@ -14,9 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 import numpy as np
-import torch
-
-POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 3
+POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 4
 GUIDE_POLICY_EVALUATION_TASK: Final[str] = "Mjlab-G1-Rickshaw-Flat-Student"
 COMMAND_PHASE_LABELS: Final[tuple[str, ...]] = (
     "standing",
@@ -43,12 +41,11 @@ METRIC_DEFINITIONS: Final[dict[str, str]] = {
     "actions.normalized_jerk": "RMS normalized-action second derivative over policy joints",
     "actuation.power": "sum(abs(actuator_force * joint_velocity)) over the 29 policy joints",
     "connection.residual": "maximum position residual of the two MuJoCo site connections",
-    "connection.force/torque": "maximum left/right connection force or torque norm",
-    "connection.asymmetry": "absolute left/right norm difference divided by their sum",
+    "connection.force": "resultant robot-on-cart hand-force norm",
     "analytic_force.relative_error": (
         "instantaneous symmetric relative error after projecting robot-on-cart connection force"
     ),
-    "analytic_force.fat_window_consistency": "0.5 s impulse-bias gate normalized by mean absolute analytic force",
+    "analytic_force.fat_consistency": "instantaneous analytic/measured handle-force consistency gate",
     "stability.zmp_margin": "signed ZMP support-polygon margin for valid samples",
     "actuation.arm/leg_torque_margin": (
         "minimum per-environment 1-|actuator_force|/current actuator.effort_limit"
@@ -60,25 +57,6 @@ METRIC_DEFINITIONS: Final[dict[str, str]] = {
         "over the single training distribution"
     ),
 }
-
-
-def connection_wrench_channels(wrench: torch.Tensor) -> dict[str, torch.Tensor]:
-    """Reduce the two connection reaction wrenches without discarding torque."""
-
-    if not torch.is_tensor(wrench) or wrench.ndim != 3 or wrench.shape[1:] != (2, 6):
-        raise ValueError("connection reaction wrench must have shape [N, 2, 6]")
-    if not torch.isfinite(wrench).all():
-        raise ValueError("connection reaction wrench contains non-finite values")
-    force_norm = torch.linalg.vector_norm(wrench[..., :3], dim=-1)
-    torque_norm = torch.linalg.vector_norm(wrench[..., 3:], dim=-1)
-    return {
-        "force": torch.amax(force_norm, dim=-1),
-        "torque": torch.amax(torque_norm, dim=-1),
-        "force_asymmetry": torch.abs(force_norm[:, 0] - force_norm[:, 1])
-        / torch.clamp(force_norm[:, 0] + force_norm[:, 1], min=1.0e-6),
-        "torque_asymmetry": torch.abs(torque_norm[:, 0] - torque_norm[:, 1])
-        / torch.clamp(torque_norm[:, 0] + torque_norm[:, 1], min=1.0e-6),
-    }
 
 
 def command_phase_labels(
@@ -401,9 +379,6 @@ class MetricStore:
             "connection": {
                 "residual_m": distribution("connection_residual"),
                 "force_n": distribution("connection_force"),
-                "torque_nm": distribution("connection_torque"),
-                "force_asymmetry": distribution("connection_force_asymmetry"),
-                "torque_asymmetry": distribution("connection_torque_asymmetry"),
             },
             "analytic_force": {
                 "t_s_relative_error": distribution("t_s_relative_error"),
@@ -411,14 +386,14 @@ class MetricStore:
                 "t_s_sign_agreement_rate": _mean(self.values("t_s_sign_agreement")),
                 "t_n_sign_agreement_rate": _mean(self.values("t_n_sign_agreement")),
                 "valid_rate": _mean(self.values("analytic_force_valid")),
-                "fat_window_consistency_rate": _mean(
-                    self.values("fat_wrench_consistent")
+                "fat_consistency_rate": _mean(
+                    self.values("fat_force_consistent")
                 ),
-                "fat_window_t_s_relative_error": distribution(
-                    "fat_wrench_t_s_relative_error"
+                "fat_t_s_relative_error": distribution(
+                    "fat_force_t_s_relative_error"
                 ),
-                "fat_window_t_n_relative_error": distribution(
-                    "fat_wrench_t_n_relative_error"
+                "fat_t_n_relative_error": distribution(
+                    "fat_force_t_n_relative_error"
                 ),
             },
             "stability": {
@@ -547,7 +522,6 @@ __all__ = [
     "MetricStore",
     "PolicyEvaluationAccumulator",
     "command_phase_labels",
-    "connection_wrench_channels",
     "evaluate_s2_return_floor",
     "validate_s1_baseline_diagnostic_report",
     "validate_stratified_summary",

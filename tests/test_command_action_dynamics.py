@@ -19,15 +19,14 @@ from g1_rickshaw_lab.g1_motor_defaults import (
 from g1_rickshaw_lab.policy_schema import ACTION_SCALE
 from g1_rickshaw_lab.policy_schema import ACTION_DIM
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.dynamics import (
-    FAT2ComRadiusState,
-    WrenchConsistencyState,
+    ZMPKinematicState,
+    force_consistency,
     foot_support_polygon,
     quat_apply_wxyz,
-    rolling_resistance_wrench,
+    rolling_resistance_force,
     sagittal_com_radius,
     torso_pitch_from_world_vertical,
-    update_wrench_consistency_state,
-    zmp_from_hand_wrench,
+    zmp_from_hand_force,
 )
 
 
@@ -60,46 +59,47 @@ def test_rolling_resistance_opposes_each_wheel() -> None:
     wheel_speed = torch.tensor([[1.0, 0.8], [-1.0, -0.7]], dtype=dtype)
     normal_force = torch.tensor([[310.0, 330.0], [280.0, 300.0]], dtype=dtype)
     c_rr = torch.tensor([0.02, 0.03], dtype=dtype)
-    force, filtered_normal, measured_speed = rolling_resistance_wrench(
+    force = rolling_resistance_force(
         wheel_speed[..., None] * tangent[:, None, :],
         normal_force[..., None] * normal[:, None, :],
         tangent,
         normal,
         c_rr,
-        normal_force,
         velocity_epsilon=0.05,
-        normal_force_filter_hz=20.0,
-        dt=0.005,
     )
     force_s = torch.sum(force * tangent[:, None, :], dim=-1)
     expected = -c_rr[:, None] * normal_force * torch.tanh(wheel_speed / 0.05)
-    torch.testing.assert_close(filtered_normal, normal_force)
-    torch.testing.assert_close(measured_speed, wheel_speed)
     torch.testing.assert_close(force_s, expected)
     assert torch.all(force_s * wheel_speed < 0.0)
 
 
-def test_wrench_consistency_requires_a_complete_window() -> None:
-    state = WrenchConsistencyState.zeros(2, 3, dtype=torch.float64)
+def test_force_consistency_uses_current_sample() -> None:
     analytic = torch.tensor([[100.0, 50.0], [100.0, 50.0]], dtype=torch.float64)
     measured = torch.tensor([[110.0, 55.0], [-100.0, 50.0]], dtype=torch.float64)
-    for step in range(3):
-        consistent, relative_error, filtered = update_wrench_consistency_state(
-            state,
-            analytic,
-            measured,
-            torch.ones(2, dtype=torch.bool),
-            relative_tolerance=0.35,
-            absolute_floor_n=5.0,
-        )
-        if step < 2:
-            assert not torch.any(consistent)
+    consistent, relative_error = force_consistency(
+        analytic,
+        measured,
+        torch.ones(2, dtype=torch.bool),
+        relative_tolerance=0.35,
+        absolute_floor_n=5.0,
+    )
     torch.testing.assert_close(consistent, torch.tensor([True, False]))
     torch.testing.assert_close(relative_error[0], torch.tensor([0.1, 0.1], dtype=torch.float64))
-    torch.testing.assert_close(filtered, analytic)
 
 
-def test_fat2_radius_excludes_lateral_offset_and_holds_invalid_samples() -> None:
+def test_zmp_kinematics_use_direct_finite_difference() -> None:
+    zeros = torch.zeros(2, dtype=torch.float64)
+    state = ZMPKinematicState.initialized(zeros, zeros)
+    acceleration_s, acceleration_n = state.update(
+        torch.tensor([1.0, -0.5], dtype=torch.float64),
+        torch.tensor([0.2, -0.1], dtype=torch.float64),
+        0.02,
+    )
+    torch.testing.assert_close(acceleration_s, torch.tensor([50.0, -25.0], dtype=torch.float64))
+    torch.testing.assert_close(acceleration_n, torch.tensor([10.0, -5.0], dtype=torch.float64))
+
+
+def test_fat2_radius_excludes_lateral_offset() -> None:
     robot_com = torch.tensor([[0.6, 4.0, 0.3], [0.3, -7.0, 0.4]], dtype=torch.float64)
     radius = sagittal_com_radius(
         robot_com,
@@ -108,20 +108,6 @@ def test_fat2_radius_excludes_lateral_offset_and_holds_invalid_samples() -> None
         torch.tensor([[0.0, 0.0, 1.0]] * 2, dtype=torch.float64),
     )
     torch.testing.assert_close(radius, torch.tensor([math.sqrt(0.45), 0.5], dtype=torch.float64))
-    state = FAT2ComRadiusState.initialized(1, 2, 0.715, dtype=torch.float64)
-    first = state.update(
-        torch.tensor([0.6], dtype=torch.float64),
-        torch.tensor([True]),
-        minimum=0.5,
-        maximum=0.85,
-    )
-    held = state.update(
-        torch.tensor([float("nan")], dtype=torch.float64),
-        torch.tensor([True]),
-        minimum=0.5,
-        maximum=0.85,
-    )
-    torch.testing.assert_close(first, held)
 
 
 def test_foot_support_polygon_uses_collision_center_offset() -> None:
@@ -172,20 +158,19 @@ def test_quaternion_vector_rotation_matches_mjlab() -> None:
     )
 
 
-def test_flat_zmp_applied_hand_torque_sign() -> None:
-    zmp, _, reaction, valid = zmp_from_hand_wrench(
+def test_flat_zmp_uses_hand_force_moment() -> None:
+    zmp, _, reaction, valid = zmp_from_hand_force(
         torch.tensor([0.0], dtype=torch.float64),
         torch.tensor([1.0], dtype=torch.float64),
         torch.zeros(1, dtype=torch.float64),
         torch.zeros(1, dtype=torch.float64),
-        torch.tensor([0.0], dtype=torch.float64),
+        torch.tensor([1.0], dtype=torch.float64),
         torch.tensor([1.0], dtype=torch.float64),
         torch.zeros(1, dtype=torch.float64),
-        torch.zeros(1, dtype=torch.float64),
-        torch.tensor([9.81], dtype=torch.float64),
+        torch.ones(1, dtype=torch.float64),
         1.0,
         min_ground_reaction=1.0,
     )
     assert valid.item()
-    torch.testing.assert_close(reaction, torch.tensor([9.81], dtype=torch.float64))
-    torch.testing.assert_close(zmp, torch.tensor([1.0], dtype=torch.float64))
+    torch.testing.assert_close(reaction, torch.tensor([8.81], dtype=torch.float64))
+    torch.testing.assert_close(zmp, torch.tensor([-1.0 / 8.81], dtype=torch.float64))

@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import torch
 
 from g1_rickshaw_lab.policy_evaluation import (
     CROSS_CASE_LABELS,
     MetricStore,
     PolicyEvaluationAccumulator,
     command_phase_labels,
-    connection_wrench_channels,
     evaluate_s2_return_floor,
 )
 
@@ -41,22 +39,6 @@ def test_command_phase_labels_are_deterministic() -> None:
         "moving",
         "moving",
     ]
-
-
-def test_connection_wrench_channels_report_force_torque_and_asymmetry() -> None:
-    wrench = torch.tensor(
-        [
-            [
-                [3.0, 4.0, 0.0, 0.0, 0.0, 2.0],
-                [0.0, 0.0, 5.0, 0.0, 3.0, 4.0],
-            ]
-        ]
-    )
-    channels = connection_wrench_channels(wrench)
-    torch.testing.assert_close(channels["force"], torch.tensor([5.0]))
-    torch.testing.assert_close(channels["torque"], torch.tensor([5.0]))
-    torch.testing.assert_close(channels["force_asymmetry"], torch.tensor([0.0]))
-    torch.testing.assert_close(channels["torque_asymmetry"], torch.tensor([3.0 / 7.0]))
 
 
 def test_metric_store_excludes_nonfinite_samples_but_records_them() -> None:

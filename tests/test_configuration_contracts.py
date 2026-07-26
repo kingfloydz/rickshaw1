@@ -29,14 +29,12 @@ def _calibration_for(name: str):
     }
     if name in vectors:
         return vectors[name]
-    if name == "fat.wrench_consistency_window_steps":
-        return 5
     return 0.7 if name == "fat.com_radius" else 1.0
 
 
 def _valid_mapping() -> dict:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "joint_order": list(G1_JOINT_ORDER),
         "ranges": {name: _range_for(name) for name in REQUIRED_FEASIBILITY_RANGES},
         "calibration": {

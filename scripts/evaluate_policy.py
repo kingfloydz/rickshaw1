@@ -28,7 +28,6 @@ from g1_rickshaw_lab.policy_evaluation import (  # noqa: E402
     POLICY_DIAGNOSTIC_SCHEMA_VERSION,
     PolicyEvaluationAccumulator,
     command_phase_labels,
-    connection_wrench_channels,
     evaluate_s2_return_floor,
     validate_s1_baseline_diagnostic_report,
 )
@@ -304,12 +303,7 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     arm_margin = torch.amin(torque_margin[:, 15:], dim=-1)
     power = torch.sum(torch.abs(torque * velocity), dim=-1)
 
-    wrench = state.connection_wrench_w
-    connection_channels = connection_wrench_channels(wrench)
-    connection_force = connection_channels["force"]
-    connection_torque = connection_channels["torque"]
-    force_asymmetry = connection_channels["force_asymmetry"]
-    torque_asymmetry = connection_channels["torque_asymmetry"]
+    connection_force = torch.linalg.vector_norm(state.hand_force_w, dim=-1)
     # The adapter stores cart-on-robot reaction; analytic T_s/T_n are
     # robot-on-cart forces.
     force_on_cart_w = -state.hand_force_w
@@ -340,17 +334,14 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
         "power": power,
         "connection_residual": state.connection_residual,
         "connection_force": connection_force,
-        "connection_torque": connection_torque,
-        "connection_force_asymmetry": force_asymmetry,
-        "connection_torque_asymmetry": torque_asymmetry,
         "t_s_relative_error": relative_error(analytic.t_s, projected_t_s),
         "t_n_relative_error": relative_error(analytic.t_n, projected_t_n),
         "t_s_sign_agreement": sign_s,
         "t_n_sign_agreement": sign_n,
         "analytic_force_valid": analytic.valid,
-        "fat_wrench_consistent": stability.fat_wrench_consistent,
-        "fat_wrench_t_s_relative_error": stability.fat_wrench_relative_error[:, 0],
-        "fat_wrench_t_n_relative_error": stability.fat_wrench_relative_error[:, 1],
+        "fat_force_consistent": stability.fat_force_consistent,
+        "fat_force_t_s_relative_error": stability.fat_force_relative_error[:, 0],
+        "fat_force_t_n_relative_error": stability.fat_force_relative_error[:, 1],
         "zmp_margin": stability.zmp_margin,
         "zmp_valid": stability.zmp_valid,
         "arm_torque_margin": arm_margin,

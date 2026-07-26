@@ -95,6 +95,12 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     assert cfg.scene.extent == 2.0
     assert cfg.viewer.distance == 3.0
     assert set(cfg.curriculum) == {"command_vel"}
+    assert cfg.curriculum["command_vel"].params["velocity_stages"] == [
+        {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
+        {"step": 5000 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
+        {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
+    ]
+    assert cfg.commands["twist"].resampling_time_range == (3.0, 8.0)
     assert not cfg.observations["critic_policy"].enable_corruption
 
     play_cfg = g1_rickshaw_env_cfg(play=True)

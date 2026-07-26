@@ -21,6 +21,7 @@ from g1_rickshaw_lab.static_equilibrium import (
     fat2_reference_angle_scalar,
     load_mujoco_static_equilibrium,
     save_mujoco_static_equilibrium,
+    solve_fixed_contact_statics,
 )
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.closed_chain import (
     build_assembled_spec,
@@ -214,6 +215,19 @@ def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision()
         for robot_geom in robot_geoms
         for rickshaw_geom in rickshaw_geoms
     )
+
+
+def test_static_hand_connections_are_force_only() -> None:
+    solution = solve_fixed_contact_statics(
+        mass=35.0,
+        com_from_axle_sln=(0.1, 0.0, 0.5),
+        handle_from_axle_sn=(1.5, 0.5),
+        hitch_half_width=0.25,
+        wheel_track=0.8,
+    )
+    assert all(len(force) == 3 for force in solution.handle_forces_sln)
+    np.testing.assert_allclose(solution.cart_force_residual_sln, 0.0, atol=1.0e-12)
+    np.testing.assert_allclose(solution.cart_moment_residual_sln, 0.0, atol=1.0e-12)
 
 
 def test_static_rest_pose_is_bound_to_the_compiled_model(tmp_path) -> None:

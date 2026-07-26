@@ -386,7 +386,6 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         fields=("found", "force"),
         reduce="netforce",
         num_slots=1,
-        history_length=10,
     )
     cfg = ManagerBasedRlEnvCfg(
         scene=SceneCfg(
