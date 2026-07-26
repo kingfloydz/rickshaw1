@@ -335,6 +335,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
             ),
         )
     }
+    commands["twist"].viz.z_offset = 1.15
     terminations = {
         "time_out": TerminationTermCfg(func=velocity_mdp.time_out, time_out=True),
         "fell_over": TerminationTermCfg(
@@ -397,7 +398,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
             sensors=(feet, foot_height, self_collision, wheels),
             num_envs=1 if play else 8192,
             env_spacing=6.0,
-            extent=3.0,
+            extent=2.0,
             spec_fn=add_closed_chain_constraints,
         ),
         observations=observations,
@@ -424,7 +425,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
             origin_type=ViewerConfig.OriginType.ASSET_BODY,
             entity_name="robot",
             body_name="torso_link",
-            distance=4.0,
+            distance=3.0,
             elevation=-5.0,
             # The towing path is the local +x axis, so +y gives a true side view.
             azimuth=90.0,

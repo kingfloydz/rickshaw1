@@ -61,7 +61,8 @@ The Mjlab runtime owns the flat plane, startup-fixed nine-parameter domain
 randomization, online FAT2/ZMP diagnostics, observations, rewards, and RSL-RL
 rollout state. The command observation contains only rickshaw `lin_vel_x` and
 `ang_vel_z`; their tracking rewards use the rickshaw axle frame on the flat
-plane. The actor observation is 95-D and uses the normalized previous action.
+plane. The 100-D actor observation includes the command and measured rickshaw
+velocities, G1 base linear/angular velocity, and the normalized previous action.
 The clean critic observation adds official foot height, air time, contact state,
 and signed-log contact force terms. Rewards otherwise use the Mjlab 1.5.3 G1
 flat definitions, with upright weight 0.2, lower-body/waist-only pose tracking,

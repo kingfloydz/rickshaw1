@@ -6,7 +6,7 @@ from typing import Final
 
 from .g1_motor_defaults import G1_ACTION_SCALE
 
-ACTOR_OBSERVATION_DIM: Final[int] = 95
+ACTOR_OBSERVATION_DIM: Final[int] = 100
 HISTORY_LENGTH: Final[int] = 61
 SUPPORTED_HISTORY_LENGTHS: Final[tuple[int, ...]] = (61, 91)
 DEFAULT_CONTEXT_DIM: Final[int] = 16

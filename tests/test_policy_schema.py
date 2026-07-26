@@ -77,6 +77,50 @@ def test_deployment_manifest_uses_the_policy_schema() -> None:
         ],
     }
     assert manifest["policy"]["context_dim"] == 24
+    assert manifest["observation"]["layout"] == [
+        {
+            "name": "base_linear_velocity",
+            "slice": [0, 3],
+            "scale": [1.0, 1.0, 1.0],
+        },
+        {
+            "name": "base_angular_velocity",
+            "slice": [3, 6],
+            "scale": [0.25, 0.25, 0.25],
+        },
+        {
+            "name": "projected_gravity",
+            "slice": [6, 9],
+            "scale": [1.0, 1.0, 1.0],
+        },
+        {
+            "name": "command",
+            "fields": ["lin_vel_x", "ang_vel_z"],
+            "slice": [9, 11],
+            "scale": [1.0, 1.0],
+        },
+        {
+            "name": "rickshaw_velocity",
+            "fields": ["lin_vel_x", "ang_vel_z"],
+            "slice": [11, 13],
+            "scale": [1.0, 1.0],
+        },
+        {
+            "name": "joint_position_minus_q_ref",
+            "slice": [13, 42],
+            "scale": [1.0] * policy_schema.ACTION_DIM,
+        },
+        {
+            "name": "joint_velocity",
+            "slice": [42, 71],
+            "scale": [0.05] * policy_schema.ACTION_DIM,
+        },
+        {
+            "name": "previous_normalized_action",
+            "slice": [71, policy_schema.ACTOR_OBSERVATION_DIM],
+            "scale": [1.0] * policy_schema.ACTION_DIM,
+        },
+    ]
     assert manifest["policy"]["output"]["normalized_action"] == [
         None,
         policy_schema.ACTION_DIM,

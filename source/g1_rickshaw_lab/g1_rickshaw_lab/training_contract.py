@@ -45,7 +45,7 @@ CHECKPOINT_STAGE_KEY = "g1_rickshaw_stage"
 CHECKPOINT_LINEAGE_KEY = "g1_rickshaw_lineage"
 CHECKPOINT_CURRICULUM_ITERATION_KEY = "g1_rickshaw_curriculum_iteration"
 TRAINING_CONFIGURATION_KEY = "g1_rickshaw_training_configuration"
-TRAINING_CONFIGURATION_SCHEMA_VERSION = 12
+TRAINING_CONFIGURATION_SCHEMA_VERSION = 13
 EXPECTED_RSL_RL_DISTRIBUTION_VERSION = RSL_RL_VERSION.removeprefix("v")
 
 REPOSITORY_ROOT = PROJECT_ROOT
@@ -740,7 +740,7 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
     ]
     safety = {key.removeprefix("safety."): value for key, value in calibration.items() if key.startswith("safety.")}
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "policy": {
             "type": "deterministic_student_mean",
             "inputs": {
@@ -767,14 +767,21 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
             "embedded_empirical_normalization": True,
             "clip": None,
             "layout": [
-                {"name": "base_angular_velocity", "slice": [0, 3], "scale": [0.25, 0.25, 0.25]},
-                {"name": "projected_gravity", "slice": [3, 6], "scale": [1.0, 1.0, 1.0]},
-                {"name": "command", "fields": ["lin_vel_x", "ang_vel_z"], "slice": [6, 8], "scale": [1.0, 1.0]},
-                {"name": "joint_position_minus_q_ref", "slice": [8, 37], "scale": [1.0] * ACTION_DIM},
-                {"name": "joint_velocity", "slice": [37, 66], "scale": [0.05] * ACTION_DIM},
+                {"name": "base_linear_velocity", "slice": [0, 3], "scale": [1.0, 1.0, 1.0]},
+                {"name": "base_angular_velocity", "slice": [3, 6], "scale": [0.25, 0.25, 0.25]},
+                {"name": "projected_gravity", "slice": [6, 9], "scale": [1.0, 1.0, 1.0]},
+                {"name": "command", "fields": ["lin_vel_x", "ang_vel_z"], "slice": [9, 11], "scale": [1.0, 1.0]},
+                {
+                    "name": "rickshaw_velocity",
+                    "fields": ["lin_vel_x", "ang_vel_z"],
+                    "slice": [11, 13],
+                    "scale": [1.0, 1.0],
+                },
+                {"name": "joint_position_minus_q_ref", "slice": [13, 42], "scale": [1.0] * ACTION_DIM},
+                {"name": "joint_velocity", "slice": [42, 71], "scale": [0.05] * ACTION_DIM},
                 {
                     "name": "previous_normalized_action",
-                    "slice": [66, ACTOR_OBSERVATION_DIM],
+                    "slice": [71, ACTOR_OBSERVATION_DIM],
                     "scale": [1.0] * ACTION_DIM,
                 },
             ],

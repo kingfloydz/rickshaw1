@@ -91,6 +91,9 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     assert cfg.commands["twist"].entity_name == "rickshaw"
     assert cfg.commands["twist"].ranges.lin_vel_y == (0.0, 0.0)
     assert cfg.commands["twist"].ranges.heading is None
+    assert cfg.commands["twist"].viz.z_offset == 1.15
+    assert cfg.scene.extent == 2.0
+    assert cfg.viewer.distance == 3.0
     assert set(cfg.curriculum) == {"command_vel"}
     assert not cfg.observations["critic_policy"].enable_corruption
 

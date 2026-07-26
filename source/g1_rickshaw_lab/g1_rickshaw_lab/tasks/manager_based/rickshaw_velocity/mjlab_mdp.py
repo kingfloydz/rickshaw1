@@ -77,9 +77,11 @@ def _update_observation_state(env: Any) -> None:
     command = env.command_manager.get_command("twist")
     action_term = env.action_manager.get_term("joint_pos")
     clean_current = assemble_actor_observation(
+        robot.data.root_link_lin_vel_b,
         robot.data.root_link_ang_vel_b,
         robot.data.projected_gravity_b,
         command[:, (0, 2)],
+        torch.stack((env.rickshaw_speed_s, env.rickshaw_ang_vel_z), dim=-1),
         robot.data.joint_pos[:, env.policy_joint_ids],
         action_term.q_ref,
         robot.data.joint_vel[:, env.policy_joint_ids],

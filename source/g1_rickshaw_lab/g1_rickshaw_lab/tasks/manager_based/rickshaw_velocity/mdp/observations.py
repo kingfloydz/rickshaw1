@@ -17,16 +17,20 @@ from g1_rickshaw_lab.policy_schema import (
 
 TEACHER_STATIC_DOMAIN_DIM = TEACHER_STATIC_DIM
 
-BASE_ANGULAR_VELOCITY_SLICE = slice(0, 3)
-PROJECTED_GRAVITY_SLICE = slice(3, 6)
-COMMAND_SLICE = slice(6, 8)
-JOINT_POSITION_SLICE = slice(8, 37)
-JOINT_VELOCITY_SLICE = slice(37, 66)
-PREVIOUS_ACTION_SLICE = slice(66, ACTOR_OBSERVATION_DIM)
+BASE_LINEAR_VELOCITY_SLICE = slice(0, 3)
+BASE_ANGULAR_VELOCITY_SLICE = slice(3, 6)
+PROJECTED_GRAVITY_SLICE = slice(6, 9)
+COMMAND_SLICE = slice(9, 11)
+RICKSHAW_VELOCITY_SLICE = slice(11, 13)
+JOINT_POSITION_SLICE = slice(13, 42)
+JOINT_VELOCITY_SLICE = slice(42, 71)
+PREVIOUS_ACTION_SLICE = slice(71, ACTOR_OBSERVATION_DIM)
 
+BASE_LINEAR_VELOCITY_SCALE = 1.0
 BASE_ANGULAR_VELOCITY_SCALE = 0.25
 PROJECTED_GRAVITY_SCALE = 1.0
 COMMAND_SCALE = 1.0
+RICKSHAW_VELOCITY_SCALE = 1.0
 JOINT_POSITION_SCALE = 1.0
 JOINT_VELOCITY_SCALE = 0.05
 PREVIOUS_ACTION_SCALE = 1.0
@@ -34,8 +38,10 @@ PREVIOUS_ACTION_SCALE = 1.0
 # Unitree G1-29DoF velocity-policy sensor noise, expressed after this
 # project's observation scaling.
 ACTOR_OBSERVATION_NOISE_SCALE = (
-    (0.2 * BASE_ANGULAR_VELOCITY_SCALE,) * 3
+    (0.5 * BASE_LINEAR_VELOCITY_SCALE,) * 3
+    + (0.2 * BASE_ANGULAR_VELOCITY_SCALE,) * 3
     + (0.05 * PROJECTED_GRAVITY_SCALE,) * 3
+    + (0.0,) * 2
     + (0.0,) * 2
     + (0.01 * JOINT_POSITION_SCALE,) * ACTION_DIM
     + (1.5 * JOINT_VELOCITY_SCALE,) * ACTION_DIM
@@ -77,21 +83,25 @@ if len(TEACHER_DYNAMIC_FEATURE_NAMES) != TEACHER_DYNAMIC_DIM:
 
 
 def assemble_actor_observation(
+    base_linear_velocity_b: torch.Tensor,
     base_angular_velocity_b: torch.Tensor,
     projected_gravity_b: torch.Tensor,
     command: torch.Tensor,
+    rickshaw_velocity: torch.Tensor,
     joint_position: torch.Tensor,
     q_ref: torch.Tensor,
     joint_velocity_value: torch.Tensor,
     previous_action: torch.Tensor,
 ) -> torch.Tensor:
-    """Assemble the 95-D deployment observation in policy order."""
+    """Assemble the 100-D deployment observation in policy order."""
 
     return torch.cat(
         (
+            base_linear_velocity_b * BASE_LINEAR_VELOCITY_SCALE,
             base_angular_velocity_b * BASE_ANGULAR_VELOCITY_SCALE,
             projected_gravity_b * PROJECTED_GRAVITY_SCALE,
             command * COMMAND_SCALE,
+            rickshaw_velocity * RICKSHAW_VELOCITY_SCALE,
             (joint_position - q_ref) * JOINT_POSITION_SCALE,
             joint_velocity_value * JOINT_VELOCITY_SCALE,
             previous_action * PREVIOUS_ACTION_SCALE,
@@ -215,8 +225,10 @@ def normalize_features(
 
 __all__ = [
     "ACTOR_OBSERVATION_DIM",
+    "BASE_LINEAR_VELOCITY_SLICE",
     "COMMAND_SLICE",
     "HISTORY_LENGTH",
+    "RICKSHAW_VELOCITY_SLICE",
     "TEACHER_DYNAMIC_FEATURE_NAMES",
     "TEACHER_STATIC_DIM",
     "TEACHER_STATIC_DOMAIN_DIM",
