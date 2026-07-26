@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import xml.etree.ElementTree as ET
 
+import mujoco
 import numpy as np
 import pytest
 
@@ -60,6 +61,16 @@ def test_rickshaw_has_0_6m_wheels_aligned_with_lowered_body() -> None:
     for name in ("left_wheel_link", "right_wheel_link"):
         geom_id = int(model.body_geomadr[model.body(name).id])
         assert math.isclose(model.geom_size[geom_id, 0] * 2.0, 0.6, abs_tol=1.0e-12)
+
+
+def test_rickshaw_stl_geoms_use_a_default_visible_viewer_group() -> None:
+    model = get_rickshaw_spec().compile()
+    for name in ("body_visual", "left_wheel_visual", "right_wheel_visual"):
+        geom = model.geom(name)
+        assert geom.type[0] == mujoco.mjtGeom.mjGEOM_MESH
+        assert geom.group[0] == 1
+        assert geom.contype[0] == 0
+        assert geom.conaffinity[0] == 0
 
 
 def test_g1_default_lower_body_matches_unitree_home_keyframe() -> None:

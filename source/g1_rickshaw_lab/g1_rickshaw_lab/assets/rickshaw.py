@@ -191,7 +191,7 @@ def get_rickshaw_spec() -> mujoco.MjSpec:
             quat=quat,
             contype=0,
             conaffinity=0,
-            group=3,
+            group=1,
             rgba=rgba,
         )
     for body_name, site_name in zip(HITCH_LINK_NAMES, HITCH_SITE_NAMES, strict=True):
