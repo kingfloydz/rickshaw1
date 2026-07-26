@@ -250,7 +250,7 @@ def g1_rickshaw_env_cfg(
             params={
                 "asset_cfg": SceneEntityCfg(
                     "robot",
-                    joint_names=(r".*_(hip|knee|ankle)_.*", r"waist_.*_joint"),
+                    joint_names=(r".*",),
                 ),
                 "command_name": "twist",
                 "std_standing": {".*": 0.05},
@@ -264,6 +264,11 @@ def g1_rickshaw_env_cfg(
                     ".*waist_yaw.*": 0.2,
                     ".*waist_roll.*": 0.08,
                     ".*waist_pitch.*": 0.1,
+                    ".*shoulder_pitch.*": 0.15,
+                    ".*shoulder_roll.*": 0.15,
+                    ".*shoulder_yaw.*": 0.1,
+                    ".*elbow.*": 0.15,
+                    ".*wrist.*": 0.3,
                 },
                 "std_running": {
                     ".*hip_pitch.*": 0.18,
@@ -275,6 +280,11 @@ def g1_rickshaw_env_cfg(
                     ".*waist_yaw.*": 0.3,
                     ".*waist_roll.*": 0.08,
                     ".*waist_pitch.*": 0.2,
+                    ".*shoulder_pitch.*": 0.5,
+                    ".*shoulder_roll.*": 0.2,
+                    ".*shoulder_yaw.*": 0.15,
+                    ".*elbow.*": 0.35,
+                    ".*wrist.*": 0.3,
                 },
                 "walking_threshold": 0.05,
                 "running_threshold": 1.5,
@@ -292,6 +302,16 @@ def g1_rickshaw_env_cfg(
         ),
         "dof_pos_limits": RewardTermCfg(func=velocity_mdp.joint_pos_limits, weight=-1.0),
         "action_rate_l2": RewardTermCfg(func=velocity_mdp.action_rate_l2, weight=-0.1),
+        "arm_joint_velocity_l2": RewardTermCfg(
+            func=velocity_mdp.joint_vel_l2,
+            weight=-0.01,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=(r".*_(shoulder|elbow|wrist)_.*",),
+                )
+            },
+        ),
         "rickshaw_forward_acceleration_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_forward_acceleration_l2,
             weight=-0.05,

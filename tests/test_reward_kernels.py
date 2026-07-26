@@ -154,6 +154,7 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         *official,
         *rickshaw_penalties,
         *relative_pose_and_force_penalties,
+        "arm_joint_velocity_l2",
         "hitch_height_exp",
         "hitch_height_recovery_l2",
     }
@@ -170,19 +171,8 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
             mjlab_params.pop("asset_cfg", None)
         if name == "pose":
             asset_cfg = local_params.pop("asset_cfg")
-            assert asset_cfg.joint_names == (
-                r".*_(hip|knee|ankle)_.*",
-                r"waist_.*_joint",
-            )
+            assert asset_cfg.joint_names == (r".*",)
             mjlab_params.pop("asset_cfg")
-            for key in ("std_walking", "std_running"):
-                mjlab_params[key] = {
-                    pattern: value
-                    for pattern, value in mjlab_params[key].items()
-                    if not any(
-                        part in pattern for part in ("shoulder", "elbow", "wrist")
-                    )
-                }
         if name == "foot_swing_height":
             mjlab_params["target_height"] = 0.08
         assert local_params == mjlab_params
@@ -196,6 +186,13 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         assert cfg.rewards[name].func is func
         assert cfg.rewards[name].weight == pytest.approx(weight)
         assert cfg.rewards[name].params == params
+
+    arm_velocity = cfg.rewards["arm_joint_velocity_l2"]
+    assert arm_velocity.func is velocity_mdp.joint_vel_l2
+    assert arm_velocity.weight == -0.01
+    assert arm_velocity.params["asset_cfg"].joint_names == (
+        r".*_(shoulder|elbow|wrist)_.*",
+    )
 
     assert cfg.rewards["foot_swing_height"].params["target_height"] == 0.08
     assert cfg.rewards["foot_clearance"].params["target_height"] == 0.10
