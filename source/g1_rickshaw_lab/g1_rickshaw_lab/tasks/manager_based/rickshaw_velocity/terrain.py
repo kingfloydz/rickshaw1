@@ -1,61 +1,31 @@
-"""Nineteen fixed inclined planes used by the rickshaw task."""
+"""Per-environment inclined planes used by the rickshaw task."""
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
-
-import mujoco
-import numpy as np
 import torch
-from mjlab.terrains import TerrainGeneratorCfg
-from mjlab.terrains.terrain_generator import SubTerrainCfg, TerrainGeometry, TerrainOutput
 
 from .sloped_reset import TERRAIN_SLOPES
 
 
-@dataclass(kw_only=True)
-class InclinedPlanesCfg(SubTerrainCfg):
-    """Generate one finite x-axis-inclined plane per configured angle."""
+def assign_terrain_types(num_envs: int, *, device: torch.device | str) -> torch.Tensor:
+    """Distribute environments evenly across the nineteen configured slopes."""
 
-    angles: tuple[float, ...]
-    thickness: float = 0.2
-    _index: int = field(init=False, default=0)
-
-    def function(
-        self,
-        difficulty: float,
-        spec: mujoco.MjSpec,
-        rng: np.random.Generator,
-    ) -> TerrainOutput:
-        del difficulty, rng
-        angle = self.angles[self._index]
-        self._index += 1
-        half_thickness = self.thickness / 2.0
-        geom = spec.body("terrain").add_geom(
-            type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=(self.size[0] / 2.0, self.size[1] / 2.0, half_thickness),
-            pos=(self.size[0] / 2.0, self.size[1] / 2.0, -half_thickness * math.cos(angle)),
-            quat=(math.cos(-angle / 2.0), 0.0, math.sin(-angle / 2.0), 0.0),
-            rgba=(0.35, 0.38, 0.42, 1.0),
-        )
-        return TerrainOutput(
-            origin=np.array((self.size[0] / 2.0, self.size[1] / 2.0, 0.0)),
-            geometries=[TerrainGeometry(geom=geom)],
-        )
+    env_ids = torch.arange(num_envs, device=device, dtype=torch.long)
+    return env_ids * len(TERRAIN_SLOPES) // num_envs
 
 
-def make_sloped_terrain_cfg() -> TerrainGeneratorCfg:
-    """Create one 100 m by 100 m patch for every configured slope."""
+def terrain_plane_poses(
+    env_origins: torch.Tensor,
+    terrain_types: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return world position and quaternion for each environment's terrain body."""
 
-    return TerrainGeneratorCfg(
-        size=(100.0, 100.0),
-        num_rows=1,
-        num_cols=len(TERRAIN_SLOPES),
-        sub_terrains={"slopes": InclinedPlanesCfg(angles=TERRAIN_SLOPES)},
-        color_scheme="none",
-        add_lights=True,
-    )
+    slopes = torch.as_tensor(TERRAIN_SLOPES, device=terrain_types.device, dtype=env_origins.dtype)[terrain_types]
+    half_angles = -0.5 * slopes
+    quaternions = torch.zeros((terrain_types.numel(), 4), device=terrain_types.device, dtype=env_origins.dtype)
+    quaternions[:, 0] = torch.cos(half_angles)
+    quaternions[:, 2] = torch.sin(half_angles)
+    return env_origins, quaternions
 
 
 def terrain_frame(
@@ -75,8 +45,8 @@ def terrain_frame(
 
 
 __all__ = [
-    "InclinedPlanesCfg",
     "TERRAIN_SLOPES",
-    "make_sloped_terrain_cfg",
+    "assign_terrain_types",
     "terrain_frame",
+    "terrain_plane_poses",
 ]

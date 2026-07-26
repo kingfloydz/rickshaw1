@@ -158,7 +158,6 @@ def g1_rickshaw_env_cfg(
         initialize_mjlab_task,
         reset_from_mujoco_static,
     )
-    from .terrain import make_sloped_terrain_cfg
 
     runtime = _runtime_cfg(play=play, history_length=history_length)
     observations = {
@@ -247,7 +246,7 @@ def g1_rickshaw_env_cfg(
         ),
         "pose": RewardTermCfg(
             func=velocity_mdp.variable_posture,
-            weight=0.4,
+            weight=0.3,
             params={
                 "asset_cfg": SceneEntityCfg(
                     "robot",
@@ -256,7 +255,7 @@ def g1_rickshaw_env_cfg(
                 "command_name": "twist",
                 "std_standing": {".*": 0.05},
                 "std_walking": {
-                    ".*hip_pitch.*": 0.15,
+                    ".*hip_pitch.*": 0.1,
                     ".*hip_roll.*": 0.15,
                     ".*hip_yaw.*": 0.15,
                     ".*knee.*": 0.35,
@@ -267,7 +266,7 @@ def g1_rickshaw_env_cfg(
                     ".*waist_pitch.*": 0.1,
                 },
                 "std_running": {
-                    ".*hip_pitch.*": 0.25,
+                    ".*hip_pitch.*": 0.18,
                     ".*hip_roll.*": 0.2,
                     ".*hip_yaw.*": 0.2,
                     ".*knee.*": 0.6,
@@ -295,19 +294,19 @@ def g1_rickshaw_env_cfg(
         "action_rate_l2": RewardTermCfg(func=velocity_mdp.action_rate_l2, weight=-0.1),
         "rickshaw_forward_acceleration_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_forward_acceleration_l2,
-            weight=-0.01,
+            weight=-0.05,
         ),
         "rickshaw_pitch_angular_acceleration_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_pitch_angular_acceleration_l2,
-            weight=-0.0025,
+            weight=-0.01,
         ),
         "rickshaw_yaw_angular_acceleration_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_yaw_angular_acceleration_l2,
-            weight=-0.0025,
+            weight=-0.01,
         ),
         "rickshaw_pitch_angular_velocity_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_pitch_angular_velocity_l2,
-            weight=-0.05,
+            weight=-1,
         ),
         "rickshaw_wheel_slip_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_wheel_slip_l2,
@@ -315,12 +314,12 @@ def g1_rickshaw_env_cfg(
         ),
         "rickshaw_g1_relative_position_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_g1_relative_position_l2,
-            weight=-1.0,
+            weight=-4.0,
             params={"axle_weight": 4.0},
         ),
         "rickshaw_g1_relative_yaw_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_g1_relative_yaw_l2,
-            weight=-0.5,
+            weight=-0.6,
         ),
         "rickshaw_absolute_pitch_deviation_l2": RewardTermCfg(
             func=mjlab_mdp.rickshaw_absolute_pitch_deviation_l2,
@@ -328,7 +327,7 @@ def g1_rickshaw_env_cfg(
         ),
         "peak_force": RewardTermCfg(
             func=mjlab_mdp.peak_force,
-            weight=-4.0,
+            weight=-3.0,
             params={"soft_limit": 10.0, "hard_limit": 50.0},
         ),
         "air_time": RewardTermCfg(
@@ -482,10 +481,7 @@ def g1_rickshaw_env_cfg(
     )
     cfg = ManagerBasedRlEnvCfg(
         scene=SceneCfg(
-            terrain=TerrainEntityCfg(
-                terrain_type="generator",
-                terrain_generator=make_sloped_terrain_cfg(),
-            ),
+            terrain=TerrainEntityCfg(terrain_type="plane"),
             entities={"robot": get_g1_robot_cfg(), "rickshaw": get_rickshaw_cfg()},
             sensors=(feet, foot_height, self_collision, wheels),
             num_envs=1 if play else 8192,

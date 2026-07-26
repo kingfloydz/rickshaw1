@@ -67,7 +67,7 @@ from .mdp.observations import ObservationHistoryState
 from .mjlab_commands import rickshaw_velocity
 from .sloped_reset import TERRAIN_SLOPES, build_sloped_reset_templates
 from .task_spec import RickshawPoseTargetCfg
-from .terrain import terrain_frame
+from .terrain import assign_terrain_types, terrain_frame, terrain_plane_poses
 
 
 @dataclass(frozen=True)
@@ -106,12 +106,19 @@ def _load_static() -> tuple[Any, MujocoStaticEquilibrium]:
     return model, load_mujoco_static_equilibrium(model)
 
 
+@requires_model_fields("body_pos", "body_quat", recompute=RecomputeLevel.set_const_0)
 def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTaskRuntimeCfg) -> None:
     """Load the certified rest pose and allocate policy-rate state."""
 
     del env_ids
+    ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
+    env.terrain_types = assign_terrain_types(env.num_envs, device=env.device)
+    plane_positions, plane_quaternions = terrain_plane_poses(env.scene.env_origins, env.terrain_types)
+    plane_body_id = env.scene["terrain"].indexing.body_ids[0]
+    env.sim.model.body_pos[ids, plane_body_id] = plane_positions
+    env.sim.model.body_quat[ids, plane_body_id] = plane_quaternions
     env.path_tangent_w, env.path_lateral_w, env.path_normal_w = terrain_frame(
-        env.scene["terrain"].terrain_types,
+        env.terrain_types,
         dtype=torch.float32,
     )
 
@@ -134,7 +141,7 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     model = env._mujoco_static_model
     solution = env._mujoco_static_equilibrium
     templates = build_sloped_reset_templates(model, solution.qpos, TERRAIN_SLOPES)
-    terrain_types = env.scene["terrain"].terrain_types
+    terrain_types = env.terrain_types
     env.static_robot_pose = torch.as_tensor(templates.robot_root_pose, device=env.device, dtype=torch.float32)[
         terrain_types
     ]

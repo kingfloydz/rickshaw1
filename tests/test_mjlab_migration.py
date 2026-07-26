@@ -164,6 +164,7 @@ def test_training_enables_mjlab_nan_guard() -> None:
     assert training.sim.njmax == 300
     assert training.sim.contact_sensor_maxmatch == 64
     assert training.decimation == 4
+    assert training.scene.terrain.terrain_type == "plane"
 
 
 def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> None:
