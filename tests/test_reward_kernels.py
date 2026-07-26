@@ -22,12 +22,18 @@ def test_rickshaw_height_reward_kernels() -> None:
     )
 
 
-def test_linear_reward_ramp_reaches_target_at_iteration_1000() -> None:
-    duration_steps = 1000 * 24
-    assert rewards.linear_ramp_progress(0, duration_steps) == 0.0
-    assert rewards.linear_ramp_progress(500 * 24, duration_steps) == 0.5
-    assert rewards.linear_ramp_progress(1000 * 24, duration_steps) == 1.0
-    assert rewards.linear_ramp_progress(2000 * 24, duration_steps) == 1.0
+def test_reward_ramp_changes_every_200_iterations_and_finishes_at_1200() -> None:
+    interval_steps = 200 * 24
+    duration_steps = 1200 * 24
+    progress = rewards.stepped_ramp_progress
+
+    assert progress(0, interval_steps, duration_steps) == 0.0
+    assert progress(interval_steps - 1, interval_steps, duration_steps) == 0.0
+    assert progress(200 * 24, interval_steps, duration_steps) == pytest.approx(1 / 6)
+    assert progress(400 * 24, interval_steps, duration_steps) == pytest.approx(2 / 6)
+    assert progress(1000 * 24, interval_steps, duration_steps) == pytest.approx(5 / 6)
+    assert progress(1200 * 24, interval_steps, duration_steps) == 1.0
+    assert progress(2000 * 24, interval_steps, duration_steps) == 1.0
 
 
 def test_wheel_slip_reward_only_penalizes_contacting_wheels() -> None:
@@ -206,13 +212,14 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
     ]
     penalty_curriculum = cfg.curriculum["rickshaw_penalty_weights"]
-    assert penalty_curriculum.func is mjlab_mdp.LinearRewardWeightCurriculum
+    assert penalty_curriculum.func is mjlab_mdp.SteppedRewardWeightCurriculum
     assert penalty_curriculum.params == {
         "reward_names": (
             *rickshaw_penalties,
             *relative_pose_and_force_penalties,
         ),
-        "duration_steps": 1000 * 24,
+        "interval_steps": 200 * 24,
+        "duration_steps": 1200 * 24,
     }
     target_weights = {
         name: cfg.rewards[name].weight
@@ -227,10 +234,15 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
             get_term_cfg=lambda name: term_cfgs[name],
         ),
     )
-    weight_curriculum = mjlab_mdp.LinearRewardWeightCurriculum(
+    weight_curriculum = mjlab_mdp.SteppedRewardWeightCurriculum(
         penalty_curriculum, curriculum_env
     )
-    for step, progress in ((0, 0.0), (500 * 24, 0.5), (1000 * 24, 1.0)):
+    for step, progress in (
+        (0, 0.0),
+        (200 * 24, 1 / 6),
+        (1000 * 24, 5 / 6),
+        (1200 * 24, 1.0),
+    ):
         curriculum_env.common_step_counter = step
         state = weight_curriculum(
             curriculum_env,

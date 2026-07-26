@@ -25,16 +25,16 @@ from .mdp.rewards import (
     angle_deviation_l2_value,
     hitch_height_exp_value,
     hitch_height_recovery_l2_value,
-    linear_ramp_progress,
     peak_force_value,
     relative_position_l2_value,
+    stepped_ramp_progress,
     wheel_slip_l2_value,
 )
 from .mjlab_events import ensure_mjlab_physical_state
 
 
-class LinearRewardWeightCurriculum:
-    """Linearly ramp selected reward weights from zero to their configured values."""
+class SteppedRewardWeightCurriculum:
+    """Ramp selected reward weights at fixed training-step intervals."""
 
     def __init__(self, cfg: Any, env: Any) -> None:
         reward_names = tuple(cfg.params["reward_names"])
@@ -46,10 +46,15 @@ class LinearRewardWeightCurriculum:
         env: Any,
         env_ids: torch.Tensor,
         reward_names: tuple[str, ...],
+        interval_steps: int,
         duration_steps: int,
     ) -> dict[str, torch.Tensor]:
         del env_ids, reward_names
-        progress = linear_ramp_progress(env.common_step_counter, duration_steps)
+        progress = stepped_ramp_progress(
+            env.common_step_counter,
+            interval_steps,
+            duration_steps,
+        )
         for term_cfg, target_weight in zip(self._term_cfgs, self._target_weights, strict=True):
             term_cfg.weight = progress * target_weight
         return {"progress": torch.tensor(progress)}
@@ -276,7 +281,7 @@ def hitch_height_recovery_l2(
 
 
 __all__ = [
-    "LinearRewardWeightCurriculum",
+    "SteppedRewardWeightCurriculum",
     "actor_observation_history",
     "critic_actor_observation",
     "critic_privileged_state",

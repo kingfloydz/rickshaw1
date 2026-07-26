@@ -9,8 +9,13 @@ HITCH_HEIGHT_RECOVERY_DEADBAND_M = 0.05
 HITCH_HEIGHT_RECOVERY_SCALE_M = 0.05
 
 
-def linear_ramp_progress(step: int, duration_steps: int) -> float:
-    return min(float(step) / duration_steps, 1.0)
+def stepped_ramp_progress(
+    step: int,
+    interval_steps: int,
+    duration_steps: int,
+) -> float:
+    completed_steps = (step // interval_steps) * interval_steps
+    return min(float(completed_steps) / duration_steps, 1.0)
 
 
 def hitch_height_exp_value(
@@ -87,8 +92,8 @@ __all__ = [
     "angle_deviation_l2_value",
     "hitch_height_exp_value",
     "hitch_height_recovery_l2_value",
-    "linear_ramp_progress",
     "peak_force_value",
     "relative_position_l2_value",
+    "stepped_ramp_progress",
     "wheel_slip_l2_value",
 ]

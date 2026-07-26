@@ -465,10 +465,11 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
                 },
             ),
             "rickshaw_penalty_weights": CurriculumTermCfg(
-                func=mjlab_mdp.LinearRewardWeightCurriculum,
+                func=mjlab_mdp.SteppedRewardWeightCurriculum,
                 params={
                     "reward_names": ramped_rickshaw_penalties,
-                    "duration_steps": 1000 * 24,
+                    "interval_steps": 200 * 24,
+                    "duration_steps": 1200 * 24,
                 },
             ),
         },
