@@ -1,4 +1,4 @@
-"""Rickshaw velocity command and flat-ground velocity projection."""
+"""Rickshaw velocity command in the wheel/ground-aligned frame."""
 
 from __future__ import annotations
 
@@ -8,19 +8,16 @@ from typing import Any
 
 import torch
 from mjlab.tasks.velocity.mdp import UniformVelocityCommand, UniformVelocityCommandCfg
-from mjlab.utils.lab_api.math import quat_apply
+
+from .mdp.dynamics import wheel_ground_frame
 
 
-def rickshaw_velocity(asset: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    normal_w = torch.zeros_like(asset.data.root_link_lin_vel_w)
-    normal_w[:, 2] = 1.0
-    axle_b = torch.zeros_like(normal_w)
-    axle_b[:, 1] = 1.0
-    axle_w = quat_apply(asset.data.root_link_quat_w, axle_b)
-    forward_w = torch.nn.functional.normalize(
-        torch.cross(axle_w, normal_w, dim=-1), dim=-1
-    )
-    lateral_w = torch.cross(normal_w, forward_w, dim=-1)
+def rickshaw_frame(asset: Any, slope_normal_w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    return wheel_ground_frame(asset.data.root_link_quat_w, slope_normal_w)
+
+
+def rickshaw_velocity(asset: Any, slope_normal_w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    forward_w, lateral_w, normal_w = rickshaw_frame(asset, slope_normal_w)
     linear = asset.data.root_link_lin_vel_w
     return (
         torch.sum(linear * forward_w, dim=-1),
@@ -110,18 +107,60 @@ class RickshawVelocityCommand(UniformVelocityCommand):
                 self.vel_command_b[env_idx, command_index] = slider.value
 
     def _update_metrics(self) -> None:
-        lin_vel_x, _, ang_vel_z = rickshaw_velocity(self.robot)
+        lin_vel_x, _, ang_vel_z = rickshaw_velocity(self.robot, self._env.path_normal_w)
         max_command_step = self.cfg.resampling_time_range[1] / self._env.step_dt
-        self.metrics["error_lin_vel_x"] += (
-            torch.abs(self.vel_command_b[:, 0] - lin_vel_x) / max_command_step
+        self.metrics["error_lin_vel_x"] += torch.abs(self.vel_command_b[:, 0] - lin_vel_x) / max_command_step
+        self.metrics["error_ang_vel_z"] += torch.abs(self.vel_command_b[:, 2] - ang_vel_z) / max_command_step
+
+    def _debug_vis_impl(self, visualizer: Any) -> None:
+        env_indices = visualizer.get_env_indices(self.num_envs)
+        if not env_indices:
+            return
+
+        forward_w, lateral_w, normal_w = rickshaw_frame(self.robot, self._env.path_normal_w)
+        command = self.command
+        linear_velocity_w = self.robot.data.root_link_lin_vel_w
+        angular_velocity_w = self.robot.data.root_link_ang_vel_w
+        command_linear_w = command[:, :1] * forward_w + command[:, 1:2] * lateral_w
+        actual_linear_w = (
+            torch.sum(linear_velocity_w * forward_w, dim=-1, keepdim=True) * forward_w
+            + torch.sum(linear_velocity_w * lateral_w, dim=-1, keepdim=True) * lateral_w
         )
-        self.metrics["error_ang_vel_z"] += (
-            torch.abs(self.vel_command_b[:, 2] - ang_vel_z) / max_command_step
-        )
+        command_angular_w = command[:, 2:3] * normal_w
+        actual_angular_w = torch.sum(angular_velocity_w * normal_w, dim=-1, keepdim=True) * normal_w
+        start_w = self.robot.data.root_link_pos_w + (self.cfg.viz.scale * self.cfg.viz.z_offset * normal_w)
+        scale = self.cfg.viz.scale
+        for env_idx in env_indices:
+            start = start_w[env_idx]
+            visualizer.add_arrow(
+                start,
+                start + scale * command_linear_w[env_idx],
+                color=(0.2, 0.2, 0.6, 0.6),
+                width=0.015,
+            )
+            visualizer.add_arrow(
+                start,
+                start + scale * command_angular_w[env_idx],
+                color=(0.2, 0.6, 0.2, 0.6),
+                width=0.015,
+            )
+            visualizer.add_arrow(
+                start,
+                start + scale * actual_linear_w[env_idx],
+                color=(0.0, 0.6, 1.0, 0.7),
+                width=0.015,
+            )
+            visualizer.add_arrow(
+                start,
+                start + scale * actual_angular_w[env_idx],
+                color=(0.0, 1.0, 0.4, 0.7),
+                width=0.015,
+            )
 
 
 __all__ = [
     "RickshawVelocityCommand",
     "RickshawVelocityCommandCfg",
+    "rickshaw_frame",
     "rickshaw_velocity",
 ]

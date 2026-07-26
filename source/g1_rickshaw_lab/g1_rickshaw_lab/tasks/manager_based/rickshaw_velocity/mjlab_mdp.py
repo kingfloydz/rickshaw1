@@ -22,8 +22,12 @@ from .mdp.observations import (
 from .mdp.rewards import (
     HITCH_HEIGHT_RECOVERY_DEADBAND_M,
     HITCH_HEIGHT_RECOVERY_SCALE_M,
+    angle_deviation_l2_value,
     hitch_height_exp_value,
     hitch_height_recovery_l2_value,
+    peak_force_value,
+    relative_position_l2_value,
+    wheel_slip_l2_value,
 )
 from .mjlab_events import ensure_mjlab_physical_state
 
@@ -143,7 +147,7 @@ def critic_privileged_state(env: Any) -> torch.Tensor:
             env.teacher_dynamic_history_state.current,
             env.rickshaw_state.connection_residual[:, None],
             env.stability_state.zmp_margin[:, None],
-            env.analytic_force_state.a_s[:, None],
+            env.rickshaw_kinematic_state.forward_acceleration[:, None],
             velocity_mdp.foot_height(env, "foot_height_scan"),
             velocity_mdp.foot_air_time(env, "feet_ground_contact"),
             velocity_mdp.foot_contact(env, "feet_ground_contact"),
@@ -166,6 +170,62 @@ def track_rickshaw_ang_vel_z(env: Any, command_name: str, std: float) -> torch.T
     ensure_mjlab_physical_state(env)
     command = env.command_manager.get_command(command_name)
     return torch.exp(-torch.square(env.rickshaw_ang_vel_z - command[:, 2]) / std**2)
+
+
+def rickshaw_forward_acceleration_l2(env: Any) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return torch.square(env.rickshaw_kinematic_state.forward_acceleration)
+
+
+def rickshaw_pitch_angular_acceleration_l2(env: Any) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return torch.square(env.rickshaw_kinematic_state.pitch_angular_acceleration)
+
+
+def rickshaw_yaw_angular_acceleration_l2(env: Any) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return torch.square(env.rickshaw_kinematic_state.yaw_angular_acceleration)
+
+
+def rickshaw_pitch_angular_velocity_l2(env: Any) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return torch.square(env.rickshaw_kinematic_state.pitch_angular_velocity)
+
+
+def rickshaw_wheel_slip_l2(env: Any) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return wheel_slip_l2_value(
+        env.rickshaw_state.wheel_longitudinal_slip,
+        env.rickshaw_state.wheel_normal_force > 1.0,
+    )
+
+
+def rickshaw_g1_relative_position_l2(env: Any, axle_weight: float = 4.0) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return relative_position_l2_value(
+        env.rickshaw_state.relative_position_b,
+        env.static_relative_position_b,
+        axle_weight=axle_weight,
+    )
+
+
+def rickshaw_g1_relative_yaw_l2(env: Any) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return angle_deviation_l2_value(env.rickshaw_state.relative_yaw, env.static_relative_yaw)
+
+
+def rickshaw_absolute_pitch_deviation_l2(env: Any) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return angle_deviation_l2_value(env.rickshaw_state.pitch, env.static_rickshaw_pitch)
+
+
+def peak_force(env: Any, soft_limit: float = 10.0, hard_limit: float = 50.0) -> torch.Tensor:
+    ensure_mjlab_physical_state(env)
+    return peak_force_value(
+        env.rickshaw_state.connection_force_w,
+        soft_limit=soft_limit,
+        hard_limit=hard_limit,
+    )
 
 
 def hitch_height_exp(env: Any, std: float) -> torch.Tensor:
@@ -199,6 +259,15 @@ __all__ = [
     "current_actor_observation",
     "hitch_height_exp",
     "hitch_height_recovery_l2",
+    "peak_force",
+    "rickshaw_absolute_pitch_deviation_l2",
+    "rickshaw_forward_acceleration_l2",
+    "rickshaw_g1_relative_position_l2",
+    "rickshaw_g1_relative_yaw_l2",
+    "rickshaw_pitch_angular_acceleration_l2",
+    "rickshaw_pitch_angular_velocity_l2",
+    "rickshaw_wheel_slip_l2",
+    "rickshaw_yaw_angular_acceleration_l2",
     "teacher_dynamic_history",
     "teacher_static",
     "track_rickshaw_ang_vel_z",

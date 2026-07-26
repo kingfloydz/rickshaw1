@@ -18,12 +18,16 @@ from g1_rickshaw_lab.assets.rickshaw import (
 @dataclass
 class RickshawRuntimeState:
     wheel_normal_force: torch.Tensor
+    wheel_longitudinal_slip: torch.Tensor
     hitch_height: torch.Tensor
     hitch_vertical_speed: torch.Tensor
     pitch: torch.Tensor
     two_wheel_contact: torch.Tensor
     connection_residual: torch.Tensor
     hand_force_w: torch.Tensor
+    connection_force_w: torch.Tensor
+    relative_position_b: torch.Tensor
+    relative_yaw: torch.Tensor
 
     @classmethod
     def zeros(
@@ -36,17 +40,17 @@ class RickshawRuntimeState:
     ) -> RickshawRuntimeState:
         scalar = torch.zeros(num_envs, device=device, dtype=dtype)
         return cls(
-            wheel_normal_force=torch.zeros(
-                (num_envs, num_wheels), device=device, dtype=dtype
-            ),
+            wheel_normal_force=torch.zeros((num_envs, num_wheels), device=device, dtype=dtype),
+            wheel_longitudinal_slip=torch.zeros((num_envs, num_wheels), device=device, dtype=dtype),
             hitch_height=scalar.clone(),
             hitch_vertical_speed=scalar.clone(),
             pitch=scalar.clone(),
-            two_wheel_contact=torch.zeros(
-                num_envs, device=device, dtype=torch.bool
-            ),
+            two_wheel_contact=torch.zeros(num_envs, device=device, dtype=torch.bool),
             connection_residual=scalar.clone(),
             hand_force_w=torch.zeros((num_envs, 3), device=device, dtype=dtype),
+            connection_force_w=torch.zeros((num_envs, 2, 3), device=device, dtype=dtype),
+            relative_position_b=torch.zeros((num_envs, 3), device=device, dtype=dtype),
+            relative_yaw=scalar.clone(),
         )
 
 
@@ -77,24 +81,16 @@ class StabilityState:
         return cls(
             theta_fat=scalar.clone(),
             fat_valid=torch.zeros(num_envs, device=device, dtype=torch.bool),
-            fat_force_consistent=torch.zeros(
-                num_envs, device=device, dtype=torch.bool
-            ),
-            fat_force_relative_error=torch.zeros(
-                (num_envs, 2), device=device, dtype=dtype
-            ),
+            fat_force_consistent=torch.zeros(num_envs, device=device, dtype=torch.bool),
+            fat_force_relative_error=torch.zeros((num_envs, 2), device=device, dtype=dtype),
             torso_pitch=scalar.clone(),
             zmp_s=scalar.clone(),
             zmp_margin=scalar.clone(),
             zmp_valid=torch.zeros(num_envs, device=device, dtype=torch.bool),
             ground_reaction_normal=scalar.clone(),
             support_center_w=torch.zeros((num_envs, 3), device=device, dtype=dtype),
-            support_points_sy=torch.zeros(
-                (num_envs, 8, 2), device=device, dtype=dtype
-            ),
-            support_point_mask=torch.zeros(
-                (num_envs, 8), device=device, dtype=torch.bool
-            ),
+            support_points_sy=torch.zeros((num_envs, 8, 2), device=device, dtype=dtype),
+            support_point_mask=torch.zeros((num_envs, 8), device=device, dtype=torch.bool),
         )
 
 
@@ -123,15 +119,11 @@ class DomainRandomizationCfg:
         required = set(DOMAIN_PARAMETER_NAMES)
         for label, values in (("ranges", self.ranges), ("nominal", self.nominal)):
             if not isinstance(values, Mapping) or set(values) != required:
-                raise ValueError(
-                    f"domain randomization {label} must contain exactly {sorted(required)}"
-                )
+                raise ValueError(f"domain randomization {label} must contain exactly {sorted(required)}")
         for name, interval in self.ranges.items():
             low, high = map(float, interval)
             nominal = float(self.nominal[name])
-            if not all(map(math.isfinite, (low, high, nominal))) or not (
-                low <= nominal <= high
-            ):
+            if not all(map(math.isfinite, (low, high, nominal))) or not (low <= nominal <= high):
                 raise ValueError(f"invalid range or nominal value for {name!r}")
         for name in (
             "rolling_resistance.c_rr",
@@ -160,15 +152,11 @@ def sample_domain_parameters(
 
     def sample(name: str) -> torch.Tensor:
         if not cfg.enabled:
-            return torch.full(
-                (batch_size,), float(cfg.nominal[name]), device=device, dtype=dtype
-            )
+            return torch.full((batch_size,), float(cfg.nominal[name]), device=device, dtype=dtype)
         low, high = map(float, cfg.ranges[name])
         if low == high:
             return torch.full((batch_size,), low, device=device, dtype=dtype)
-        return torch.empty((batch_size,), device=device, dtype=dtype).uniform_(
-            low, high, generator=generator
-        )
+        return torch.empty((batch_size,), device=device, dtype=dtype).uniform_(low, high, generator=generator)
 
     return {name: sample(name) for name in DOMAIN_RANDOMIZATION_NAMES}
 
@@ -179,15 +167,10 @@ def effective_cart_mass_com_bounds(
     mass_low, mass_high = map(float, ranges["payload.mass"])
     lower = [RICKSHAW_TOTAL_MASS + mass_low]
     upper = [RICKSHAW_TOTAL_MASS + mass_high]
-    for axis, name in enumerate(
-        ("payload.com.x", "payload.com.y", "payload.com.z")
-    ):
+    for axis, name in enumerate(("payload.com.x", "payload.com.y", "payload.com.z")):
         payload_low, payload_high = map(float, ranges[name])
         candidates = [
-            (
-                RICKSHAW_TOTAL_MASS * RICKSHAW_CENTER_OF_MASS[axis]
-                + payload_mass * payload_com
-            )
+            (RICKSHAW_TOTAL_MASS * RICKSHAW_CENTER_OF_MASS[axis] + payload_mass * payload_com)
             / (RICKSHAW_TOTAL_MASS + payload_mass)
             for payload_mass in (mass_low, mass_high)
             for payload_com in (payload_low, payload_high)
@@ -219,9 +202,7 @@ def _update_teacher_static_domain(
         dim=-1,
     )
     cart_lower, cart_upper = effective_cart_mass_com_bounds(cfg.ranges)
-    nominal_torso_mass = float(
-        env._default_robot_masses_cpu[0, env.torso_body_id]
-    )
+    nominal_torso_mass = float(env._default_robot_masses_cpu[0, env.torso_body_id])
     lower = torch.tensor(
         (
             nominal_torso_mass + cfg.ranges["torso.mass_delta"][0],
@@ -249,9 +230,7 @@ def _update_teacher_static_domain(
     from .observations import TEACHER_STATIC_DOMAIN_DIM, normalize_features
 
     if raw.shape != (env.num_envs, TEACHER_STATIC_DOMAIN_DIM):
-        raise RuntimeError(
-            f"effective teacher static domain must have shape [N,{TEACHER_STATIC_DOMAIN_DIM}]"
-        )
+        raise RuntimeError(f"effective teacher static domain must have shape [N,{TEACHER_STATIC_DOMAIN_DIM}]")
     env.teacher_static_domain_raw = raw
     env.teacher_static_domain_bounds = (lower, upper)
     env.normalized_teacher_static_domain = normalize_features(raw, lower, upper)

@@ -193,7 +193,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         ),
         "upright": RewardTermCfg(
             func=velocity_mdp.upright,
-            weight=0.2,
+            weight=0.1,
             params={
                 "std": math.sqrt(0.2),
                 "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
@@ -201,7 +201,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         ),
         "pose": RewardTermCfg(
             func=velocity_mdp.variable_posture,
-            weight=1.0,
+            weight=0.4,
             params={
                 "asset_cfg": SceneEntityCfg(
                     "robot",
@@ -210,7 +210,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
                 "command_name": "twist",
                 "std_standing": {".*": 0.05},
                 "std_walking": {
-                    ".*hip_pitch.*": 0.3,
+                    ".*hip_pitch.*": 0.15,
                     ".*hip_roll.*": 0.15,
                     ".*hip_yaw.*": 0.15,
                     ".*knee.*": 0.35,
@@ -221,7 +221,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
                     ".*waist_pitch.*": 0.1,
                 },
                 "std_running": {
-                    ".*hip_pitch.*": 0.5,
+                    ".*hip_pitch.*": 0.25,
                     ".*hip_roll.*": 0.2,
                     ".*hip_yaw.*": 0.2,
                     ".*knee.*": 0.6,
@@ -247,6 +247,44 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         ),
         "dof_pos_limits": RewardTermCfg(func=velocity_mdp.joint_pos_limits, weight=-1.0),
         "action_rate_l2": RewardTermCfg(func=velocity_mdp.action_rate_l2, weight=-0.1),
+        "rickshaw_forward_acceleration_l2": RewardTermCfg(
+            func=mjlab_mdp.rickshaw_forward_acceleration_l2,
+            weight=-0.01,
+        ),
+        "rickshaw_pitch_angular_acceleration_l2": RewardTermCfg(
+            func=mjlab_mdp.rickshaw_pitch_angular_acceleration_l2,
+            weight=-0.0025,
+        ),
+        "rickshaw_yaw_angular_acceleration_l2": RewardTermCfg(
+            func=mjlab_mdp.rickshaw_yaw_angular_acceleration_l2,
+            weight=-0.0025,
+        ),
+        "rickshaw_pitch_angular_velocity_l2": RewardTermCfg(
+            func=mjlab_mdp.rickshaw_pitch_angular_velocity_l2,
+            weight=-0.05,
+        ),
+        "rickshaw_wheel_slip_l2": RewardTermCfg(
+            func=mjlab_mdp.rickshaw_wheel_slip_l2,
+            weight=-0.1,
+        ),
+        "rickshaw_g1_relative_position_l2": RewardTermCfg(
+            func=mjlab_mdp.rickshaw_g1_relative_position_l2,
+            weight=-1.0,
+            params={"axle_weight": 4.0},
+        ),
+        "rickshaw_g1_relative_yaw_l2": RewardTermCfg(
+            func=mjlab_mdp.rickshaw_g1_relative_yaw_l2,
+            weight=-0.5,
+        ),
+        "rickshaw_absolute_pitch_deviation_l2": RewardTermCfg(
+            func=mjlab_mdp.rickshaw_absolute_pitch_deviation_l2,
+            weight=-0.5,
+        ),
+        "peak_force": RewardTermCfg(
+            func=mjlab_mdp.peak_force,
+            weight=-4.0,
+            params={"soft_limit": 10.0, "hard_limit": 50.0},
+        ),
         "air_time": RewardTermCfg(
             func=velocity_mdp.feet_air_time,
             weight=0.0,
@@ -357,9 +395,7 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
     )
     foot_height = TerrainHeightSensorCfg(
         name=foot_height_sensor_name,
-        frame=tuple(
-            ObjRef(type="site", name=name, entity="robot") for name in foot_site_names
-        ),
+        frame=tuple(ObjRef(type="site", name=name, entity="robot") for name in foot_site_names),
         ray_alignment="yaw",
         pattern=RingPatternCfg.single_ring(radius=0.03, num_samples=6),
         max_distance=1.0,

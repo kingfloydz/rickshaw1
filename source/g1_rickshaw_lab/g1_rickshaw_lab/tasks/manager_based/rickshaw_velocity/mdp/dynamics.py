@@ -32,16 +32,12 @@ def rolling_resistance_force(
     if velocity_epsilon <= 0.0:
         raise ValueError("velocity_epsilon must be positive")
 
-    tangential_velocity = torch.sum(
-        wheel_velocity_w * path_tangent_w[:, None, :], dim=-1
-    )
+    tangential_velocity = torch.sum(wheel_velocity_w * path_tangent_w[:, None, :], dim=-1)
     normal_force = torch.clamp(
         torch.sum(wheel_contact_force_w * path_normal_w[:, None, :], dim=-1),
         min=0.0,
     )
-    coefficient = torch.as_tensor(
-        c_rr, device=wheel_velocity_w.device, dtype=wheel_velocity_w.dtype
-    )
+    coefficient = torch.as_tensor(c_rr, device=wheel_velocity_w.device, dtype=wheel_velocity_w.dtype)
     if coefficient.ndim == 0:
         coefficient = coefficient.expand(wheel_velocity_w.shape[0])
     if coefficient.shape != (wheel_velocity_w.shape[0],):
@@ -49,6 +45,24 @@ def rolling_resistance_force(
     direction = torch.tanh(tangential_velocity / velocity_epsilon)
     magnitude = -coefficient[:, None] * normal_force * direction
     return magnitude[..., None] * path_tangent_w[:, None, :]
+
+
+def wheel_longitudinal_slip(
+    wheel_center_velocity_w: torch.Tensor,
+    wheel_angular_velocity_w: torch.Tensor,
+    path_tangent_w: torch.Tensor,
+    path_normal_w: torch.Tensor,
+    wheel_radius: float,
+) -> torch.Tensor:
+    """Return each wheel's longitudinal ground-contact velocity."""
+
+    contact_offset_w = -wheel_radius * path_normal_w[:, None, :]
+    contact_velocity_w = wheel_center_velocity_w + torch.cross(
+        wheel_angular_velocity_w,
+        contact_offset_w.expand_as(wheel_angular_velocity_w),
+        dim=-1,
+    )
+    return torch.sum(contact_velocity_w * path_tangent_w[:, None, :], dim=-1)
 
 
 @dataclass(frozen=True)
@@ -91,9 +105,7 @@ def articulation_center_of_mass(
     return position, velocity, total_mass
 
 
-def parallel_axis_inertia(
-    inertia_at_com: torch.Tensor, mass: torch.Tensor, displacement: torch.Tensor
-) -> torch.Tensor:
+def parallel_axis_inertia(inertia_at_com: torch.Tensor, mass: torch.Tensor, displacement: torch.Tensor) -> torch.Tensor:
     """Shift a 3-D inertia tensor from its CoM by ``displacement``."""
 
     if inertia_at_com.shape[-2:] != (3, 3) or displacement.shape[-1] != 3:
@@ -101,9 +113,7 @@ def parallel_axis_inertia(
     eye = torch.eye(3, device=inertia_at_com.device, dtype=inertia_at_com.dtype)
     squared_distance = torch.sum(displacement * displacement, dim=-1)
     outer = displacement[..., :, None] * displacement[..., None, :]
-    return inertia_at_com + mass[..., None, None] * (
-        squared_distance[..., None, None] * eye - outer
-    )
+    return inertia_at_com + mass[..., None, None] * (squared_distance[..., None, None] * eye - outer)
 
 
 def combine_mass_properties(
@@ -119,14 +129,12 @@ def combine_mass_properties(
     total_mass = base_mass + payload_mass
     if torch.any(total_mass <= 0.0):
         raise ValueError("combined mass must be positive")
-    total_com = (
-        base_mass[..., None] * base_com + payload_mass[..., None] * payload_com
-    ) / total_mass[..., None]
+    total_com = (base_mass[..., None] * base_com + payload_mass[..., None] * payload_com) / total_mass[..., None]
     base_shift = base_com - total_com
     payload_shift = payload_com - total_com
-    total_inertia = parallel_axis_inertia(
-        base_inertia_at_com, base_mass, base_shift
-    ) + parallel_axis_inertia(payload_inertia_at_com, payload_mass, payload_shift)
+    total_inertia = parallel_axis_inertia(base_inertia_at_com, base_mass, base_shift) + parallel_axis_inertia(
+        payload_inertia_at_com, payload_mass, payload_shift
+    )
     return total_mass, total_com, total_inertia
 
 
@@ -138,9 +146,7 @@ def effective_cart_mass(
     return cart_mass + torch.sum(wheel_spin_inertia / torch.square(wheel_radius), dim=-1)
 
 
-def effective_wheel_damping(
-    wheel_damping: torch.Tensor, wheel_radius: torch.Tensor
-) -> torch.Tensor:
+def effective_wheel_damping(wheel_damping: torch.Tensor, wheel_radius: torch.Tensor) -> torch.Tensor:
     if torch.any(wheel_radius <= 0.0):
         raise ValueError("wheel radii must be positive")
     return torch.sum(wheel_damping / torch.square(wheel_radius), dim=-1)
@@ -154,44 +160,78 @@ class AnalyticForceCfg:
 
 
 @dataclass
-class AnalyticHandleForceState:
+class RickshawKinematicState:
     previous_velocity: torch.Tensor
-    previous_pitch: torch.Tensor
-    previous_previous_pitch: torch.Tensor
-    a_s: torch.Tensor
-    alpha_ddot: torch.Tensor
-    t_s: torch.Tensor
-    t_n: torch.Tensor
-    valid: torch.Tensor
+    previous_angular_velocity_w: torch.Tensor
+    forward_acceleration: torch.Tensor
+    pitch_angular_velocity: torch.Tensor
+    pitch_angular_acceleration: torch.Tensor
+    yaw_angular_acceleration: torch.Tensor
 
     @classmethod
     def initialized(
-        cls, tangential_velocity: torch.Tensor, pitch: torch.Tensor
-    ) -> AnalyticHandleForceState:
+        cls,
+        tangential_velocity: torch.Tensor,
+        angular_velocity_w: torch.Tensor,
+    ) -> RickshawKinematicState:
         zeros = torch.zeros_like(tangential_velocity)
         return cls(
             previous_velocity=tangential_velocity.clone(),
-            previous_pitch=pitch.clone(),
-            previous_previous_pitch=pitch.clone(),
-            a_s=zeros.clone(),
-            alpha_ddot=zeros.clone(),
-            t_s=zeros.clone(),
-            t_n=zeros.clone(),
-            valid=torch.zeros_like(tangential_velocity, dtype=torch.bool),
+            previous_angular_velocity_w=angular_velocity_w.clone(),
+            forward_acceleration=zeros.clone(),
+            pitch_angular_velocity=zeros.clone(),
+            pitch_angular_acceleration=zeros.clone(),
+            yaw_angular_acceleration=zeros.clone(),
         )
 
     def reset(
         self,
         tangential_velocity: torch.Tensor,
-        pitch: torch.Tensor,
+        angular_velocity_w: torch.Tensor,
         env_ids: torch.Tensor | None = None,
     ) -> None:
         ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
         self.previous_velocity[ids] = tangential_velocity
-        self.previous_pitch[ids] = pitch
-        self.previous_previous_pitch[ids] = pitch
-        self.a_s[ids] = 0.0
-        self.alpha_ddot[ids] = 0.0
+        self.previous_angular_velocity_w[ids] = angular_velocity_w
+        self.forward_acceleration[ids] = 0.0
+        self.pitch_angular_velocity[ids] = 0.0
+        self.pitch_angular_acceleration[ids] = 0.0
+        self.yaw_angular_acceleration[ids] = 0.0
+
+    def update(
+        self,
+        tangential_velocity: torch.Tensor,
+        angular_velocity_w: torch.Tensor,
+        path_lateral_w: torch.Tensor,
+        path_normal_w: torch.Tensor,
+        dt: float,
+    ) -> None:
+        angular_acceleration_w = (angular_velocity_w - self.previous_angular_velocity_w) / dt
+        self.forward_acceleration[:] = (tangential_velocity - self.previous_velocity) / dt
+        self.pitch_angular_velocity[:] = torch.sum(angular_velocity_w * path_lateral_w, dim=-1)
+        self.pitch_angular_acceleration[:] = torch.sum(angular_acceleration_w * path_lateral_w, dim=-1)
+        self.yaw_angular_acceleration[:] = torch.sum(angular_acceleration_w * path_normal_w, dim=-1)
+        self.previous_velocity[:] = tangential_velocity
+        self.previous_angular_velocity_w[:] = angular_velocity_w
+
+
+@dataclass
+class AnalyticHandleForceState:
+    t_s: torch.Tensor
+    t_n: torch.Tensor
+    valid: torch.Tensor
+
+    @classmethod
+    def initialized(cls, reference: torch.Tensor) -> AnalyticHandleForceState:
+        zeros = torch.zeros_like(reference)
+        return cls(
+            t_s=zeros.clone(),
+            t_n=zeros.clone(),
+            valid=torch.zeros_like(reference, dtype=torch.bool),
+        )
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
         self.t_s[ids] = 0.0
         self.t_n[ids] = 0.0
         self.valid[ids] = False
@@ -215,21 +255,14 @@ def force_consistency(
         raise ValueError("force consistency source_valid must be bool [N]")
     if not 0.0 <= relative_tolerance <= 1.0 or absolute_floor_n <= 0.0:
         raise ValueError("force consistency tolerances are invalid")
-    floor = torch.as_tensor(
-        absolute_floor_n, device=analytic_force_sn.device, dtype=analytic_force_sn.dtype
-    )
+    floor = torch.as_tensor(absolute_floor_n, device=analytic_force_sn.device, dtype=analytic_force_sn.dtype)
     normalization_force = torch.maximum(torch.abs(analytic_force_sn), floor)
     relative_error = torch.abs(measured_force_sn - analytic_force_sn) / normalization_force
-    sign_resolved = (
-        (torch.abs(analytic_force_sn) > relative_tolerance * normalization_force)
-        & (torch.abs(measured_force_sn) > relative_tolerance * normalization_force)
+    sign_resolved = (torch.abs(analytic_force_sn) > relative_tolerance * normalization_force) & (
+        torch.abs(measured_force_sn) > relative_tolerance * normalization_force
     )
-    same_sign = (~sign_resolved) | (
-        torch.sign(analytic_force_sn) == torch.sign(measured_force_sn)
-    )
-    consistent = source_valid & torch.all(
-        same_sign & (relative_error <= relative_tolerance), dim=-1
-    )
+    same_sign = (~sign_resolved) | (torch.sign(analytic_force_sn) == torch.sign(measured_force_sn))
+    consistent = source_valid & torch.all(same_sign & (relative_error <= relative_tolerance), dim=-1)
     return consistent, relative_error
 
 
@@ -277,9 +310,7 @@ def analytic_handle_force(
     valid = handle_x > minimum_handle_x
     denominator = torch.where(valid, handle_x, torch.ones_like(v_s))
     t_n = (
-        properties.pitch_inertia_about_axle * alpha_ddot
-        + handle_z * t_s
-        + properties.m_cart * GRAVITY * com_x
+        properties.pitch_inertia_about_axle * alpha_ddot + handle_z * t_s + properties.m_cart * GRAVITY * com_x
     ) / denominator
     t_s = torch.where(valid, t_s, torch.zeros_like(t_s))
     t_n = torch.where(valid, t_n, torch.zeros_like(t_n))
@@ -289,29 +320,23 @@ def analytic_handle_force(
 def update_analytic_handle_force_state(
     state: AnalyticHandleForceState,
     v_s: torch.Tensor,
+    a_s: torch.Tensor,
     pitch: torch.Tensor,
+    pitch_angular_acceleration: torch.Tensor,
     c_rr: torch.Tensor,
     wheel_normal_force: torch.Tensor,
     properties: RickshawMassProperties,
-    dt: float,
     cfg: AnalyticForceCfg,
     *,
     handle_from_axle_sn: torch.Tensor | None = None,
     com_from_axle_sn: torch.Tensor | None = None,
 ) -> AnalyticHandleForceState:
-    """Differentiate cart motion and update the analytic FAT2 reference."""
+    """Update the analytic FAT2 reference from the current cart kinematics."""
 
-    a_s = (v_s - state.previous_velocity) / dt
-    alpha_ddot = (
-        pitch - 2.0 * state.previous_pitch + state.previous_previous_pitch
-    ) / (dt * dt)
-    state.previous_velocity[:] = v_s
-    state.previous_previous_pitch[:] = state.previous_pitch
-    state.previous_pitch[:] = pitch
     t_s, t_n, geometry_valid = analytic_handle_force(
         v_s,
         a_s,
-        alpha_ddot,
+        pitch_angular_acceleration,
         pitch,
         c_rr,
         wheel_normal_force,
@@ -322,8 +347,6 @@ def update_analytic_handle_force_state(
         com_from_axle_sn=com_from_axle_sn,
     )
     wheel_valid = torch.all(wheel_normal_force >= cfg.minimum_wheel_normal_force, dim=-1)
-    state.a_s[:] = a_s
-    state.alpha_ddot[:] = alpha_ddot
     state.t_s[:] = t_s
     state.t_n[:] = t_n
     state.valid[:] = geometry_valid & wheel_valid
@@ -339,6 +362,81 @@ def quat_apply_wxyz(quaternion: torch.Tensor, vector: torch.Tensor) -> torch.Ten
     uv = torch.linalg.cross(q_vec, vector, dim=-1)
     uuv = torch.linalg.cross(q_vec, uv, dim=-1)
     return vector + 2.0 * (quaternion[..., :1] * uv + uuv)
+
+
+def wheel_ground_frame(
+    quaternion_wxyz: torch.Tensor,
+    ground_normal_w: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return forward, axle-lateral, and normal axes for a wheeled body."""
+
+    axle_b = torch.zeros_like(ground_normal_w)
+    axle_b[..., 1] = 1.0
+    axle_w = quat_apply_wxyz(quaternion_wxyz, axle_b)
+    forward_w = torch.nn.functional.normalize(torch.cross(axle_w, ground_normal_w, dim=-1), dim=-1)
+    lateral_w = torch.cross(ground_normal_w, forward_w, dim=-1)
+    return forward_w, lateral_w, ground_normal_w
+
+
+def yaw_from_quaternion_wxyz(quaternion: torch.Tensor) -> torch.Tensor:
+    """Return world yaw from a wxyz quaternion."""
+
+    local_x = torch.zeros((*quaternion.shape[:-1], 3), device=quaternion.device, dtype=quaternion.dtype)
+    local_x[..., 0] = 1.0
+    forward_w = quat_apply_wxyz(quaternion, local_x)
+    return torch.atan2(forward_w[..., 1], forward_w[..., 0])
+
+
+def relative_position_in_yaw_frame(
+    origin_position_w: torch.Tensor,
+    point_position_w: torch.Tensor,
+    frame_quaternion_wxyz: torch.Tensor,
+) -> torch.Tensor:
+    """Express a relative position in the frame's yaw-only coordinates."""
+
+    relative_w = point_position_w - origin_position_w
+    yaw = yaw_from_quaternion_wxyz(frame_quaternion_wxyz)
+    cosine = torch.cos(yaw)
+    sine = torch.sin(yaw)
+    return torch.stack(
+        (
+            cosine * relative_w[..., 0] + sine * relative_w[..., 1],
+            -sine * relative_w[..., 0] + cosine * relative_w[..., 1],
+            relative_w[..., 2],
+        ),
+        dim=-1,
+    )
+
+
+def relative_yaw_from_quaternions(
+    reference_quaternion_wxyz: torch.Tensor,
+    target_quaternion_wxyz: torch.Tensor,
+) -> torch.Tensor:
+    """Return target yaw relative to the reference frame in [-pi, pi]."""
+
+    difference = yaw_from_quaternion_wxyz(target_quaternion_wxyz) - yaw_from_quaternion_wxyz(reference_quaternion_wxyz)
+    return torch.atan2(torch.sin(difference), torch.cos(difference))
+
+
+def connect_constraint_forces(
+    efc_type: torch.Tensor,
+    efc_id: torch.Tensor,
+    efc_force: torch.Tensor,
+    equality_ids: torch.Tensor,
+    *,
+    equality_constraint_type: int,
+) -> torch.Tensor:
+    """Extract the world xyz solve force for each site-connect equality."""
+
+    equality_row_count = 3 * equality_ids.numel()
+    matches = (efc_type[:, :equality_row_count, None] == equality_constraint_type) & (
+        efc_id[:, :equality_row_count, None] == equality_ids[None, None, :]
+    )
+    first_row = torch.argmax(matches.to(torch.int64), dim=1)
+    xyz_rows = first_row[:, :, None] + torch.arange(3, device=efc_force.device)
+    return torch.gather(efc_force, 1, xyz_rows.reshape(efc_force.shape[0], -1)).reshape(
+        efc_force.shape[0], equality_ids.numel(), 3
+    )
 
 
 def rickshaw_pitch_from_quaternion(
@@ -367,9 +465,7 @@ def torso_pitch_from_world_vertical(
     up_w = quat_apply_wxyz(torso_quaternion_wxyz, local_z)
     world_up = torch.zeros_like(path_tangent_w)
     world_up[..., 2] = 1.0
-    horizontal_forward = path_tangent_w - torch.sum(
-        path_tangent_w * world_up, dim=-1, keepdim=True
-    ) * world_up
+    horizontal_forward = path_tangent_w - torch.sum(path_tangent_w * world_up, dim=-1, keepdim=True) * world_up
     horizontal_norm = torch.linalg.vector_norm(horizontal_forward, dim=-1, keepdim=True)
     if torch.any(horizontal_norm <= 1.0e-6):
         raise ValueError("path tangent must have a nonzero horizontal projection")
@@ -441,10 +537,7 @@ def sagittal_com_radius(
 
     if robot_com_w.ndim != 2 or robot_com_w.shape[-1] != 3:
         raise ValueError("robot CoM must have shape [N,3]")
-    if any(
-        value.shape != robot_com_w.shape
-        for value in (support_center_w, path_tangent_w, path_normal_w)
-    ):
+    if any(value.shape != robot_com_w.shape for value in (support_center_w, path_tangent_w, path_normal_w)):
         raise ValueError("FAT2 sagittal geometry tensors must have identical shapes")
     offset = robot_com_w - support_center_w
     offset_s = torch.sum(offset * path_tangent_w, dim=-1)
@@ -478,9 +571,7 @@ class ZMPKinematicState:
     acceleration_n: torch.Tensor
 
     @classmethod
-    def initialized(
-        cls, velocity_s: torch.Tensor, velocity_n: torch.Tensor
-    ) -> ZMPKinematicState:
+    def initialized(cls, velocity_s: torch.Tensor, velocity_n: torch.Tensor) -> ZMPKinematicState:
         zeros = torch.zeros_like(velocity_s)
         return cls(
             previous_velocity_s=velocity_s.clone(),
@@ -531,9 +622,7 @@ def zmp_from_hand_force(
     r_n = mass * (com_acceleration_n + GRAVITY) - hand_force_n
     valid = r_n > min_ground_reaction
     denominator = torch.where(valid, r_n, torch.ones_like(r_n))
-    hand_moment_about_com = (
-        (handle_s - com_s) * hand_force_n - (handle_n - com_n) * hand_force_s
-    )
+    hand_moment_about_com = (handle_s - com_s) * hand_force_n - (handle_n - com_n) * hand_force_s
     zmp_s = com_s + (-com_n * r_s - hand_moment_about_com) / denominator
     zmp_s = torch.where(valid, zmp_s, torch.zeros_like(zmp_s))
     return zmp_s, r_s, r_n, valid
@@ -563,9 +652,7 @@ def convex_support_margin(
         raise ValueError("query_point must have shape [N, 2]")
     num_envs, num_points, _ = support_points.shape
     if point_mask is None:
-        point_mask = torch.ones(
-            (num_envs, num_points), device=support_points.device, dtype=torch.bool
-        )
+        point_mask = torch.ones((num_envs, num_points), device=support_points.device, dtype=torch.bool)
     if point_mask.shape != (num_envs, num_points):
         raise ValueError("point_mask must have shape [N, K]")
 
@@ -643,16 +730,12 @@ def foot_support_polygon(
         )
         foot_support_polygon._local_corners = local_corners
         foot_support_polygon._local_corners_key = cache_key
-        local_center = torch.zeros(
-            (1, 1, 3), device=foot_position_w.device, dtype=foot_position_w.dtype
-        )
+        local_center = torch.zeros((1, 1, 3), device=foot_position_w.device, dtype=foot_position_w.dtype)
         local_center[..., 0] = foot_center_offset_x
         foot_support_polygon._local_center = local_center
     else:
         local_center = foot_support_polygon._local_center
-    local_corners = local_corners.view(1, 1, 4, 3).expand(
-        foot_position_w.shape[0], 2, -1, -1
-    )
+    local_corners = local_corners.view(1, 1, 4, 3).expand(foot_position_w.shape[0], 2, -1, -1)
     world_corners = foot_position_w[:, :, None, :] + quat_apply_wxyz(
         foot_quaternion_wxyz[:, :, None, :].expand(-1, -1, 4, -1), local_corners
     )
@@ -663,12 +746,10 @@ def foot_support_polygon(
     point_mask = foot_contact[:, :, None].expand(-1, -1, 4).reshape(-1, 8)
     contact_count = torch.sum(foot_contact, dim=-1, keepdim=True)
     foot_center_w = foot_position_w + quat_apply_wxyz(foot_quaternion_wxyz, local_center)
-    support_center = torch.sum(
-        foot_center_w * foot_contact[..., None].to(foot_position_w.dtype), dim=1
-    ) / torch.clamp(contact_count, min=1).to(foot_position_w.dtype)
-    support_center = torch.where(
-        (contact_count > 0), support_center, torch.zeros_like(support_center)
-    )
+    support_center = torch.sum(foot_center_w * foot_contact[..., None].to(foot_position_w.dtype), dim=1) / torch.clamp(
+        contact_count, min=1
+    ).to(foot_position_w.dtype)
+    support_center = torch.where((contact_count > 0), support_center, torch.zeros_like(support_center))
     return points, point_mask, support_center
 
 
@@ -678,12 +759,14 @@ __all__ = [
     "FAT2Cfg",
     "GRAVITY",
     "RickshawMassProperties",
+    "RickshawKinematicState",
     "SupportPolygonCfg",
     "ZMPCfg",
     "ZMPKinematicState",
     "analytic_handle_force",
     "articulation_center_of_mass",
     "combine_mass_properties",
+    "connect_constraint_forces",
     "convex_support_margin",
     "effective_cart_mass",
     "effective_wheel_damping",
@@ -692,10 +775,15 @@ __all__ = [
     "foot_support_polygon",
     "parallel_axis_inertia",
     "quat_apply_wxyz",
+    "relative_position_in_yaw_frame",
+    "relative_yaw_from_quaternions",
     "rickshaw_pitch_from_quaternion",
     "rolling_resistance_force",
     "sagittal_com_radius",
     "torso_pitch_from_world_vertical",
     "update_analytic_handle_force_state",
+    "wheel_longitudinal_slip",
+    "wheel_ground_frame",
+    "yaw_from_quaternion_wxyz",
     "zmp_from_hand_force",
 ]

@@ -21,6 +21,44 @@ def test_rickshaw_height_reward_kernels() -> None:
     )
 
 
+def test_wheel_slip_reward_only_penalizes_contacting_wheels() -> None:
+    torch.testing.assert_close(
+        rewards.wheel_slip_l2_value(
+            torch.tensor([[0.5, -2.0], [1.0, 3.0]]),
+            torch.tensor([[True, False], [True, True]]),
+        ),
+        torch.tensor([0.25, 10.0]),
+    )
+
+
+def test_reset_relative_pose_and_per_hand_peak_force_penalties() -> None:
+    reference_position = torch.tensor([1.0, 0.0, 0.8])
+    torch.testing.assert_close(
+        rewards.relative_position_l2_value(
+            reference_position[None], reference_position
+        ),
+        torch.zeros(1),
+    )
+    torch.testing.assert_close(
+        rewards.relative_position_l2_value(
+            torch.tensor([[1.1, 0.1, 0.9]]), reference_position
+        ),
+        torch.tensor([0.06]),
+    )
+    torch.testing.assert_close(
+        rewards.angle_deviation_l2_value(
+            torch.tensor([-torch.pi + 0.1]), torch.pi - 0.1
+        ),
+        torch.tensor([0.04]),
+        atol=1.0e-6,
+        rtol=0.0,
+    )
+    torch.testing.assert_close(
+        rewards.peak_force_value(torch.tensor([[[30.0, 0.0, 0.0], [-30.0, 0.0, 0.0]]])),
+        torch.tensor([0.125]),
+    )
+
+
 def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     pytest.importorskip("mjlab")
     assert version("mjlab") == "1.5.3"
@@ -54,8 +92,51 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         "soft_landing": (velocity_mdp.soft_landing, -1.0e-5),
         "self_collisions": (velocity_mdp.self_collision_cost, -1.0),
     }
+    rickshaw_penalties = {
+        "rickshaw_forward_acceleration_l2": (
+            mjlab_mdp.rickshaw_forward_acceleration_l2,
+            -0.01,
+        ),
+        "rickshaw_pitch_angular_acceleration_l2": (
+            mjlab_mdp.rickshaw_pitch_angular_acceleration_l2,
+            -0.0025,
+        ),
+        "rickshaw_yaw_angular_acceleration_l2": (
+            mjlab_mdp.rickshaw_yaw_angular_acceleration_l2,
+            -0.0025,
+        ),
+        "rickshaw_pitch_angular_velocity_l2": (
+            mjlab_mdp.rickshaw_pitch_angular_velocity_l2,
+            -0.05,
+        ),
+        "rickshaw_wheel_slip_l2": (mjlab_mdp.rickshaw_wheel_slip_l2, -0.1),
+    }
+    relative_pose_and_force_penalties = {
+        "rickshaw_g1_relative_position_l2": (
+            mjlab_mdp.rickshaw_g1_relative_position_l2,
+            -1.0,
+            {"axle_weight": 4.0},
+        ),
+        "rickshaw_g1_relative_yaw_l2": (
+            mjlab_mdp.rickshaw_g1_relative_yaw_l2,
+            -0.5,
+            {},
+        ),
+        "rickshaw_absolute_pitch_deviation_l2": (
+            mjlab_mdp.rickshaw_absolute_pitch_deviation_l2,
+            -0.5,
+            {},
+        ),
+        "peak_force": (
+            mjlab_mdp.peak_force,
+            -4.0,
+            {"soft_limit": 10.0, "hard_limit": 50.0},
+        ),
+    }
     assert set(cfg.rewards) == {
         *official,
+        *rickshaw_penalties,
+        *relative_pose_and_force_penalties,
         "hitch_height_exp",
         "hitch_height_recovery_l2",
     }
@@ -65,24 +146,39 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         assert term.func is func
         if name not in {"track_linear_velocity", "track_angular_velocity"}:
             assert term.func is mjlab_term.func
-        assert term.weight == pytest.approx(0.2 if name == "upright" else weight)
+        assert term.weight == pytest.approx(0.1 if name == "upright" else weight)
         local_params = dict(term.params)
         mjlab_params = dict(mjlab_term.params)
         if name in {"track_linear_velocity", "track_angular_velocity"}:
             mjlab_params.pop("asset_cfg", None)
         if name == "pose":
             asset_cfg = local_params.pop("asset_cfg")
-            assert asset_cfg.joint_names == (r".*_(hip|knee|ankle)_.*", r"waist_.*_joint")
+            assert asset_cfg.joint_names == (
+                r".*_(hip|knee|ankle)_.*",
+                r"waist_.*_joint",
+            )
             mjlab_params.pop("asset_cfg")
             for key in ("std_walking", "std_running"):
                 mjlab_params[key] = {
                     pattern: value
                     for pattern, value in mjlab_params[key].items()
-                    if not any(part in pattern for part in ("shoulder", "elbow", "wrist"))
+                    if not any(
+                        part in pattern for part in ("shoulder", "elbow", "wrist")
+                    )
                 }
         if name == "foot_swing_height":
             mjlab_params["target_height"] = 0.08
         assert local_params == mjlab_params
+
+    for name, (func, weight) in rickshaw_penalties.items():
+        assert cfg.rewards[name].func is func
+        assert cfg.rewards[name].weight == pytest.approx(weight)
+        assert cfg.rewards[name].params == {}
+
+    for name, (func, weight, params) in relative_pose_and_force_penalties.items():
+        assert cfg.rewards[name].func is func
+        assert cfg.rewards[name].weight == pytest.approx(weight)
+        assert cfg.rewards[name].params == params
 
     assert cfg.rewards["foot_swing_height"].params["target_height"] == 0.08
     assert cfg.rewards["foot_clearance"].params["target_height"] == 0.10
