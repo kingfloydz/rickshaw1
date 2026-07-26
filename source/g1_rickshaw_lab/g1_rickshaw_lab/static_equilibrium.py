@@ -1,6 +1,6 @@
 """Fixed-contact statics shared by reset generation and runtime loading.
 
-The hand wrench convention is robot-on-cart. Wheel contact forces are
+The hand-force convention is robot-on-cart. Wheel contact forces are
 ground-on-cart. Components use the path frame ``(s, l, n)`` where ``s`` is
 forward, ``l`` is left, and ``n`` is up.
 """
@@ -43,7 +43,7 @@ _MODEL_SIGNATURE_DECIMALS = 10
 class FixedContactStaticSolution:
     """Scalar fixed-contact solution for two hitches and two passive wheels."""
 
-    handle_wrenches_sln: tuple[tuple[float, ...], tuple[float, ...]]
+    handle_forces_sln: tuple[tuple[float, float, float], tuple[float, float, float]]
     wheel_contact_forces_sln: tuple[tuple[float, ...], tuple[float, ...]]
     cart_force_residual_sln: tuple[float, float, float]
     cart_moment_residual_sln: tuple[float, float, float]
@@ -266,9 +266,8 @@ def fixed_contact_static_components(
     handle_n: Any,
     hitch_half_width: float,
     wheel_track: float,
-    pitch_torque_on_robot: Any = 0.0,
 ) -> tuple[tuple[tuple[Any, ...], tuple[Any, ...]], tuple[tuple[Any, ...], tuple[Any, ...]]]:
-    """Allocate the closed-chain static wrench using passive-wheel mechanics.
+    """Allocate the closed-chain static forces using passive-wheel mechanics.
 
     The wheel bearings are passive, so a zero-speed equilibrium cannot rely on
     wheel tangent force: the two hitches carry the cart's tangential load.
@@ -286,31 +285,22 @@ def fixed_contact_static_components(
     zero = gravity_tangent * 0.0
     hand_tangent_total = gravity_tangent
     gravity_pitch_moment = com_s * gravity_normal - com_n * gravity_tangent
-    hand_normal_total = (handle_n * hand_tangent_total + gravity_pitch_moment - pitch_torque_on_robot) / handle_s
+    hand_normal_total = (handle_n * hand_tangent_total + gravity_pitch_moment) / handle_s
 
     hand_tangent_difference = com_l * gravity_tangent / hitch_half_width
     hand_normal_difference = zero
     wheel_normal_total = gravity_normal - hand_normal_total
     wheel_normal_difference = 2.0 * com_l * gravity_normal / wheel_track
 
-    # Preserve the batch type when callers pass the physically required scalar
-    # zero for the crossbar's free pitch axis.
-    hand_torque_on_cart = zero - pitch_torque_on_robot
     left_hand = (
         0.5 * (hand_tangent_total + hand_tangent_difference),
         zero,
         0.5 * (hand_normal_total + hand_normal_difference),
-        zero,
-        0.5 * hand_torque_on_cart,
-        zero,
     )
     right_hand = (
         0.5 * (hand_tangent_total - hand_tangent_difference),
         zero,
         0.5 * (hand_normal_total - hand_normal_difference),
-        zero,
-        0.5 * hand_torque_on_cart,
-        zero,
     )
     left_wheel = (
         zero,
@@ -332,7 +322,6 @@ def solve_fixed_contact_statics(
     handle_from_axle_sn: tuple[float, float],
     hitch_half_width: float,
     wheel_track: float,
-    pitch_torque_on_robot: float = 0.0,
     gravity: float = 9.81,
 ) -> FixedContactStaticSolution:
     """Return and independently verify one scalar fixed-contact equilibrium."""
@@ -343,7 +332,6 @@ def solve_fixed_contact_statics(
         *handle_from_axle_sn,
         hitch_half_width,
         wheel_track,
-        pitch_torque_on_robot,
         gravity,
     )
     if not all(math.isfinite(value) for value in scalars):
@@ -357,7 +345,7 @@ def solve_fixed_contact_statics(
 
     gravity_tangent = 0.0
     gravity_normal = mass * gravity
-    hand_wrenches, wheel_forces = fixed_contact_static_components(
+    hand_forces, wheel_forces = fixed_contact_static_components(
         gravity_tangent=gravity_tangent,
         gravity_normal=gravity_normal,
         com_s=com_from_axle_sln[0],
@@ -367,14 +355,13 @@ def solve_fixed_contact_statics(
         handle_n=handle_from_axle_sn[1],
         hitch_half_width=hitch_half_width,
         wheel_track=wheel_track,
-        pitch_torque_on_robot=pitch_torque_on_robot,
     )
-    hand_wrenches = tuple(tuple(float(value) for value in row) for row in hand_wrenches)
+    hand_forces = tuple(tuple(float(value) for value in row) for row in hand_forces)
     wheel_forces = tuple(tuple(float(value) for value in row) for row in wheel_forces)
 
     gravity_force = (-gravity_tangent, 0.0, -gravity_normal)
     force_residual = tuple(
-        gravity_force[axis] + sum(wrench[axis] for wrench in hand_wrenches) + sum(force[axis] for force in wheel_forces)
+        gravity_force[axis] + sum(force[axis] for force in hand_forces) + sum(force[axis] for force in wheel_forces)
         for axis in range(3)
     )
     com_s, com_l, com_n = com_from_axle_sln
@@ -385,18 +372,18 @@ def solve_fixed_contact_statics(
         com_l * gravity_tangent,
     )
     moment_residual = [float(value) for value in gravity_moment]
-    for lateral, wrench in zip((hitch_half_width, -hitch_half_width), hand_wrenches, strict=True):
-        force_s, force_l, force_n, torque_s, torque_l, torque_n = wrench
-        moment_residual[0] += lateral * force_n - handle_n * force_l + torque_s
-        moment_residual[1] += handle_n * force_s - handle_s * force_n + torque_l
-        moment_residual[2] += handle_s * force_l - lateral * force_s + torque_n
+    for lateral, force in zip((hitch_half_width, -hitch_half_width), hand_forces, strict=True):
+        force_s, force_l, force_n = force
+        moment_residual[0] += lateral * force_n - handle_n * force_l
+        moment_residual[1] += handle_n * force_s - handle_s * force_n
+        moment_residual[2] += handle_s * force_l - lateral * force_s
     for lateral, force in zip((0.5 * wheel_track, -0.5 * wheel_track), wheel_forces, strict=True):
         force_s, _force_l, force_n = force
         moment_residual[0] += lateral * force_n
         moment_residual[2] += -lateral * force_s
 
     return FixedContactStaticSolution(
-        handle_wrenches_sln=hand_wrenches,  # type: ignore[arg-type]
+        handle_forces_sln=hand_forces,  # type: ignore[arg-type]
         wheel_contact_forces_sln=wheel_forces,  # type: ignore[arg-type]
         cart_force_residual_sln=tuple(float(value) for value in force_residual),
         cart_moment_residual_sln=tuple(moment_residual),
@@ -413,7 +400,7 @@ def fat2_reference_angle_scalar(
     com_radius: float,
     theta_max: float,
 ) -> float:
-    """Full-wrench FAT2 prior used by both static initialization and reward."""
+    """Hand-force FAT2 prior used by both static initialization and reward."""
 
     hand_moment = handle_s * hand_force_n - handle_n * hand_force_s
     ratio = hand_moment / (robot_mass * 9.81 * com_radius)
@@ -660,8 +647,8 @@ def solve_mujoco_static_equilibrium(
         hitch_half_width=HITCH_HALF_WIDTH,
         wheel_track=WHEEL_TRACK,
     )
-    hand_force_s = -sum(wrench[0] for wrench in static_cart.handle_wrenches_sln)
-    hand_force_n = -sum(wrench[2] for wrench in static_cart.handle_wrenches_sln)
+    hand_force_s = -sum(force[0] for force in static_cart.handle_forces_sln)
+    hand_force_n = -sum(force[2] for force in static_cart.handle_forces_sln)
 
     def pose_from_qpos(qpos: np.ndarray) -> np.ndarray:
         return np.concatenate(
@@ -779,37 +766,18 @@ def solve_mujoco_static_equilibrium(
         mujoco.mj_jac(model, data, jacobian, None, point, body_id)
         return jacobian.T
 
-    def point_wrench_generalized_force(
-        body_id: int,
-        point: np.ndarray,
-        force: np.ndarray,
-        torque: np.ndarray,
-    ) -> np.ndarray:
-        jacobian_position = np.zeros((3, model.nv))
-        jacobian_rotation = np.zeros((3, model.nv))
-        mujoco.mj_jac(
-            model,
-            data,
-            jacobian_position,
-            jacobian_rotation,
-            point,
-            body_id,
-        )
-        return jacobian_position.T @ force + jacobian_rotation.T @ torque
-
     def static_external_forces() -> tuple[np.ndarray, np.ndarray]:
         external = np.zeros(model.nv)
-        for side, cart_wrench in zip(("left", "right"), static_cart.handle_wrenches_sln, strict=True):
-            force = np.asarray(cart_wrench[:3])
-            torque = np.asarray(cart_wrench[3:])
+        for side, cart_force in zip(("left", "right"), static_cart.handle_forces_sln, strict=True):
+            force = np.asarray(cart_force)
             hitch = data.site(f"rickshaw/{side}_hitch_site")
             grasp = data.site(f"robot/{side}_grasp_site")
-            external += point_wrench_generalized_force(
-                int(model.site_bodyid[hitch.id]), np.asarray(hitch.xpos), force, torque
-            )
-            external += point_wrench_generalized_force(
-                int(model.site_bodyid[grasp.id]), np.asarray(grasp.xpos), -force, -torque
-            )
+            external += point_force_jacobian(
+                int(model.site_bodyid[hitch.id]), np.asarray(hitch.xpos)
+            ) @ force
+            external += point_force_jacobian(
+                int(model.site_bodyid[grasp.id]), np.asarray(grasp.xpos)
+            ) @ -force
 
         for body_name, wheel_force in zip(
             ("rickshaw/left_wheel_link", "rickshaw/right_wheel_link"),

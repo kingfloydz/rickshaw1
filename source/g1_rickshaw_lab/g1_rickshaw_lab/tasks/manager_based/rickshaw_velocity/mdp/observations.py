@@ -69,17 +69,12 @@ TEACHER_DYNAMIC_FEATURE_NAMES = (
     "cart.pitch",
     "wheel.left_normal_force",
     "wheel.right_normal_force",
-    *(
-        f"connection.{side}.{kind}.{axis}"
-        for side in ("left", "right")
-        for kind in ("force", "torque")
-        for axis in ("s", "l", "n")
-    ),
+    *(f"hand.force.{axis}" for axis in ("s", "l", "n")),
 )
 if len(TEACHER_STATIC_FEATURE_NAMES) != TEACHER_STATIC_DIM:
     raise RuntimeError("teacher static feature schema has the wrong dimension")
 if len(TEACHER_DYNAMIC_FEATURE_NAMES) != TEACHER_DYNAMIC_DIM:
-    raise RuntimeError("teacher dynamic feature schema is not 21-D")
+    raise RuntimeError("teacher dynamic feature schema is not 12-D")
 
 
 def assemble_actor_observation(

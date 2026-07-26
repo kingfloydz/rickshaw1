@@ -10,40 +10,16 @@ import torch
 GRAVITY = 9.81
 
 
-def low_pass(
-    previous: torch.Tensor,
-    sample: torch.Tensor,
-    *,
-    cutoff_hz: float,
-    dt: float,
-) -> torch.Tensor:
-    """One-pole low pass with an exact continuous-time pole mapping."""
-
-    if previous.shape != sample.shape:
-        raise ValueError("low-pass state and sample must have identical shapes")
-    if cutoff_hz <= 0.0 or dt <= 0.0:
-        raise ValueError("cutoff_hz and dt must be positive")
-    gain = 1.0 - math.exp(-2.0 * math.pi * cutoff_hz * dt)
-    return previous + gain * (sample - previous)
-
-
-def rolling_resistance_wrench(
+def rolling_resistance_force(
     wheel_velocity_w: torch.Tensor,
     wheel_contact_force_w: torch.Tensor,
     path_tangent_w: torch.Tensor,
     path_normal_w: torch.Tensor,
     c_rr: torch.Tensor,
-    previous_normal_force: torch.Tensor,
     *,
     velocity_epsilon: float = 0.05,
-    normal_force_filter_hz: float = 20.0,
-    dt: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Compute physical wheel-center rolling-resistance forces.
-
-    Returns ``(force_w, filtered_normal_force, tangential_velocity)``.  No axle
-    torque is returned because adding one would count rolling resistance twice.
-    """
+) -> torch.Tensor:
+    """Compute wheel-center rolling resistance from the current contact force."""
 
     if wheel_velocity_w.ndim != 3 or wheel_velocity_w.shape[-1] != 3:
         raise ValueError("wheel_velocity_w must have shape [N, W, 3]")
@@ -53,23 +29,15 @@ def rolling_resistance_wrench(
         raise ValueError("path_tangent_w must have shape [N, 3]")
     if path_normal_w.shape != path_tangent_w.shape:
         raise ValueError("path normal and tangent shapes differ")
-    if previous_normal_force.shape != wheel_velocity_w.shape[:2]:
-        raise ValueError("normal-force filter state must have shape [N, W]")
     if velocity_epsilon <= 0.0:
         raise ValueError("velocity_epsilon must be positive")
 
     tangential_velocity = torch.sum(
         wheel_velocity_w * path_tangent_w[:, None, :], dim=-1
     )
-    raw_normal_force = torch.clamp(
+    normal_force = torch.clamp(
         torch.sum(wheel_contact_force_w * path_normal_w[:, None, :], dim=-1),
         min=0.0,
-    )
-    normal_force = low_pass(
-        previous_normal_force,
-        raw_normal_force,
-        cutoff_hz=normal_force_filter_hz,
-        dt=dt,
     )
     coefficient = torch.as_tensor(
         c_rr, device=wheel_velocity_w.device, dtype=wheel_velocity_w.dtype
@@ -80,74 +48,7 @@ def rolling_resistance_wrench(
         raise ValueError("c_rr must be scalar or have shape [N]")
     direction = torch.tanh(tangential_velocity / velocity_epsilon)
     magnitude = -coefficient[:, None] * normal_force * direction
-    force_w = magnitude[..., None] * path_tangent_w[:, None, :]
-    return force_w, normal_force, tangential_velocity
-
-
-@dataclass
-class SecondOrderLowPassState:
-    """Two cascaded filter stages plus histories for finite differences."""
-
-    stage_1: torch.Tensor
-    stage_2: torch.Tensor
-    previous: torch.Tensor
-    previous_previous: torch.Tensor
-
-    @classmethod
-    def initialized(cls, value: torch.Tensor) -> SecondOrderLowPassState:
-        return cls(value.clone(), value.clone(), value.clone(), value.clone())
-
-    def reset(self, value: torch.Tensor, env_ids: torch.Tensor | None = None) -> None:
-        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
-        target = value
-        if env_ids is not None and value.shape == self.stage_1.shape:
-            target = value[env_ids]
-        self.stage_1[ids] = target
-        self.stage_2[ids] = target
-        self.previous[ids] = target
-        self.previous_previous[ids] = target
-
-
-def _filtered_signal_step(
-    value: torch.Tensor,
-    state: SecondOrderLowPassState,
-    *,
-    dt: float,
-    cutoff_hz: float,
-) -> torch.Tensor:
-    stage_1 = low_pass(state.stage_1, value, cutoff_hz=cutoff_hz, dt=dt)
-    stage_2 = low_pass(state.stage_2, stage_1, cutoff_hz=cutoff_hz, dt=dt)
-    state.stage_1[:] = stage_1
-    state.stage_2[:] = stage_2
-    return stage_2
-
-
-def filtered_first_derivative(
-    value: torch.Tensor,
-    state: SecondOrderLowPassState,
-    dt: float,
-    *,
-    cutoff_hz: float = 20.0,
-) -> torch.Tensor:
-    filtered = _filtered_signal_step(value, state, dt=dt, cutoff_hz=cutoff_hz)
-    derivative = (filtered - state.previous) / dt
-    state.previous_previous[:] = state.previous
-    state.previous[:] = filtered
-    return derivative
-
-
-def filtered_second_derivative(
-    value: torch.Tensor,
-    state: SecondOrderLowPassState,
-    dt: float,
-    *,
-    cutoff_hz: float = 20.0,
-) -> torch.Tensor:
-    filtered = _filtered_signal_step(value, state, dt=dt, cutoff_hz=cutoff_hz)
-    derivative = (filtered - 2.0 * state.previous + state.previous_previous) / (dt * dt)
-    state.previous_previous[:] = state.previous
-    state.previous[:] = filtered
-    return derivative
+    return magnitude[..., None] * path_tangent_w[:, None, :]
 
 
 @dataclass(frozen=True)
@@ -249,14 +150,14 @@ def effective_wheel_damping(
 class AnalyticForceCfg:
     minimum_wheel_normal_force: float = MISSING
     velocity_epsilon: float = 0.05
-    derivative_filter_hz: float = 20.0
     minimum_handle_x: float = 0.5
 
 
 @dataclass
 class AnalyticHandleForceState:
-    velocity_filter: SecondOrderLowPassState
-    pitch_filter: SecondOrderLowPassState
+    previous_velocity: torch.Tensor
+    previous_pitch: torch.Tensor
+    previous_previous_pitch: torch.Tensor
     a_s: torch.Tensor
     alpha_ddot: torch.Tensor
     t_s: torch.Tensor
@@ -269,8 +170,9 @@ class AnalyticHandleForceState:
     ) -> AnalyticHandleForceState:
         zeros = torch.zeros_like(tangential_velocity)
         return cls(
-            velocity_filter=SecondOrderLowPassState.initialized(tangential_velocity),
-            pitch_filter=SecondOrderLowPassState.initialized(pitch),
+            previous_velocity=tangential_velocity.clone(),
+            previous_pitch=pitch.clone(),
+            previous_previous_pitch=pitch.clone(),
             a_s=zeros.clone(),
             alpha_ddot=zeros.clone(),
             t_s=zeros.clone(),
@@ -284,9 +186,10 @@ class AnalyticHandleForceState:
         pitch: torch.Tensor,
         env_ids: torch.Tensor | None = None,
     ) -> None:
-        self.velocity_filter.reset(tangential_velocity, env_ids)
-        self.pitch_filter.reset(pitch, env_ids)
         ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
+        self.previous_velocity[ids] = tangential_velocity
+        self.previous_pitch[ids] = pitch
+        self.previous_previous_pitch[ids] = pitch
         self.a_s[ids] = 0.0
         self.alpha_ddot[ids] = 0.0
         self.t_s[ids] = 0.0
@@ -294,196 +197,40 @@ class AnalyticHandleForceState:
         self.valid[ids] = False
 
 
-@dataclass
-class WrenchConsistencyState:
-    analytic_buffer: torch.Tensor
-    measured_buffer: torch.Tensor
-    source_valid_buffer: torch.Tensor
-    cursor: torch.Tensor
-    count: torch.Tensor
-
-    @classmethod
-    def zeros(
-        cls,
-        num_envs: int,
-        window_steps: int,
-        *,
-        device: torch.device | str | None = None,
-        dtype: torch.dtype = torch.float32,
-    ) -> WrenchConsistencyState:
-        if num_envs <= 0 or window_steps <= 0:
-            raise ValueError("wrench consistency dimensions must be positive")
-        return cls(
-            analytic_buffer=torch.zeros(
-                (num_envs, window_steps, 2), device=device, dtype=dtype
-            ),
-            measured_buffer=torch.zeros(
-                (num_envs, window_steps, 2), device=device, dtype=dtype
-            ),
-            source_valid_buffer=torch.zeros(
-                (num_envs, window_steps), device=device, dtype=torch.bool
-            ),
-            cursor=torch.zeros(num_envs, device=device, dtype=torch.long),
-            count=torch.zeros(num_envs, device=device, dtype=torch.long),
-        )
-
-    @property
-    def window_steps(self) -> int:
-        return int(self.analytic_buffer.shape[1])
-
-    def reset(self, env_ids: torch.Tensor | None = None) -> None:
-        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
-        self.analytic_buffer[ids] = 0.0
-        self.measured_buffer[ids] = 0.0
-        self.source_valid_buffer[ids] = False
-        self.cursor[ids] = 0
-        self.count[ids] = 0
-
-
-@dataclass
-class FAT2ComRadiusState:
-    """Windowed sagittal CoM radius initialized from its calibrated reference."""
-
-    sample_buffer: torch.Tensor
-    running_sum: torch.Tensor
-    cursor: torch.Tensor
-    count: torch.Tensor
-    filtered_radius: torch.Tensor
-    reference_radius: torch.Tensor
-
-    @classmethod
-    def initialized(
-        cls,
-        num_envs: int,
-        window_steps: int,
-        reference_radius: float,
-        *,
-        device: torch.device | str | None = None,
-        dtype: torch.dtype = torch.float32,
-    ) -> FAT2ComRadiusState:
-        if num_envs <= 0 or window_steps <= 0 or reference_radius <= 0.0:
-            raise ValueError("FAT2 CoM radius state dimensions and reference must be positive")
-        reference = torch.full(
-            (num_envs,), reference_radius, device=device, dtype=dtype
-        )
-        return cls(
-            sample_buffer=torch.zeros(
-                (num_envs, window_steps), device=device, dtype=dtype
-            ),
-            running_sum=torch.zeros(num_envs, device=device, dtype=dtype),
-            cursor=torch.zeros(num_envs, device=device, dtype=torch.long),
-            count=torch.zeros(num_envs, device=device, dtype=torch.long),
-            filtered_radius=reference.clone(),
-            reference_radius=reference,
-        )
-
-    @property
-    def window_steps(self) -> int:
-        return int(self.sample_buffer.shape[1])
-
-    def update(
-        self,
-        sample: torch.Tensor,
-        valid: torch.Tensor,
-        *,
-        minimum: float,
-        maximum: float,
-    ) -> torch.Tensor:
-        expected = self.filtered_radius.shape
-        if sample.shape != expected or valid.shape != expected or valid.dtype != torch.bool:
-            raise ValueError("FAT2 CoM radius sample and validity must have shape [N]")
-        if minimum <= 0.0 or minimum >= maximum:
-            raise ValueError("FAT2 CoM radius bounds must be positive and ordered")
-        valid = valid & torch.isfinite(sample)
-        clipped = torch.clamp(sample, min=minimum, max=maximum)
-        env_ids = torch.arange(expected[0], device=self.cursor.device)
-        write_ids = env_ids[valid]
-        outgoing = self.sample_buffer[write_ids, self.cursor[write_ids]]
-        self.running_sum[write_ids] += clipped[write_ids] - outgoing
-        self.sample_buffer[write_ids, self.cursor[write_ids]] = clipped[write_ids]
-        self.cursor[:] = torch.where(
-            valid, (self.cursor + 1) % self.window_steps, self.cursor
-        )
-        self.count[:] = torch.where(
-            valid,
-            torch.clamp(self.count + 1, max=self.window_steps),
-            self.count,
-        )
-        denominator = torch.clamp(self.count, min=1).to(sample.dtype)
-        window_mean = self.running_sum / denominator
-        self.filtered_radius[:] = torch.where(
-            valid, window_mean, self.filtered_radius
-        )
-        return self.filtered_radius
-
-    def reset(self, env_ids: torch.Tensor | None = None) -> None:
-        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
-        self.sample_buffer[ids] = 0.0
-        self.running_sum[ids] = 0.0
-        self.cursor[ids] = 0
-        self.count[ids] = 0
-        self.filtered_radius[ids] = self.reference_radius[ids]
-
-
-def update_wrench_consistency_state(
-    state: WrenchConsistencyState,
+def force_consistency(
     analytic_force_sn: torch.Tensor,
     measured_force_sn: torch.Tensor,
     source_valid: torch.Tensor,
     *,
     relative_tolerance: float,
     absolute_floor_n: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Update transient-robust force windows and apply the FAT2 validity gate.
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compare current analytic and measured handle forces for FAT2 validity."""
 
-    The comparison is an impulse-bias test rather than a pointwise force test.
-    Its normalization uses the mean analytic force magnitude, so a large
-    oscillatory wrench cannot create a singular relative error when its signed
-    window mean is close to zero.
-    """
-
-    expected = (state.analytic_buffer.shape[0], 2)
-    if analytic_force_sn.shape != expected or measured_force_sn.shape != expected:
-        raise ValueError(f"wrench consistency forces must have shape {expected}")
-    if source_valid.shape != expected[:1] or source_valid.dtype != torch.bool:
-        raise ValueError("wrench consistency source_valid must be bool [N]")
+    if analytic_force_sn.ndim != 2 or analytic_force_sn.shape[1] != 2:
+        raise ValueError("analytic handle force must have shape [N, 2]")
+    if measured_force_sn.shape != analytic_force_sn.shape:
+        raise ValueError("measured handle force must match analytic handle force")
+    if source_valid.shape != analytic_force_sn.shape[:1] or source_valid.dtype != torch.bool:
+        raise ValueError("force consistency source_valid must be bool [N]")
     if not 0.0 <= relative_tolerance <= 1.0 or absolute_floor_n <= 0.0:
-        raise ValueError("wrench consistency tolerances are invalid")
-    env_ids = torch.arange(expected[0], device=state.cursor.device)
-    state.analytic_buffer[env_ids, state.cursor] = analytic_force_sn
-    state.measured_buffer[env_ids, state.cursor] = measured_force_sn
-    state.source_valid_buffer[env_ids, state.cursor] = source_valid
-    state.cursor[:] = (state.cursor + 1) % state.window_steps
-    state.count[:] = torch.clamp(state.count + 1, max=state.window_steps)
-
-    denominator_count = torch.clamp(state.count, min=1).to(analytic_force_sn.dtype)
-    analytic_mean = torch.sum(state.analytic_buffer, dim=1) / denominator_count[:, None]
-    measured_mean = torch.sum(state.measured_buffer, dim=1) / denominator_count[:, None]
-    analytic_abs_mean = (
-        torch.sum(torch.abs(state.analytic_buffer), dim=1) / denominator_count[:, None]
-    )
+        raise ValueError("force consistency tolerances are invalid")
     floor = torch.as_tensor(
         absolute_floor_n, device=analytic_force_sn.device, dtype=analytic_force_sn.dtype
     )
-    normalization_force = torch.maximum(analytic_abs_mean, floor)
-    relative_error = torch.abs(measured_mean - analytic_mean) / normalization_force
-    # Sign is only identifiable when both net forces exceed the calibrated
-    # uncertainty band.  Relative error still rejects a material opposite bias.
+    normalization_force = torch.maximum(torch.abs(analytic_force_sn), floor)
+    relative_error = torch.abs(measured_force_sn - analytic_force_sn) / normalization_force
     sign_resolved = (
-        (torch.abs(analytic_mean) > relative_tolerance * normalization_force)
-        & (torch.abs(measured_mean) > relative_tolerance * normalization_force)
+        (torch.abs(analytic_force_sn) > relative_tolerance * normalization_force)
+        & (torch.abs(measured_force_sn) > relative_tolerance * normalization_force)
     )
     same_sign = (~sign_resolved) | (
-        torch.sign(analytic_mean) == torch.sign(measured_mean)
+        torch.sign(analytic_force_sn) == torch.sign(measured_force_sn)
     )
-    full_window = state.count >= state.window_steps
-    source_window_valid = torch.all(state.source_valid_buffer, dim=-1)
-    consistent = (
-        full_window
-        & source_window_valid
-        & torch.all(same_sign & (relative_error <= relative_tolerance), dim=-1)
+    consistent = source_valid & torch.all(
+        same_sign & (relative_error <= relative_tolerance), dim=-1
     )
-    return consistent, relative_error, analytic_mean
+    return consistent, relative_error
 
 
 def analytic_handle_force(
@@ -552,14 +299,15 @@ def update_analytic_handle_force_state(
     handle_from_axle_sn: torch.Tensor | None = None,
     com_from_axle_sn: torch.Tensor | None = None,
 ) -> AnalyticHandleForceState:
-    """Filter/differentiate cart motion and update the analytic FAT2 reference."""
+    """Differentiate cart motion and update the analytic FAT2 reference."""
 
-    a_s = filtered_first_derivative(
-        v_s, state.velocity_filter, dt, cutoff_hz=cfg.derivative_filter_hz
-    )
-    alpha_ddot = filtered_second_derivative(
-        pitch, state.pitch_filter, dt, cutoff_hz=cfg.derivative_filter_hz
-    )
+    a_s = (v_s - state.previous_velocity) / dt
+    alpha_ddot = (
+        pitch - 2.0 * state.previous_pitch + state.previous_previous_pitch
+    ) / (dt * dt)
+    state.previous_velocity[:] = v_s
+    state.previous_previous_pitch[:] = state.previous_pitch
+    state.previous_pitch[:] = pitch
     t_s, t_n, geometry_valid = analytic_handle_force(
         v_s,
         a_s,
@@ -638,9 +386,8 @@ class FAT2Cfg:
     com_radius: float = MISSING
     com_radius_bounds: tuple[float, float] = MISSING
     theta_max: float = MISSING
-    wrench_consistency_relative_tolerance: float = MISSING
-    wrench_consistency_absolute_floor_n: float = MISSING
-    wrench_consistency_window_steps: int = MISSING
+    force_consistency_relative_tolerance: float = MISSING
+    force_consistency_absolute_floor_n: float = MISSING
 
     def validate(self) -> None:
         if self.robot_mass <= 0.0 or self.com_radius <= 0.0:
@@ -654,16 +401,10 @@ class FAT2Cfg:
             raise ValueError("FAT2 calibrated CoM radius must lie within its bounds")
         if not 0.0 < self.theta_max < math.pi / 2.0:
             raise ValueError("FAT2 theta_max must lie in (0, pi/2)")
-        if not 0.0 <= self.wrench_consistency_relative_tolerance <= 1.0:
-            raise ValueError("FAT2 wrench relative tolerance must lie in [0,1]")
-        if self.wrench_consistency_absolute_floor_n <= 0.0:
-            raise ValueError("FAT2 wrench absolute floor must be positive")
-        if (
-            isinstance(self.wrench_consistency_window_steps, bool)
-            or not isinstance(self.wrench_consistency_window_steps, int)
-            or self.wrench_consistency_window_steps <= 0
-        ):
-            raise ValueError("FAT2 wrench consistency window must be a positive integer")
+        if not 0.0 <= self.force_consistency_relative_tolerance <= 1.0:
+            raise ValueError("FAT2 force relative tolerance must lie in [0,1]")
+        if self.force_consistency_absolute_floor_n <= 0.0:
+            raise ValueError("FAT2 force absolute floor must be positive")
 
 
 def fat2_reference_angle(
@@ -675,7 +416,7 @@ def fat2_reference_angle(
     com_radius: torch.Tensor | float,
     theta_max: torch.Tensor | float,
 ) -> torch.Tensor:
-    """Compute the full-wrench FAT2 weak torso prior."""
+    """Compute the hand-force FAT2 weak torso prior."""
 
     mass = torch.as_tensor(robot_mass, device=handle_s.device, dtype=handle_s.dtype)
     radius = torch.as_tensor(com_radius, device=handle_s.device, dtype=handle_s.dtype)
@@ -711,16 +452,6 @@ def sagittal_com_radius(
     return torch.sqrt(torch.square(offset_s) + torch.square(offset_n))
 
 
-def adapt_connection_reaction_wrench(
-    reaction_wrench: torch.Tensor, *, reaction_is_joint_on_body: bool
-) -> torch.Tensor:
-    """Apply the connection-wrench sign convention at the simulator boundary."""
-
-    if reaction_wrench.shape[-1] != 6:
-        raise ValueError("reaction_wrench must end in six force/torque components")
-    return reaction_wrench if reaction_is_joint_on_body else -reaction_wrench
-
-
 @dataclass
 class ZMPCfg:
     min_ground_reaction: float = MISSING
@@ -741,8 +472,8 @@ class SupportPolygonCfg:
 
 @dataclass
 class ZMPKinematicState:
-    tangential_velocity_filter: SecondOrderLowPassState
-    normal_velocity_filter: SecondOrderLowPassState
+    previous_velocity_s: torch.Tensor
+    previous_velocity_n: torch.Tensor
     acceleration_s: torch.Tensor
     acceleration_n: torch.Tensor
 
@@ -752,11 +483,20 @@ class ZMPKinematicState:
     ) -> ZMPKinematicState:
         zeros = torch.zeros_like(velocity_s)
         return cls(
-            tangential_velocity_filter=SecondOrderLowPassState.initialized(velocity_s),
-            normal_velocity_filter=SecondOrderLowPassState.initialized(velocity_n),
+            previous_velocity_s=velocity_s.clone(),
+            previous_velocity_n=velocity_n.clone(),
             acceleration_s=zeros.clone(),
             acceleration_n=zeros.clone(),
         )
+
+    def update(
+        self, velocity_s: torch.Tensor, velocity_n: torch.Tensor, dt: float
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self.acceleration_s[:] = (velocity_s - self.previous_velocity_s) / dt
+        self.acceleration_n[:] = (velocity_n - self.previous_velocity_n) / dt
+        self.previous_velocity_s[:] = velocity_s
+        self.previous_velocity_n[:] = velocity_n
+        return self.acceleration_s, self.acceleration_n
 
     def reset(
         self,
@@ -764,14 +504,14 @@ class ZMPKinematicState:
         velocity_n: torch.Tensor,
         env_ids: torch.Tensor | None = None,
     ) -> None:
-        self.tangential_velocity_filter.reset(velocity_s, env_ids)
-        self.normal_velocity_filter.reset(velocity_n, env_ids)
         ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
+        self.previous_velocity_s[ids] = velocity_s
+        self.previous_velocity_n[ids] = velocity_n
         self.acceleration_s[ids] = 0.0
         self.acceleration_n[ids] = 0.0
 
 
-def zmp_from_hand_wrench(
+def zmp_from_hand_force(
     com_s: torch.Tensor,
     com_n: torch.Tensor,
     com_acceleration_s: torch.Tensor,
@@ -780,18 +520,11 @@ def zmp_from_hand_wrench(
     handle_n: torch.Tensor,
     hand_force_s: torch.Tensor,
     hand_force_n: torch.Tensor,
-    hand_torque_y: torch.Tensor,
     robot_mass: torch.Tensor | float,
     *,
     min_ground_reaction: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Compute flat-ground ZMP for the cart-on-robot hand wrench.
-
-    ``hand_force_*`` and ``hand_torque_y`` use the wrench acting on the robot
-    from the cart.  The force moment is written as the negative of the usual
-    ``r x F`` term so the same expression remains valid for the sagittal
-    reaction balance.
-    """
+    """Compute flat-ground ZMP for the cart-on-robot hand force."""
 
     mass = torch.as_tensor(robot_mass, device=com_s.device, dtype=com_s.dtype)
     r_s = mass * com_acceleration_s - hand_force_s
@@ -801,9 +534,7 @@ def zmp_from_hand_wrench(
     hand_moment_about_com = (
         (handle_s - com_s) * hand_force_n - (handle_n - com_n) * hand_force_s
     )
-    zmp_s = com_s + (
-        -com_n * r_s - hand_moment_about_com + hand_torque_y
-    ) / denominator
+    zmp_s = com_s + (-com_n * r_s - hand_moment_about_com) / denominator
     zmp_s = torch.where(valid, zmp_s, torch.zeros_like(zmp_s))
     return zmp_s, r_s, r_n, valid
 
@@ -945,15 +676,11 @@ __all__ = [
     "AnalyticForceCfg",
     "AnalyticHandleForceState",
     "FAT2Cfg",
-    "FAT2ComRadiusState",
     "GRAVITY",
     "RickshawMassProperties",
-    "SecondOrderLowPassState",
     "SupportPolygonCfg",
-    "WrenchConsistencyState",
     "ZMPCfg",
     "ZMPKinematicState",
-    "adapt_connection_reaction_wrench",
     "analytic_handle_force",
     "articulation_center_of_mass",
     "combine_mass_properties",
@@ -961,17 +688,14 @@ __all__ = [
     "effective_cart_mass",
     "effective_wheel_damping",
     "fat2_reference_angle",
-    "filtered_first_derivative",
-    "filtered_second_derivative",
+    "force_consistency",
     "foot_support_polygon",
-    "low_pass",
     "parallel_axis_inertia",
     "quat_apply_wxyz",
     "rickshaw_pitch_from_quaternion",
-    "rolling_resistance_wrench",
+    "rolling_resistance_force",
     "sagittal_com_radius",
     "torso_pitch_from_world_vertical",
     "update_analytic_handle_force_state",
-    "update_wrench_consistency_state",
-    "zmp_from_hand_wrench",
+    "zmp_from_hand_force",
 ]

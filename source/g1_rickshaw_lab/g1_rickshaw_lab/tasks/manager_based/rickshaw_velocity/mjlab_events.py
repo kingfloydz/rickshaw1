@@ -31,10 +31,8 @@ from .mdp.dynamics import (
     AnalyticForceCfg,
     AnalyticHandleForceState,
     FAT2Cfg,
-    FAT2ComRadiusState,
     RickshawMassProperties,
     SupportPolygonCfg,
-    WrenchConsistencyState,
     ZMPCfg,
     ZMPKinematicState,
     combine_mass_properties,
@@ -42,15 +40,14 @@ from .mdp.dynamics import (
     effective_cart_mass,
     effective_wheel_damping,
     fat2_reference_angle,
-    filtered_first_derivative,
+    force_consistency,
     foot_support_polygon,
     rickshaw_pitch_from_quaternion,
-    rolling_resistance_wrench,
+    rolling_resistance_force,
     sagittal_com_radius,
     torso_pitch_from_world_vertical,
     update_analytic_handle_force_state,
-    update_wrench_consistency_state,
-    zmp_from_hand_wrench,
+    zmp_from_hand_force,
 )
 from .mdp.events import (
     DomainRandomizationCfg,
@@ -152,22 +149,15 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     )
     env.rickshaw_pose_cfg = cfg.rickshaw_pose
     env.hitch_height_target = float(solution.hitch_height)
-    env.fat2_wrench_consistency_state = WrenchConsistencyState.zeros(
-        env.num_envs, cfg.fat2.wrench_consistency_window_steps, device=env.device
+    env.fat_com_radius = torch.full(
+        (env.num_envs,), cfg.fat2.com_radius, device=env.device
     )
-    env.fat2_com_radius_state = FAT2ComRadiusState.initialized(
-        env.num_envs,
-        cfg.fat2.wrench_consistency_window_steps,
-        cfg.fat2.com_radius,
-        device=env.device,
-    )
-    env.fat_com_radius = env.fat2_com_radius_state.filtered_radius
     env.fat_com_radius_raw = env.fat_com_radius.clone()
     zeros = torch.zeros(env.num_envs, device=env.device)
     env.analytic_force_state = AnalyticHandleForceState.initialized(zeros, zeros)
     env.zmp_kinematic_state = ZMPKinematicState.initialized(zeros, zeros)
     env.cart_previous_com_velocity_w = torch.zeros((env.num_envs, 3), device=env.device)
-    env.cart_interaction_wrench_valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+    env.cart_interaction_force_valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
     env.last_rolling_force_w = torch.zeros((env.num_envs, 2, 3), device=env.device)
     env.rickshaw_speed_s = zeros.clone()
     env.rickshaw_speed_l = zeros.clone()
@@ -333,20 +323,28 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
     )
     env.rickshaw_state.wheel_normal_force[env_ids] = 0.0
     env.rickshaw_state.two_wheel_contact[env_ids] = False
-    env.rickshaw_state.connection_wrench_w[env_ids] = 0.0
-    env.rickshaw_state.connection_truth_wrench_w[env_ids] = 0.0
     env.rickshaw_state.hand_force_w[env_ids] = 0.0
-    env.rickshaw_state.hand_torque_w[env_ids] = 0.0
     env.stability_state.theta_fat[env_ids] = env.static_fat2
     env.stability_state.fat_valid[env_ids] = False
+    env.stability_state.fat_force_consistent[env_ids] = False
+    env.stability_state.fat_force_relative_error[env_ids] = 0.0
     env.stability_state.zmp_valid[env_ids] = False
+    env.stability_state.zmp_margin[env_ids] = 0.0
+    env.stability_state.ground_reaction_normal[env_ids] = 0.0
     env.observation_history_state.reset(env_ids)
     env.critic_policy_observation[env_ids] = 0.0
     env.teacher_dynamic_history_state.reset(env_ids)
-    env.fat2_wrench_consistency_state.reset(env_ids)
-    env.fat2_com_radius_state.reset(env_ids)
+    env.fat_com_radius[env_ids] = env.runtime_cfg.fat2.com_radius
+    zero = torch.zeros(env_ids.numel(), device=env.device)
+    cart_pitch = rickshaw_pitch_from_quaternion(
+        cart_pose[:, 3:7],
+        env.path_tangent_w[env_ids],
+        env.path_normal_w[env_ids],
+    )
+    env.analytic_force_state.reset(zero, cart_pitch, env_ids)
+    env.zmp_kinematic_state.reset(zero, zero, env_ids)
     env.cart_previous_com_velocity_w[env_ids] = 0.0
-    env.cart_interaction_wrench_valid[env_ids] = False
+    env.cart_interaction_force_valid[env_ids] = False
     env.last_rolling_force_w[env_ids] = 0.0
     env._mjlab_physical_state_step = -1
     env._mjlab_observation_state_step = -1
@@ -400,15 +398,11 @@ def ensure_mjlab_physical_state(env: Any) -> None:
         - torch.sum(env.last_rolling_force_w, dim=1)
     )
     valid_force = step > 0
-    env.cart_interaction_wrench_valid[:] = valid_force & torch.all(torch.isfinite(force_on_cart), dim=-1)
+    env.cart_interaction_force_valid[:] = valid_force & torch.all(torch.isfinite(force_on_cart), dim=-1)
     force_on_cart = torch.where(
-        env.cart_interaction_wrench_valid[:, None], force_on_cart, torch.zeros_like(force_on_cart)
+        env.cart_interaction_force_valid[:, None], force_on_cart, torch.zeros_like(force_on_cart)
     )
     env.rickshaw_state.hand_force_w[:] = -force_on_cart
-    env.rickshaw_state.hand_torque_w.zero_()
-    env.rickshaw_state.connection_truth_wrench_w[..., :3] = 0.5 * env.rickshaw_state.hand_force_w[:, None, :]
-    env.rickshaw_state.connection_truth_wrench_w[..., 3:] = 0.0
-    env.rickshaw_state.connection_wrench_w[:] = env.rickshaw_state.connection_truth_wrench_w
     env.cart_previous_com_velocity_w[:] = cart_velocity
 
     foot_force = env.scene["feet_ground_contact"].data.force
@@ -446,24 +440,28 @@ def ensure_mjlab_physical_state(env: Any) -> None:
         ),
         dim=-1,
     )
-    consistent, relative_error, filtered = update_wrench_consistency_state(
-        env.fat2_wrench_consistency_state,
+    consistent, relative_error = force_consistency(
         analytic_sn,
         measured_sn,
-        env.analytic_force_state.valid & env.cart_interaction_wrench_valid,
-        relative_tolerance=env.runtime_cfg.fat2.wrench_consistency_relative_tolerance,
-        absolute_floor_n=env.runtime_cfg.fat2.wrench_consistency_absolute_floor_n,
+        env.analytic_force_state.valid & env.cart_interaction_force_valid,
+        relative_tolerance=env.runtime_cfg.fat2.force_consistency_relative_tolerance,
+        absolute_floor_n=env.runtime_cfg.fat2.force_consistency_absolute_floor_n,
     )
-    env.stability_state.fat_wrench_consistent[:] = consistent
-    env.stability_state.fat_wrench_relative_error[:] = relative_error
+    env.stability_state.fat_force_consistent[:] = consistent
+    env.stability_state.fat_force_relative_error[:] = relative_error
     robot_com, robot_com_velocity, robot_mass = _body_mass_kinematics(env, "robot")
     radius = sagittal_com_radius(robot_com, support_center, env.path_tangent_w, env.path_normal_w)
     env.fat_com_radius_raw[:] = radius
-    env.fat2_com_radius_state.update(
+    radius_valid = torch.any(mask, dim=-1) & torch.isfinite(radius)
+    bounded_radius = torch.clamp(
         radius,
-        torch.any(mask, dim=-1),
-        minimum=env.runtime_cfg.fat2.com_radius_bounds[0],
-        maximum=env.runtime_cfg.fat2.com_radius_bounds[1],
+        min=env.runtime_cfg.fat2.com_radius_bounds[0],
+        max=env.runtime_cfg.fat2.com_radius_bounds[1],
+    )
+    env.fat_com_radius[:] = torch.where(
+        radius_valid,
+        bounded_radius,
+        torch.full_like(radius, env.runtime_cfg.fat2.com_radius),
     )
     handle_delta = hitch_position - support_center
     handle_s = torch.sum(handle_delta * env.path_tangent_w, dim=-1)
@@ -471,8 +469,8 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     env.stability_state.theta_fat[:] = fat2_reference_angle(
         handle_s,
         handle_n,
-        -filtered[:, 0],
-        -filtered[:, 1],
+        -analytic_sn[:, 0],
+        -analytic_sn[:, 1],
         robot_mass,
         env.fat_com_radius,
         env.runtime_cfg.fat2.theta_max,
@@ -487,11 +485,8 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     com_n = torch.sum(relative_com * env.path_normal_w, dim=-1)
     velocity_s = torch.sum(robot_com_velocity * env.path_tangent_w, dim=-1)
     velocity_n = torch.sum(robot_com_velocity * env.path_normal_w, dim=-1)
-    acceleration_s = filtered_first_derivative(
-        velocity_s, env.zmp_kinematic_state.tangential_velocity_filter, env.step_dt
-    )
-    acceleration_n = filtered_first_derivative(
-        velocity_n, env.zmp_kinematic_state.normal_velocity_filter, env.step_dt
+    acceleration_s, acceleration_n = env.zmp_kinematic_state.update(
+        velocity_s, velocity_n, env.step_dt
     )
     handle_origin = hitch_position - origin
     hs = torch.sum(handle_origin * env.path_tangent_w, dim=-1)
@@ -499,7 +494,7 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     hand_force = env.rickshaw_state.hand_force_w
     fs = torch.sum(hand_force * env.path_tangent_w, dim=-1)
     fn = torch.sum(hand_force * env.path_normal_w, dim=-1)
-    zmp_s, _, reaction_n, dynamics_valid = zmp_from_hand_wrench(
+    zmp_s, _, reaction_n, dynamics_valid = zmp_from_hand_force(
         com_s,
         com_n,
         acceleration_s,
@@ -508,27 +503,24 @@ def ensure_mjlab_physical_state(env: Any) -> None:
         hn,
         fs,
         fn,
-        torch.zeros_like(fs),
         robot_mass,
         min_ground_reaction=env.runtime_cfg.zmp.min_ground_reaction,
     )
     support_relative = support_center - origin
     support_y = torch.sum(support_relative * env.path_lateral_w, dim=-1)
     margin, polygon_valid = convex_support_margin(points, torch.stack((zmp_s, support_y), dim=-1), mask)
-    zmp_valid = dynamics_valid & polygon_valid & env.cart_interaction_wrench_valid
+    zmp_valid = dynamics_valid & polygon_valid & env.cart_interaction_force_valid
     env.stability_state.zmp_s[:] = zmp_s
     env.stability_state.ground_reaction_normal[:] = reaction_n
     env.stability_state.zmp_margin[:] = torch.where(zmp_valid, margin, torch.zeros_like(margin))
     env.stability_state.zmp_valid[:] = zmp_valid
 
-    rolling_force, _, _ = rolling_resistance_wrench(
+    rolling_force = rolling_resistance_force(
         cart.data.body_link_lin_vel_w[:, env.wheel_body_ids],
         wheel_force,
         env.path_tangent_w,
         env.path_normal_w,
         env.c_rr,
-        wheel_normal,
-        dt=env.step_dt,
     )
     env.last_rolling_force_w[:] = rolling_force
     cart.data.write_external_wrench(

@@ -23,9 +23,9 @@ SUPPORTED_CONTEXT_DIMS: Final[tuple[int, ...]] = (
     24,
     32,
 )
-TEACHER_DYNAMIC_DIM: Final[int] = 21
+TEACHER_DYNAMIC_DIM: Final[int] = 12
 TEACHER_STATIC_DIM: Final[int] = 9
-CRITIC_PRIVILEGED_DIM: Final[int] = 45
+CRITIC_PRIVILEGED_DIM: Final[int] = 36
 
 ACTION_SCALE: Final[tuple[float, ...]] = G1_ACTION_SCALE
 ACTION_DIM: Final[int] = len(ACTION_SCALE)

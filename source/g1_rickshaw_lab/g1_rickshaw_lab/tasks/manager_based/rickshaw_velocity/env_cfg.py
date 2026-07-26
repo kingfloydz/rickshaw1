@@ -59,9 +59,8 @@ def _runtime_cfg(*, play: bool, history_length: int):
             com_radius=calibration["fat.com_radius"],
             com_radius_bounds=tuple(calibration["fat.com_radius_bounds"]),
             theta_max=calibration["safety.theta_max"],
-            wrench_consistency_relative_tolerance=calibration["fat.wrench_consistency_relative_tolerance"],
-            wrench_consistency_absolute_floor_n=calibration["fat.wrench_consistency_absolute_floor_n"],
-            wrench_consistency_window_steps=calibration["fat.wrench_consistency_window_steps"],
+            force_consistency_relative_tolerance=calibration["fat.force_consistency_relative_tolerance"],
+            force_consistency_absolute_floor_n=calibration["fat.force_consistency_absolute_floor_n"],
         ),
         support=SupportPolygonCfg(
             foot_half_length=calibration["support.foot_half_length"],

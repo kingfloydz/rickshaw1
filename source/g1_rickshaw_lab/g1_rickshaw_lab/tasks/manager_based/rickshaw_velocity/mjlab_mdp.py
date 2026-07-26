@@ -48,22 +48,19 @@ def _dynamic_privilege(env: Any) -> torch.Tensor:
             dim=-1,
         )
 
-    basis = torch.stack((env.path_tangent_w, env.path_lateral_w, env.path_normal_w), dim=1)
-    wrench = env.rickshaw_state.connection_truth_wrench_w
-    force_sln = torch.einsum("nsw,ncw->nsc", wrench[..., :3], basis)
-    torque_sln = torch.einsum("nsw,ncw->nsc", wrench[..., 3:], basis)
+    force_sln = project(env.rickshaw_state.hand_force_w)
     result = torch.cat(
         (
             project(robot.data.root_link_lin_vel_w),
             project(cart.data.root_link_lin_vel_w),
             env.rickshaw_state.pitch[:, None],
             env.rickshaw_state.wheel_normal_force,
-            torch.cat((force_sln, torque_sln), dim=-1).reshape(env.num_envs, -1),
+            force_sln,
         ),
         dim=-1,
     )
     if result.shape != (env.num_envs, TEACHER_DYNAMIC_DIM):
-        raise RuntimeError("teacher dynamic observation is not 21-D")
+        raise RuntimeError("teacher dynamic observation is not 12-D")
     return result
 
 
@@ -155,7 +152,7 @@ def critic_privileged_state(env: Any) -> torch.Tensor:
         dim=-1,
     )
     if result.shape != (env.num_envs, CRITIC_PRIVILEGED_DIM):
-        raise RuntimeError("critic privileged observation is not 45-D")
+        raise RuntimeError("critic privileged observation is not 36-D")
     return result
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,6 +42,72 @@ class RickshawVelocityCommand(UniformVelocityCommand):
             "error_lin_vel_x": torch.zeros(self.num_envs, device=self.device),
             "error_ang_vel_z": torch.zeros(self.num_envs, device=self.device),
         }
+        self._rickshaw_joystick_enabled = None
+        self._rickshaw_joystick_sliders: dict[int, Any] = {}
+
+    def create_gui(
+        self,
+        name: str,
+        server: Any,
+        get_env_idx: Callable[[], int],
+        on_change: Callable[[], None] | None = None,
+        request_action: Callable[[str, Any], None] | None = None,
+    ) -> None:
+        """Create controls for the two command axes used by the rickshaw task."""
+
+        del on_change, request_action
+        from viser import Icon
+
+        axes = (
+            (0, "lin_vel_x", self.cfg.ranges.lin_vel_x),
+            (2, "ang_vel_z", self.cfg.ranges.ang_vel_z),
+        )
+        sliders: dict[int, Any] = {}
+        with server.gui.add_folder(name.capitalize()):
+            enabled = server.gui.add_checkbox("Enable", initial_value=False)
+            for command_index, label, limits in axes:
+                max_value = max(abs(float(limits[0])), abs(float(limits[1])))
+                max_input = server.gui.add_slider(
+                    f"Max {label}",
+                    initial_value=max_value,
+                    step=0.1,
+                    min=0.1,
+                    max=10.0,
+                )
+                slider = server.gui.add_slider(
+                    label,
+                    min=-max_value,
+                    max=max_value,
+                    step=0.05,
+                    initial_value=0.0,
+                )
+
+                @max_input.on_update
+                def _update_range(_event, target=slider, maximum=max_input) -> None:
+                    target.min = -maximum.value
+                    target.max = maximum.value
+
+                sliders[command_index] = slider
+
+            zero_button = server.gui.add_button("Zero", icon=Icon.SQUARE_X)
+
+            @zero_button.on_click
+            def _zero(_event) -> None:
+                for slider in sliders.values():
+                    slider.value = 0.0
+
+        self._rickshaw_joystick_enabled = enabled
+        self._rickshaw_joystick_sliders = sliders
+        self._rickshaw_joystick_get_env_idx = get_env_idx
+
+    def compute(self, dt: float) -> None:
+        super().compute(dt)
+        enabled = self._rickshaw_joystick_enabled
+        if enabled is not None and enabled.value:
+            env_idx = self._rickshaw_joystick_get_env_idx()
+            self.vel_command_b[env_idx, 1] = 0.0
+            for command_index, slider in self._rickshaw_joystick_sliders.items():
+                self.vel_command_b[env_idx, command_index] = slider.value
 
     def _update_metrics(self) -> None:
         lin_vel_x, _, ang_vel_z = rickshaw_velocity(self.robot)

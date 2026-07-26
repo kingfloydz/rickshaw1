@@ -6,7 +6,7 @@ before returning an object that can be used by training or deployment code.
 
 Canonical ``feasibility_envelope.yaml`` layout::
 
-    schema_version: 2
+    schema_version: 3
     joint_order: [29 exact G1 joint names]
     ranges:
       payload.mass: {min: -3.0, max: 3.0}
@@ -30,7 +30,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-FEASIBILITY_SCHEMA_VERSION = 2
+FEASIBILITY_SCHEMA_VERSION = 3
 
 # This is the source-URDF order after applying the guide's one-time grouping
 # rule: lower_names + waist_names + arm_names.  Runtime regex ordering is never
@@ -91,9 +91,8 @@ REQUIRED_CALIBRATION_FIELDS = (
     "fat.robot_mass",
     "fat.com_radius",
     "fat.com_radius_bounds",
-    "fat.wrench_consistency_relative_tolerance",
-    "fat.wrench_consistency_absolute_floor_n",
-    "fat.wrench_consistency_window_steps",
+    "fat.force_consistency_relative_tolerance",
+    "fat.force_consistency_absolute_floor_n",
     "support.foot_half_length",
     "support.foot_half_width",
     "support.foot_center_offset_x",
@@ -115,7 +114,7 @@ _CALIBRATION_STRICTLY_POSITIVE = frozenset(
         "terrain.friction_nominal",
         "fat.robot_mass",
         "fat.com_radius",
-        "fat.wrench_consistency_absolute_floor_n",
+        "fat.force_consistency_absolute_floor_n",
         "support.foot_half_length",
         "support.foot_half_width",
         "support.foot_center_offset_x",
@@ -312,11 +311,6 @@ def _validate_calibration(calibration: Mapping[str, Any]) -> Mapping[str, Any]:
     validated: dict[str, Any] = {}
     for name in REQUIRED_CALIBRATION_FIELDS:
         value = flattened[name]
-        if name == "fat.wrench_consistency_window_steps":
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                raise ConfigurationContractError(f"calibration.{name} must be a positive integer")
-            validated[name] = value
-            continue
         vector_length = _CALIBRATION_VECTOR_LENGTHS.get(name)
         if vector_length is None:
             scalar = _finite_float(value, f"calibration.{name}")
@@ -337,9 +331,9 @@ def _validate_calibration(calibration: Mapping[str, Any]) -> Mapping[str, Any]:
     theta_max = validated["safety.theta_max"]
     if theta_max >= math.pi / 2.0:
         raise ConfigurationContractError("calibration.safety.theta_max must lie in (0, pi/2)")
-    wrench_tolerance = validated["fat.wrench_consistency_relative_tolerance"]
-    if not 0.0 <= wrench_tolerance <= 1.0:
-        raise ConfigurationContractError("calibration.fat.wrench_consistency_relative_tolerance must lie in [0,1]")
+    force_tolerance = validated["fat.force_consistency_relative_tolerance"]
+    if not 0.0 <= force_tolerance <= 1.0:
+        raise ConfigurationContractError("calibration.fat.force_consistency_relative_tolerance must lie in [0,1]")
     radius_min, radius_max = validated["fat.com_radius_bounds"]
     if radius_min <= 0.0 or not radius_min <= validated["fat.com_radius"] <= radius_max:
         raise ConfigurationContractError("calibration.fat.com_radius must lie within positive fat.com_radius_bounds")

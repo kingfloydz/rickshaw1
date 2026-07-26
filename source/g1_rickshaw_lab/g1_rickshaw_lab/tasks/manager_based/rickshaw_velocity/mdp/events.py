@@ -23,10 +23,7 @@ class RickshawRuntimeState:
     pitch: torch.Tensor
     two_wheel_contact: torch.Tensor
     connection_residual: torch.Tensor
-    connection_wrench_w: torch.Tensor
-    connection_truth_wrench_w: torch.Tensor
     hand_force_w: torch.Tensor
-    hand_torque_w: torch.Tensor
 
     @classmethod
     def zeros(
@@ -49,12 +46,7 @@ class RickshawRuntimeState:
                 num_envs, device=device, dtype=torch.bool
             ),
             connection_residual=scalar.clone(),
-            connection_wrench_w=torch.zeros((num_envs, 2, 6), device=device, dtype=dtype),
-            connection_truth_wrench_w=torch.zeros(
-                (num_envs, 2, 6), device=device, dtype=dtype
-            ),
             hand_force_w=torch.zeros((num_envs, 3), device=device, dtype=dtype),
-            hand_torque_w=torch.zeros((num_envs, 3), device=device, dtype=dtype),
         )
 
 
@@ -62,8 +54,8 @@ class RickshawRuntimeState:
 class StabilityState:
     theta_fat: torch.Tensor
     fat_valid: torch.Tensor
-    fat_wrench_consistent: torch.Tensor
-    fat_wrench_relative_error: torch.Tensor
+    fat_force_consistent: torch.Tensor
+    fat_force_relative_error: torch.Tensor
     torso_pitch: torch.Tensor
     zmp_s: torch.Tensor
     zmp_margin: torch.Tensor
@@ -85,10 +77,10 @@ class StabilityState:
         return cls(
             theta_fat=scalar.clone(),
             fat_valid=torch.zeros(num_envs, device=device, dtype=torch.bool),
-            fat_wrench_consistent=torch.zeros(
+            fat_force_consistent=torch.zeros(
                 num_envs, device=device, dtype=torch.bool
             ),
-            fat_wrench_relative_error=torch.zeros(
+            fat_force_relative_error=torch.zeros(
                 (num_envs, 2), device=device, dtype=dtype
             ),
             torso_pitch=scalar.clone(),
