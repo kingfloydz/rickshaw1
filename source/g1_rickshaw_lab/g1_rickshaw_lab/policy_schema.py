@@ -24,11 +24,13 @@ SUPPORTED_CONTEXT_DIMS: Final[tuple[int, ...]] = (
     32,
 )
 TEACHER_DYNAMIC_DIM: Final[int] = 12
-TEACHER_STATIC_DIM: Final[int] = 9
-CRITIC_PRIVILEGED_DIM: Final[int] = 36
+TEACHER_STATIC_DIM: Final[int] = 10
+CRITIC_PRIVILEGED_DIM: Final[int] = 37
+TEACHER_TERRAIN_SLOPE_BOUNDS: Final[tuple[float, float]] = (-0.08, 0.10)
 
 ACTION_SCALE: Final[tuple[float, ...]] = G1_ACTION_SCALE
 ACTION_DIM: Final[int] = len(ACTION_SCALE)
+
 
 def validate_context_dim(value: int) -> int:
     if type(value) is not int or value not in SUPPORTED_CONTEXT_DIMS:
@@ -53,6 +55,7 @@ __all__ = [
     "SUPPORTED_CONTEXT_DIMS",
     "TEACHER_DYNAMIC_DIM",
     "TEACHER_STATIC_DIM",
+    "TEACHER_TERRAIN_SLOPE_BOUNDS",
     "validate_context_dim",
     "validate_history_length",
 ]

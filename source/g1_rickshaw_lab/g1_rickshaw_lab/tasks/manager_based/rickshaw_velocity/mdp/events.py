@@ -13,6 +13,7 @@ from g1_rickshaw_lab.assets.rickshaw import (
     RICKSHAW_CENTER_OF_MASS,
     RICKSHAW_TOTAL_MASS,
 )
+from g1_rickshaw_lab.policy_schema import TEACHER_TERRAIN_SLOPE_BOUNDS
 
 
 @dataclass
@@ -185,6 +186,7 @@ def _update_teacher_static_domain(
     cfg: DomainRandomizationCfg,
     sampled: Mapping[str, torch.Tensor],
 ) -> None:
+    terrain_slope = torch.atan2(env.path_tangent_w[:, 2], env.path_tangent_w[:, 0])
     raw = torch.cat(
         (
             env.effective_torso_mass[:, None],
@@ -198,6 +200,7 @@ def _update_teacher_static_domain(
                 ),
                 dim=-1,
             ),
+            terrain_slope[:, None],
         ),
         dim=-1,
     )
@@ -211,6 +214,7 @@ def _update_teacher_static_domain(
             cfg.ranges["terrain.friction"][0],
             cfg.ranges["wheel.left_damping"][0],
             cfg.ranges["wheel.right_damping"][0],
+            TEACHER_TERRAIN_SLOPE_BOUNDS[0],
         ),
         device=env.device,
         dtype=raw.dtype,
@@ -223,6 +227,7 @@ def _update_teacher_static_domain(
             cfg.ranges["terrain.friction"][1],
             cfg.ranges["wheel.left_damping"][1],
             cfg.ranges["wheel.right_damping"][1],
+            TEACHER_TERRAIN_SLOPE_BOUNDS[1],
         ),
         device=env.device,
         dtype=raw.dtype,

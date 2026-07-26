@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 from torch import nn
 
+from g1_rickshaw_lab.policy_schema import (
+    TEACHER_STATIC_DIM,
+    TEACHER_TERRAIN_SLOPE_BOUNDS,
+)
 from g1_rickshaw_lab.rl import DYNAMIC_PRIVILEGE_DIM, STATIC_PRIVILEGE_DIM
 from g1_rickshaw_lab.rl.actor_critic import G1RickshawStudentActor
 from g1_rickshaw_lab.rl.teacher_model import G1RickshawTeacherActor
@@ -27,8 +33,12 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.observations impo
     PREVIOUS_ACTION_SLICE,
     PROJECTED_GRAVITY_SLICE,
     RICKSHAW_VELOCITY_SLICE,
+    TEACHER_STATIC_FEATURE_NAMES,
     ObservationHistoryState,
     assemble_actor_observation,
+)
+from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.events import (
+    _update_teacher_static_domain,
 )
 
 
@@ -66,9 +76,7 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
         observation[:, BASE_ANGULAR_VELOCITY_SLICE], angular_velocity * 0.25
     )
     torch.testing.assert_close(observation[:, PROJECTED_GRAVITY_SLICE], gravity)
-    torch.testing.assert_close(
-        observation[:, COMMAND_SLICE], command
-    )
+    torch.testing.assert_close(observation[:, COMMAND_SLICE], command)
     torch.testing.assert_close(
         observation[:, RICKSHAW_VELOCITY_SLICE], rickshaw_velocity
     )
@@ -76,8 +84,57 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
     torch.testing.assert_close(
         observation[:, JOINT_VELOCITY_SLICE], joint_velocity * 0.05
     )
+    torch.testing.assert_close(observation[:, PREVIOUS_ACTION_SLICE], previous_action)
+
+
+def test_teacher_static_and_critic_privilege_include_normalized_terrain_slope() -> None:
+    dtype = torch.float64
+    slopes = torch.tensor((-0.08, 0.01, 0.10), dtype=dtype)
+    env = SimpleNamespace(
+        num_envs=slopes.numel(),
+        device=torch.device("cpu"),
+        path_tangent_w=torch.stack(
+            (torch.cos(slopes), torch.zeros_like(slopes), torch.sin(slopes)), dim=-1
+        ),
+        effective_torso_mass=torch.full((slopes.numel(),), 30.0, dtype=dtype),
+        effective_cart_mass_com=torch.tensor((35.04, 0.1, 0.0, 0.3), dtype=dtype)
+        .expand(slopes.numel(), -1)
+        .clone(),
+        _default_robot_masses_cpu=torch.tensor(((30.0,),), dtype=dtype),
+        torso_body_id=0,
+    )
+    cfg = SimpleNamespace(
+        ranges={
+            "torso.mass_delta": (-1.0, 1.0),
+            "payload.mass": (0.0, 10.0),
+            "payload.com.x": (-0.1, 0.1),
+            "payload.com.y": (-0.1, 0.1),
+            "payload.com.z": (-0.1, 0.1),
+            "rolling_resistance.c_rr": (0.01, 0.1),
+            "terrain.friction": (0.5, 1.5),
+            "wheel.left_damping": (0.01, 0.1),
+            "wheel.right_damping": (0.01, 0.1),
+        }
+    )
+    sampled = {
+        "rolling_resistance.c_rr": torch.full_like(slopes, 0.05),
+        "terrain.friction": torch.full_like(slopes, 0.8),
+        "wheel.left_damping": torch.full_like(slopes, 0.02),
+        "wheel.right_damping": torch.full_like(slopes, 0.02),
+    }
+
+    _update_teacher_static_domain(env, cfg, sampled)
+
+    assert TEACHER_STATIC_FEATURE_NAMES[-1] == "terrain.slope"
+    assert env.teacher_static_domain_raw.shape == (slopes.numel(), TEACHER_STATIC_DIM)
+    torch.testing.assert_close(env.teacher_static_domain_raw[:, -1], slopes)
+    assert (
+        tuple(bound[-1].item() for bound in env.teacher_static_domain_bounds)
+        == TEACHER_TERRAIN_SLOPE_BOUNDS
+    )
     torch.testing.assert_close(
-        observation[:, PREVIOUS_ACTION_SLICE], previous_action
+        env.normalized_teacher_static_domain[:, -1],
+        torch.tensor((-1.0, 0.0, 1.0), dtype=dtype),
     )
 
 

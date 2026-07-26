@@ -58,6 +58,7 @@ TEACHER_STATIC_FEATURE_NAMES = (
     "terrain.friction",
     "wheel.left_damping",
     "wheel.right_damping",
+    "terrain.slope",
 )
 TEACHER_DYNAMIC_FEATURE_NAMES = (
     "robot.velocity.s",

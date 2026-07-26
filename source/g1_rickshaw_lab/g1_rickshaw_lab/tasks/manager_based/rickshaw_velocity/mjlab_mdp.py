@@ -185,7 +185,7 @@ def critic_privileged_state(env: Any) -> torch.Tensor:
         dim=-1,
     )
     if result.shape != (env.num_envs, CRITIC_PRIVILEGED_DIM):
-        raise RuntimeError("critic privileged observation is not 36-D")
+        raise RuntimeError(f"critic privileged observation is not {CRITIC_PRIVILEGED_DIM}-D")
     return result
 
 
