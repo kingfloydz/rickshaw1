@@ -356,6 +356,17 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
             },
         ),
     }
+    ramped_rickshaw_penalties = (
+        "rickshaw_forward_acceleration_l2",
+        "rickshaw_pitch_angular_acceleration_l2",
+        "rickshaw_yaw_angular_acceleration_l2",
+        "rickshaw_pitch_angular_velocity_l2",
+        "rickshaw_wheel_slip_l2",
+        "rickshaw_g1_relative_position_l2",
+        "rickshaw_g1_relative_yaw_l2",
+        "rickshaw_absolute_pitch_deviation_l2",
+        "peak_force",
+    )
     commands = {
         "twist": RickshawVelocityCommandCfg(
             entity_name="rickshaw",
@@ -452,7 +463,14 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
                         {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
                     ],
                 },
-            )
+            ),
+            "rickshaw_penalty_weights": CurriculumTermCfg(
+                func=mjlab_mdp.LinearRewardWeightCurriculum,
+                params={
+                    "reward_names": ramped_rickshaw_penalties,
+                    "duration_steps": 1000 * 24,
+                },
+            ),
         },
         metrics={"mean_action_acc": MetricsTermCfg(func=velocity_mdp.mean_action_acc)},
         viewer=ViewerConfig(

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import g1_rickshaw_lab.training_contract as contract
+import g1_rickshaw_lab.rl.runner as runner_module
 from g1_rickshaw_lab.rl.runner import RunnerContext, create_rickshaw_runner_type
 
 
@@ -25,6 +26,7 @@ class _FakeAlgorithm:
 class _FakeEnvironment:
     def __init__(self) -> None:
         self.global_reset_calls = 1
+        self.common_step_counter = 0
 
     @property
     def unwrapped(self) -> _FakeEnvironment:
@@ -90,3 +92,27 @@ def test_runner_never_resamples_or_resets_fixed_startup_domain(
 
     assert env.global_reset_calls == 1
     assert runner._g1_curriculum_iteration == 600
+
+
+def test_runner_checkpoint_preserves_environment_step_counter(monkeypatch) -> None:
+    saved_checkpoint: dict[str, Any] = {}
+    monkeypatch.setattr(
+        runner_module,
+        "attach_checkpoint_metadata",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "atomic_torch_save",
+        lambda checkpoint, path: saved_checkpoint.update(checkpoint),
+    )
+    runner_type = _install_fake_runner()
+    env = _FakeEnvironment()
+    env.common_step_counter = 12_345
+
+    runner_type(env).save("checkpoint.pt", infos={"metric": 1})
+
+    assert saved_checkpoint["infos"] == {
+        "metric": 1,
+        "env_state": {"common_step_counter": 12_345},
+    }

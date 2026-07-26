@@ -9,6 +9,10 @@ HITCH_HEIGHT_RECOVERY_DEADBAND_M = 0.05
 HITCH_HEIGHT_RECOVERY_SCALE_M = 0.05
 
 
+def linear_ramp_progress(step: int, duration_steps: int) -> float:
+    return min(float(step) / duration_steps, 1.0)
+
+
 def hitch_height_exp_value(
     hitch_height: torch.Tensor,
     target_height: float,
@@ -83,6 +87,7 @@ __all__ = [
     "angle_deviation_l2_value",
     "hitch_height_exp_value",
     "hitch_height_recovery_l2_value",
+    "linear_ramp_progress",
     "peak_force_value",
     "relative_position_l2_value",
     "wheel_slip_l2_value",

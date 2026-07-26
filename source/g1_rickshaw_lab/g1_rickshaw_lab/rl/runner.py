@@ -198,7 +198,11 @@ def create_rickshaw_runner_type(
                 raise RuntimeError("RSL algorithm save payload must be a mapping")
             checkpoint = dict(saved)
             checkpoint["iter"] = self.current_learning_iteration
-            checkpoint["infos"] = infos
+            checkpoint_infos = dict(infos or {})
+            checkpoint_infos["env_state"] = {
+                "common_step_counter": self.env.unwrapped.common_step_counter,
+            }
+            checkpoint["infos"] = checkpoint_infos
             checkpoint["schema_version"] = CHECKPOINT_SCHEMA_VERSION
             checkpoint[CHECKPOINT_STAGE_KEY] = stage
             checkpoint[CHECKPOINT_CURRICULUM_ITERATION_KEY] = int(self._g1_curriculum_iteration)
