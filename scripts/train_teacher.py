@@ -32,6 +32,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     load_s0_resume_checkpoint,
     require_pinned_rsl_rl,
     training_artifact_interval,
+    training_mimic_enabled,
 )
 
 DEFAULT_TASK = GUIDE_TRAINING_TASK
@@ -50,6 +51,11 @@ def main() -> int:
     parser.add_argument("--latent-dim", type=int, choices=SUPPORTED_CONTEXT_DIMS, default=None)
     parser.add_argument("--history-length", type=int, choices=SUPPORTED_HISTORY_LENGTHS, default=None)
     parser.add_argument("--rollout-steps", type=int, choices=SUPPORTED_ROLLOUT_STEPS, default=None)
+    parser.add_argument(
+        "--mimic",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
     parser.add_argument(
         "--num-envs",
         "--num_envs",
@@ -77,6 +83,14 @@ def main() -> int:
         )
         resume_configuration = loaded[TRAINING_CONFIGURATION_KEY]
     resume_parameters = None if resume_configuration is None else resume_configuration["training_parameters"]
+    resume_mimic = (
+        False
+        if resume_configuration is None
+        else training_mimic_enabled(resume_configuration)
+    )
+    mimic = resume_mimic if args.mimic is None else args.mimic
+    if resume_configuration is not None and mimic != resume_mimic:
+        raise ValueError("S0 resume cannot change mimic")
     defaults = DEFAULT_TRAINING_PARAMETERS if resume_parameters is None else resume_parameters
     latent_dim = int(defaults["latent_dim"] if args.latent_dim is None else args.latent_dim)
     history_length = int(defaults["history_length"] if args.history_length is None else args.history_length)
@@ -115,6 +129,7 @@ def main() -> int:
             "latent_dim": latent_dim,
             "num_steps_per_env": rollout_steps,
             "save_interval": training_artifact_interval(rollout_steps),
+            "mimic": mimic,
             "launcher_arguments": list(remaining),
         },
         actor_initialized_from_teacher=None,
@@ -135,6 +150,7 @@ def main() -> int:
         f"env.history_length={history_length}",
     ]
     experiment_arguments: list[str] = []
+    mimic_arguments = ["--mimic"] if mimic else []
     if resume_path is not None:
         experiment_root = resume_path.parent.parent
         if args.experiment_dir is not None and Path(args.experiment_dir).resolve() != experiment_root.resolve():
@@ -166,6 +182,7 @@ def main() -> int:
             str(seed),
             "--logger",
             "tensorboard",
+            *mimic_arguments,
             *experiment_arguments,
             *remaining,
             *runtime_overrides,

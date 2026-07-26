@@ -5,9 +5,49 @@ from __future__ import annotations
 import math
 
 from g1_rickshaw_lab.assets import get_g1_robot_cfg, get_rickshaw_cfg
-from g1_rickshaw_lab.configuration import load_feasibility_envelope
+from g1_rickshaw_lab.configuration import G1_JOINT_ORDER, load_feasibility_envelope
 from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH
 from g1_rickshaw_lab.project_paths import CONFIG_ROOT, PROJECT_ROOT
+
+from .mdp.mimic import LEG_TORSO_JOINT_COUNT
+
+MIMIC_MOTION_PATH = PROJECT_ROOT / "hmr4d_results_straight_g1.pkl"
+
+
+def enable_mimic(env_cfg):
+    from mjlab.managers.reward_manager import RewardTermCfg
+    from mjlab.managers.scene_entity_config import SceneEntityCfg
+
+    from . import mjlab_mdp
+
+    command = env_cfg.commands["twist"]
+    command.mimic = True
+    command.mimic_motion_path = str(MIMIC_MOTION_PATH)
+    mimic_joints = SceneEntityCfg(
+        "robot",
+        joint_names=G1_JOINT_ORDER[:LEG_TORSO_JOINT_COUNT],
+        preserve_order=True,
+    )
+    env_cfg.rewards["mimic_joint_position"] = RewardTermCfg(
+        func=mjlab_mdp.mimic_joint_position_exp,
+        weight=1.0,
+        params={
+            "command_name": "twist",
+            "std": 0.3,
+            "asset_cfg": mimic_joints,
+        },
+    )
+    env_cfg.rewards["mimic_joint_velocity"] = RewardTermCfg(
+        func=mjlab_mdp.mimic_joint_velocity_exp,
+        weight=1.0,
+        params={
+            "command_name": "twist",
+            "std": 1.0,
+            "asset_cfg": mimic_joints,
+        },
+    )
+    env_cfg.mimic = True
+    return env_cfg
 
 
 def _runtime_cfg(*, play: bool, history_length: int):
@@ -73,7 +113,12 @@ def _runtime_cfg(*, play: bool, history_length: int):
     )
 
 
-def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LENGTH):
+def g1_rickshaw_env_cfg(
+    *,
+    play: bool = False,
+    history_length: int = HISTORY_LENGTH,
+    mimic: bool = False,
+):
     """Create the flat-ground rickshaw velocity task using mjlab 1.5.3 APIs."""
 
     from mjlab.envs import ManagerBasedRlEnvCfg
@@ -504,9 +549,12 @@ def g1_rickshaw_env_cfg(*, play: bool = False, history_length: int = HISTORY_LEN
         episode_length_s=20.0,
     )
     cfg.history_length = history_length
+    cfg.mimic = False
     cfg.observation_noise_enabled = not play
     cfg.domain_randomization = runtime.domain
     cfg.policy_update = runtime
+    if mimic:
+        enable_mimic(cfg)
     if play:
         cfg.episode_length_s = int(1e9)
         cfg.curriculum = {}
@@ -527,5 +575,7 @@ def G1RickshawFlatPlayEnvCfg():
 __all__ = [
     "G1RickshawFlatEnvCfg",
     "G1RickshawFlatPlayEnvCfg",
+    "MIMIC_MOTION_PATH",
+    "enable_mimic",
     "g1_rickshaw_env_cfg",
 ]

@@ -55,6 +55,7 @@ def load_mjlab_configs(
     num_envs: int,
     seed: int,
     history_length: int,
+    mimic: bool = False,
 ) -> tuple[Any, Any]:
     """Load a registered Mjlab environment/runner pair with shared dimensions."""
 
@@ -62,6 +63,12 @@ def load_mjlab_configs(
     from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
 
     env_cfg = load_env_cfg(task, play=play)
+    if mimic:
+        from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
+            enable_mimic,
+        )
+
+        enable_mimic(env_cfg)
     env_cfg.scene.num_envs = num_envs
     env_cfg.seed = seed
     configure_history_length(env_cfg, history_length)

@@ -166,6 +166,10 @@ def finalize_training_configuration(value: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(_canonical_training_configuration_json(value).decode("ascii"))
 
 
+def training_mimic_enabled(training_configuration: Mapping[str, Any]) -> bool:
+    return bool(training_configuration["resolved_parameters"].get("mimic", False))
+
+
 def build_training_configuration(
     *,
     stage: str,
@@ -661,8 +665,12 @@ def build_s2_bootstrap_checkpoint(
     teacher_training_configuration = teacher[TRAINING_CONFIGURATION_KEY]
     context_training_configuration = context[TRAINING_CONFIGURATION_KEY]
     training_parameters = dict(context_training_configuration["training_parameters"])
+    teacher_mimic = training_mimic_enabled(teacher_training_configuration)
+    mimic = training_mimic_enabled(context_training_configuration)
     if teacher_training_configuration["training_parameters"] != training_parameters:
         raise ValueError("S0 and S1 training parameters differ")
+    if teacher_mimic != mimic:
+        raise ValueError("S0 and S1 mimic configurations differ")
     teacher_metadata = extract_checkpoint_metadata(teacher)
     context_metadata = extract_checkpoint_metadata(context)
     if teacher_metadata.to_mapping() != context_metadata.to_mapping():
@@ -701,7 +709,7 @@ def build_s2_bootstrap_checkpoint(
                     "source_stage": "s1_context_distillation",
                     "source_checkpoint": os.fspath(context_file),
                 },
-                "resolved_parameters": {},
+                "resolved_parameters": {"mimic": mimic},
                 "actor_initialized_from_teacher": True,
                 "stage_coverage": context_training_configuration["stage_coverage"],
                 "training_parameters": training_parameters,
@@ -878,6 +886,7 @@ __all__ = [
     "s0_remaining_learning_iterations",
     "s2_remaining_learning_iterations",
     "training_artifact_interval",
+    "training_mimic_enabled",
     "validate_rollout_stage_coverage",
     "validate_guide_training_configuration",
     "validate_training_configuration",

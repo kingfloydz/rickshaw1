@@ -81,7 +81,9 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     from mjlab.tasks.velocity import mdp as velocity_mdp
     from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
 
+    from g1_rickshaw_lab.configuration import G1_JOINT_ORDER
     from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
+        MIMIC_MOTION_PATH,
         g1_rickshaw_env_cfg,
     )
     from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.agents.rsl_rl_cfg import (
@@ -260,6 +262,27 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     assert play_cfg.curriculum == {}
     assert play_cfg.commands["twist"].ranges.lin_vel_x == (-1.5, 2.0)
     assert play_cfg.commands["twist"].ranges.ang_vel_z == (-0.7, 0.7)
+
+    mimic_cfg = g1_rickshaw_env_cfg(mimic=True)
+    mimic_command = mimic_cfg.commands["twist"]
+    assert mimic_cfg.mimic
+    assert mimic_command.mimic
+    assert mimic_command.rel_forward_envs == 0.2
+    assert mimic_command.mimic_forward_speed == 0.8
+    assert mimic_command.mimic_motion_path == str(MIMIC_MOTION_PATH)
+    assert set(mimic_cfg.rewards) == {
+        *cfg.rewards,
+        "mimic_joint_position",
+        "mimic_joint_velocity",
+    }
+    assert mimic_cfg.rewards["mimic_joint_position"].weight == 1.0
+    assert mimic_cfg.rewards["mimic_joint_position"].params["std"] == 0.3
+    assert mimic_cfg.rewards["mimic_joint_velocity"].weight == 1.0
+    assert mimic_cfg.rewards["mimic_joint_velocity"].params["std"] == 1.0
+    for name in ("mimic_joint_position", "mimic_joint_velocity"):
+        asset_cfg = mimic_cfg.rewards[name].params["asset_cfg"]
+        assert tuple(asset_cfg.joint_names) == G1_JOINT_ORDER[:15]
+        assert asset_cfg.preserve_order
 
     agent = g1_rickshaw_teacher_ppo_runner_cfg()
     assert agent.num_steps_per_env == 24

@@ -10,6 +10,7 @@ from g1_rickshaw_lab.training_contract import (
     GUIDE_TRAINING_PARAMETERS,
     TRAINING_CONFIGURATION_SCHEMA_VERSION,
     finalize_training_configuration,
+    training_mimic_enabled,
     validate_guide_training_configuration,
     validate_training_configuration,
 )
@@ -46,6 +47,13 @@ def test_training_configuration_has_one_canonical_validator() -> None:
 
     assert normalized["training_parameters"] == DEFAULT_TRAINING_PARAMETERS
     assert validate_launcher_training_configuration(configuration) == normalized
+
+
+def test_training_mimic_defaults_off_and_preserves_explicit_enable() -> None:
+    configuration = _configuration()
+    assert not training_mimic_enabled(configuration)
+    configuration["resolved_parameters"]["mimic"] = True
+    assert training_mimic_enabled(configuration)
 
 
 def test_s0_configuration_binds_startup_randomization() -> None:

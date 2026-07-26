@@ -76,6 +76,7 @@ def _parser(mode: Literal["train", "play"]) -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--enable_cameras", action="store_true")
+    parser.add_argument("--mimic", action="store_true")
     parser.add_argument("--logger", choices=("tensorboard", "wandb", "jsonl"), default=None)
     parser.add_argument("--log_project_name", default=None)
     if mode == "train":
@@ -160,6 +161,12 @@ def _load_configs(args: argparse.Namespace, overrides: list[str], *, play: bool)
 
     env_cfg = load_env_cfg(args.task, play=play)
     agent_cfg = load_rl_cfg(args.task)
+    if args.mimic:
+        from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
+            enable_mimic,
+        )
+
+        enable_mimic(env_cfg)
     _apply_overrides(env_cfg, agent_cfg, overrides)
     if args.num_envs is not None:
         env_cfg.scene.num_envs = args.num_envs

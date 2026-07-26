@@ -31,6 +31,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     load_stage_checkpoint,
     normalize_rsl_rl_runner_configuration,
     require_pinned_rsl_rl,
+    training_mimic_enabled,
     validate_rollout_stage_coverage,
 )
 from g1_rickshaw_lab.artifact_io import write_json_atomic  # noqa: E402
@@ -124,6 +125,7 @@ def main() -> int:  # noqa: C901
         teacher_checkpoint[TRAINING_CONFIGURATION_KEY]
     )
     training_parameters = teacher_training_configuration["training_parameters"]
+    mimic = training_mimic_enabled(teacher_training_configuration)
     latent_dim = int(training_parameters["latent_dim"])
     history_length = int(training_parameters["history_length"])
     if teacher_training_configuration["task"] != args.task:
@@ -160,6 +162,7 @@ def main() -> int:  # noqa: C901
             num_envs=args.num_envs,
             seed=args.seed,
             history_length=history_length,
+            mimic=mimic,
         )
         agent_cfg.actor.latent_dim = latent_dim
         agent_cfg = normalize_rsl_rl_runner_configuration(agent_cfg)

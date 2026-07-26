@@ -31,6 +31,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     load_s2_resume_checkpoint,
     load_stage_checkpoint,
     training_artifact_interval,
+    training_mimic_enabled,
 )
 
 DEFAULT_TASK = "Mjlab-G1-Rickshaw-Flat-Student"
@@ -50,6 +51,10 @@ def _validate_resume_lineage(checkpoint: dict, teacher: Path, context: Path) -> 
 def _validate_resume_training_configuration(resume_configuration: dict, source_configuration: dict) -> None:
     if resume_configuration["training_parameters"] != source_configuration["training_parameters"]:
         raise ValueError("S2 resume cannot change latent_dim, history_length, or rollout_steps")
+    resume_mimic = training_mimic_enabled(resume_configuration)
+    source_mimic = training_mimic_enabled(source_configuration)
+    if resume_mimic != source_mimic:
+        raise ValueError("S2 resume cannot change mimic")
 
 
 def main() -> int:
@@ -85,6 +90,7 @@ def main() -> int:
     )
     s1_training_configuration = dict(context_checkpoint[TRAINING_CONFIGURATION_CHECKPOINT_KEY])
     training_parameters = s1_training_configuration["training_parameters"]
+    mimic = training_mimic_enabled(s1_training_configuration)
     rollout_steps = int(training_parameters["rollout_steps"])
     latent_dim = int(training_parameters["latent_dim"])
     history_length = int(training_parameters["history_length"])
@@ -152,6 +158,7 @@ def main() -> int:
             "launcher_arguments": list(remaining),
             "teacher_checkpoint": os.fspath(teacher.resolve()),
             "context_checkpoint": os.fspath(context.resolve()),
+            "mimic": mimic,
         },
         actor_initialized_from_teacher=bool(s1_training_configuration.get("actor_initialized_from_teacher")),
         stage_coverage=s1_training_configuration.get("stage_coverage"),
@@ -165,6 +172,7 @@ def main() -> int:
         lineage=lineage,
         curriculum_start_iteration=curriculum_iteration,
     )
+    mimic_arguments = ["--mimic"] if mimic else []
     run_mjlab_rsl_rl(
         "train",
         [
@@ -178,6 +186,7 @@ def main() -> int:
             str(seed),
             "--logger",
             "tensorboard",
+            *mimic_arguments,
             "--agent",
             STUDENT_AGENT_KEY,
             "--experiment_name",

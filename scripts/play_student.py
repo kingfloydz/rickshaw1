@@ -19,6 +19,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     CHECKPOINT_CURRICULUM_ITERATION_KEY,
     TRAINING_CONFIGURATION_KEY,
     load_stage_checkpoint,
+    training_mimic_enabled,
 )
 from g1_rickshaw_lab.workflows.rsl_rl import PlayOptions  # noqa: E402
 
@@ -88,7 +89,9 @@ def main() -> int:
         expected_stage="s2_student_ppo",
         validate_runtime=True,
     )
-    training_parameters = loaded_checkpoint[TRAINING_CONFIGURATION_KEY]["training_parameters"]
+    training_configuration = loaded_checkpoint[TRAINING_CONFIGURATION_KEY]
+    training_parameters = training_configuration["training_parameters"]
+    mimic = training_mimic_enabled(training_configuration)
     latent_dim = int(training_parameters["latent_dim"])
     history_length = int(training_parameters["history_length"])
     curriculum_iteration = loaded_checkpoint.get(CHECKPOINT_CURRICULUM_ITERATION_KEY)
@@ -101,6 +104,7 @@ def main() -> int:
         video_dir=None if args.video_dir is None else Path(args.video_dir).resolve(),
         export_only=args.export_only,
     )
+    mimic_arguments = ["--mimic"] if mimic else []
     run_mjlab_rsl_rl(
         "play",
         [
@@ -108,6 +112,7 @@ def main() -> int:
             args.task,
             "--checkpoint",
             str(checkpoint),
+            *mimic_arguments,
             f"agent.actor.latent_dim={latent_dim}",
             f"agent.actor.history_length={history_length}",
             f"env.history_length={history_length}",

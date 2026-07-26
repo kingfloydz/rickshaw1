@@ -39,6 +39,7 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     extract_gaussian_actor_state,
     extract_policy_observation_normalizer_state,
     load_stage_checkpoint,
+    training_mimic_enabled,
     validate_guide_training_configuration,
     validate_rollout_stage_coverage,
 )
@@ -304,6 +305,7 @@ def train(args: argparse.Namespace) -> Path:
         teacher_checkpoint[TRAINING_CONFIGURATION_CHECKPOINT_KEY]
     )
     training_parameters = teacher_training_configuration["training_parameters"]
+    mimic = training_mimic_enabled(teacher_training_configuration)
     latent_dim = int(training_parameters["latent_dim"])
     history_length = int(training_parameters["history_length"])
     rollout_steps = int(training_parameters["rollout_steps"])
@@ -390,6 +392,7 @@ def train(args: argparse.Namespace) -> Path:
             ),
             "teacher_rollout_samples": int(rollout_manifest["num_samples"]),
             "deterministic_algorithms": S1_DETERMINISTIC_ALGORITHMS,
+            "mimic": mimic,
         },
         actor_initialized_from_teacher=True,
         stage_coverage=stage_coverage,
