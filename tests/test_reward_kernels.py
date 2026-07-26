@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib.metadata import version
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -164,7 +165,8 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         assert term.func is func
         if name not in {"track_linear_velocity", "track_angular_velocity"}:
             assert term.func is mjlab_term.func
-        assert term.weight == pytest.approx(0.1 if name == "upright" else weight)
+        expected_weight = 0.1 if name == "upright" else 0.5 if name == "pose" else weight
+        assert term.weight == pytest.approx(expected_weight)
         local_params = dict(term.params)
         mjlab_params = dict(mjlab_term.params)
         if name in {"track_linear_velocity", "track_angular_velocity"}:
@@ -173,6 +175,30 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
             asset_cfg = local_params.pop("asset_cfg")
             assert asset_cfg.joint_names == (r".*",)
             mjlab_params.pop("asset_cfg")
+            mjlab_params["std_standing"] = {
+                pattern: 0.05
+                for pattern in (
+                    ".*hip_pitch.*",
+                    ".*hip_roll.*",
+                    ".*hip_yaw.*",
+                    ".*knee.*",
+                    ".*ankle_pitch.*",
+                    ".*ankle_roll.*",
+                    ".*waist_yaw.*",
+                    ".*waist_roll.*",
+                    ".*waist_pitch.*",
+                    ".*shoulder_pitch.*",
+                    ".*shoulder_roll.*",
+                    ".*shoulder_yaw.*",
+                    ".*elbow.*",
+                    ".*wrist.*",
+                )
+            }
+            for pattern in (".*waist_pitch.*", ".*wrist.*"):
+                mjlab_params["std_standing"][pattern] *= math.sqrt(2.0)
+            for key in ("std_walking", "std_running"):
+                for pattern in (".*waist_pitch.*", ".*wrist.*"):
+                    mjlab_params[key][pattern] *= math.sqrt(2.0)
         if name == "foot_swing_height":
             mjlab_params["target_height"] = 0.08
         assert local_params == mjlab_params
