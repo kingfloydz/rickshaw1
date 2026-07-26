@@ -9,28 +9,31 @@ NATURAL_FREQUENCY = 10.0 * 2.0 * 3.1415926535
 DAMPING_RATIO = 2.0
 
 
-def _reflected_inertia(
+def _reflected_inertia_from_two_stage_planetary(
     rotor_inertias: tuple[float, ...], gears: tuple[float, ...]
 ) -> float:
-    return sum(
-        inertia * gear * gear
-        for inertia, gear in zip(rotor_inertias, gears, strict=True)
+    return (
+        rotor_inertias[0] * (gears[1] * gears[2]) ** 2
+        + rotor_inertias[1] * gears[2] ** 2
+        + rotor_inertias[2]
     )
 
 
-ARMATURE_5020 = _reflected_inertia(
+ARMATURE_5020 = _reflected_inertia_from_two_stage_planetary(
     (0.139e-4, 0.017e-4, 0.169e-4),
     (1.0, 1.0 + 46.0 / 18.0, 1.0 + 56.0 / 16.0),
 )
-ARMATURE_7520_14 = _reflected_inertia(
+ARMATURE_7520_14 = _reflected_inertia_from_two_stage_planetary(
     (0.489e-4, 0.098e-4, 0.533e-4),
     (1.0, 4.5, 1.0 + 48.0 / 22.0),
 )
-ARMATURE_7520_22 = _reflected_inertia(
+ARMATURE_7520_22 = _reflected_inertia_from_two_stage_planetary(
     (0.489e-4, 0.109e-4, 0.738e-4),
     (1.0, 4.5, 5.0),
 )
-ARMATURE_4010 = _reflected_inertia((0.068e-4, 0.0, 0.0), (1.0, 5.0, 5.0))
+ARMATURE_4010 = _reflected_inertia_from_two_stage_planetary(
+    (0.068e-4, 0.0, 0.0), (1.0, 5.0, 5.0)
+)
 
 
 def _pd(armature: float) -> tuple[float, float]:
