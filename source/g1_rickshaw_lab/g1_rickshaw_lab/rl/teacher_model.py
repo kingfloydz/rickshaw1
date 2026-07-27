@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Independent
 
@@ -12,6 +11,7 @@ from g1_rickshaw_lab.policy_schema import (
     HISTORY_LENGTH,
     TEACHER_DYNAMIC_DIM,
     TEACHER_STATIC_DIM,
+    TEACHER_STATIC_FEATURE_DIM,
     validate_context_dim,
     validate_history_length,
 )
@@ -28,7 +28,6 @@ from .context_encoder import (
 
 DYNAMIC_PRIVILEGE_DIM = TEACHER_DYNAMIC_DIM
 STATIC_PRIVILEGE_DIM = TEACHER_STATIC_DIM
-STATIC_FEATURE_DIM = 32
 
 
 class TeacherEncoder(nn.Module):
@@ -43,11 +42,10 @@ class TeacherEncoder(nn.Module):
         self.latent_dim = validate_context_dim(latent_dim)
         self.history_length = validate_history_length(history_length)
         self.kernel_size = HISTORY_KERNEL_SIZES[self.history_length]
-        self.observation_input = nn.Conv1d(
-            OBSERVATION_DIM, FEATURE_DIM, kernel_size=1
-        )
-        self.privilege_input = nn.Conv1d(
-            DYNAMIC_PRIVILEGE_DIM, FEATURE_DIM, kernel_size=1
+        self.temporal_input = nn.Conv1d(
+            OBSERVATION_DIM + DYNAMIC_PRIVILEGE_DIM,
+            FEATURE_DIM,
+            kernel_size=1,
         )
         self.blocks = nn.Sequential(
             *(
@@ -56,11 +54,11 @@ class TeacherEncoder(nn.Module):
             )
         )
         self.static = nn.Sequential(
-            nn.Linear(STATIC_PRIVILEGE_DIM, STATIC_FEATURE_DIM),
+            nn.Linear(STATIC_PRIVILEGE_DIM, TEACHER_STATIC_FEATURE_DIM),
             nn.ELU(),
         )
         self.context = nn.Sequential(
-            nn.Linear(FEATURE_DIM + STATIC_FEATURE_DIM, FEATURE_DIM),
+            nn.Linear(FEATURE_DIM + TEACHER_STATIC_FEATURE_DIM, FEATURE_DIM),
             nn.ELU(),
             nn.Linear(FEATURE_DIM, self.latent_dim),
         )
@@ -91,11 +89,12 @@ class TeacherEncoder(nn.Module):
         if dynamic_privilege_history.shape[0] != batch or static_privilege.shape[0] != batch:
             raise ValueError("teacher encoder batch dimensions differ")
 
-        observation = self.observation_input(observation_history.transpose(1, 2))
-        privilege = self.privilege_input(
-            dynamic_privilege_history.transpose(1, 2)
+        temporal_history = torch.cat(
+            (observation_history, dynamic_privilege_history), dim=-1
         )
-        temporal = self.blocks(F.elu(observation + privilege))[:, :, -1]
+        temporal = self.blocks(
+            self.temporal_input(temporal_history.transpose(1, 2))
+        )[:, :, -1]
         static = self.static(static_privilege)
         return self.context(torch.cat((temporal, static), dim=-1))
 

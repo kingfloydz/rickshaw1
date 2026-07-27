@@ -27,6 +27,10 @@ from .policy_schema import (
     HISTORY_LENGTH,
     SUPPORTED_CONTEXT_DIMS,
     SUPPORTED_HISTORY_LENGTHS,
+    TEACHER_DYNAMIC_DIM,
+    TEACHER_STATIC_DIM,
+    TEACHER_STATIC_FEATURE_DIM,
+    TEMPORAL_FEATURE_DIM,
     validate_context_dim,
     validate_history_length,
 )
@@ -364,6 +368,10 @@ def validate_student_checkpoint_architecture(
                 return value
         return None
 
+    input_weight = tensor(
+        "context_encoder.input.weight",
+        "encoder.input.weight",
+    )
     latent_weight = tensor(
         "context_encoder.context.weight",
         "encoder.context.weight",
@@ -372,7 +380,16 @@ def validate_student_checkpoint_architecture(
         "actor.network.0.weight",
         "policy.network.0.weight",
     )
-    if latent_weight is None or latent_weight.ndim != 2 or latent_weight.shape[0] != latent_dim:
+    if input_weight is None or input_weight.shape != (
+        TEMPORAL_FEATURE_DIM,
+        ACTOR_OBSERVATION_DIM,
+        1,
+    ):
+        raise ValueError("checkpoint context encoder has an incompatible temporal input")
+    if latent_weight is None or latent_weight.shape != (
+        latent_dim,
+        TEMPORAL_FEATURE_DIM,
+    ):
         raise ValueError("checkpoint context encoder differs from its recorded latent width")
     if policy_weight is None or policy_weight.ndim != 2 or policy_weight.shape[1] != ACTOR_OBSERVATION_DIM + latent_dim:
         raise ValueError("student actor input differs from its recorded latent width")
@@ -388,13 +405,27 @@ def validate_teacher_checkpoint_architecture(
     state = next(iter(_state_dicts(checkpoint)), None)
     if not isinstance(state, Mapping):
         raise ValueError("teacher checkpoint has no actor state_dict")
-    encoder_weight = state.get("encoder.context.2.weight")
+    encoder_shapes = {
+        "encoder.temporal_input.weight": (
+            TEMPORAL_FEATURE_DIM,
+            ACTOR_OBSERVATION_DIM + TEACHER_DYNAMIC_DIM,
+            1,
+        ),
+        "encoder.static.0.weight": (
+            TEACHER_STATIC_FEATURE_DIM,
+            TEACHER_STATIC_DIM,
+        ),
+        "encoder.context.0.weight": (
+            TEMPORAL_FEATURE_DIM,
+            TEMPORAL_FEATURE_DIM + TEACHER_STATIC_FEATURE_DIM,
+        ),
+        "encoder.context.2.weight": (latent_dim, TEMPORAL_FEATURE_DIM),
+    }
     policy_weight = state.get("policy.network.0.weight")
-    if (
-        not torch.is_tensor(encoder_weight)
-        or encoder_weight.shape != (latent_dim, 64)
-    ):
-        raise ValueError("teacher encoder differs from its recorded latent width")
+    for name, shape in encoder_shapes.items():
+        value = state.get(name)
+        if not torch.is_tensor(value) or value.shape != shape:
+            raise ValueError("teacher encoder differs from the published architecture")
     if (
         not torch.is_tensor(policy_weight)
         or policy_weight.ndim != 2

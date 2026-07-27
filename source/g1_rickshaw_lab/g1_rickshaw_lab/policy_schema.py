@@ -10,6 +10,8 @@ ACTOR_OBSERVATION_DIM: Final[int] = 98
 HISTORY_LENGTH: Final[int] = 61
 SUPPORTED_HISTORY_LENGTHS: Final[tuple[int, ...]] = (61, 91)
 DEFAULT_CONTEXT_DIM: Final[int] = 16
+TEMPORAL_FEATURE_DIM: Final[int] = 48
+TEACHER_STATIC_FEATURE_DIM: Final[int] = 16
 SUPPORTED_CONTEXT_DIMS: Final[tuple[int, ...]] = (
     4,
     6,
@@ -54,8 +56,10 @@ __all__ = [
     "SUPPORTED_HISTORY_LENGTHS",
     "SUPPORTED_CONTEXT_DIMS",
     "TEACHER_DYNAMIC_DIM",
+    "TEACHER_STATIC_FEATURE_DIM",
     "TEACHER_STATIC_DIM",
     "TEACHER_TERRAIN_SLOPE_BOUNDS",
+    "TEMPORAL_FEATURE_DIM",
     "validate_context_dim",
     "validate_history_length",
 ]

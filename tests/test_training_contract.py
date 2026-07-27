@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 import torch
 
-from g1_rickshaw_lab.policy_schema import ACTOR_OBSERVATION_DIM
+from g1_rickshaw_lab.policy_schema import (
+    ACTOR_OBSERVATION_DIM,
+    TEACHER_DYNAMIC_DIM,
+    TEACHER_STATIC_DIM,
+    TEACHER_STATIC_FEATURE_DIM,
+    TEMPORAL_FEATURE_DIM,
+)
 from g1_rickshaw_lab.training_contract import (
     GUIDE_MAX_ITERATIONS,
     GUIDE_TRAINING_PARAMETERS,
@@ -36,7 +42,9 @@ def test_observation_normalizer_state_survives_s0_s1_s2_handoff() -> None:
 
     student = {
         "model_state_dict": {
-            "context_encoder.input.weight": torch.zeros(64, ACTOR_OBSERVATION_DIM, 1),
+            "context_encoder.input.weight": torch.zeros(
+                TEMPORAL_FEATURE_DIM, ACTOR_OBSERVATION_DIM, 1
+            ),
             "actor.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + 16),
             **{f"obs_normalizer.{key}": value for key, value in normalizer.items()},
         }
@@ -121,13 +129,32 @@ def test_checkpoint_tensor_widths_match_the_recorded_latent(latent_dim: int) -> 
     configuration = {"training_parameters": {"latent_dim": latent_dim}}
     student = {
         "model_state_dict": {
-            "context_encoder.context.weight": torch.zeros(latent_dim, 64),
+            "context_encoder.input.weight": torch.zeros(
+                TEMPORAL_FEATURE_DIM, ACTOR_OBSERVATION_DIM, 1
+            ),
+            "context_encoder.context.weight": torch.zeros(
+                latent_dim, TEMPORAL_FEATURE_DIM
+            ),
             "actor.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + latent_dim),
         }
     }
     teacher = {
         "actor_state_dict": {
-            "encoder.context.2.weight": torch.zeros(latent_dim, 64),
+            "encoder.temporal_input.weight": torch.zeros(
+                TEMPORAL_FEATURE_DIM,
+                ACTOR_OBSERVATION_DIM + TEACHER_DYNAMIC_DIM,
+                1,
+            ),
+            "encoder.static.0.weight": torch.zeros(
+                TEACHER_STATIC_FEATURE_DIM, TEACHER_STATIC_DIM
+            ),
+            "encoder.context.0.weight": torch.zeros(
+                TEMPORAL_FEATURE_DIM,
+                TEMPORAL_FEATURE_DIM + TEACHER_STATIC_FEATURE_DIM,
+            ),
+            "encoder.context.2.weight": torch.zeros(
+                latent_dim, TEMPORAL_FEATURE_DIM
+            ),
             "policy.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + latent_dim),
         }
     }
@@ -142,4 +169,22 @@ def test_checkpoint_tensor_widths_match_the_recorded_latent(latent_dim: int) -> 
             512, ACTOR_OBSERVATION_DIM + 17
         )
     with pytest.raises(ValueError, match="recorded latent width"):
+        validate_student_checkpoint_architecture(student, configuration)
+
+
+def test_checkpoint_validation_rejects_the_legacy_temporal_width() -> None:
+    configuration = {"training_parameters": {"latent_dim": 16}}
+    student = {
+        "model_state_dict": {
+            "context_encoder.input.weight": torch.zeros(
+                64, ACTOR_OBSERVATION_DIM, 1
+            ),
+            "context_encoder.context.weight": torch.zeros(16, 64),
+            "actor.network.0.weight": torch.zeros(
+                512, ACTOR_OBSERVATION_DIM + 16
+            ),
+        }
+    }
+
+    with pytest.raises(ValueError, match="incompatible temporal input"):
         validate_student_checkpoint_architecture(student, configuration)

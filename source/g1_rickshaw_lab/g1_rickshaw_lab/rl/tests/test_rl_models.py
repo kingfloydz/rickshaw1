@@ -19,6 +19,7 @@ from g1_rickshaw_lab.rl import (
     PrivilegedCritic,
     temporal_receptive_field,
 )
+from g1_rickshaw_lab.rl.context_encoder import FEATURE_DIM
 
 
 class TestRickshawRLModels(unittest.TestCase):
@@ -29,6 +30,8 @@ class TestRickshawRLModels(unittest.TestCase):
         encoder = ContextEncoder()
         self.assertEqual(encoder.receptive_field, temporal_receptive_field())
         self.assertEqual(encoder.receptive_field, 61)
+        self.assertEqual(FEATURE_DIM, 48)
+        self.assertEqual(encoder.input.out_channels, FEATURE_DIM)
         self.assertEqual(encoder(torch.zeros(2, 61, ACTOR_OBSERVATION_DIM)).shape, (2, 16))
 
         history = torch.full((1, 61, ACTOR_OBSERVATION_DIM), 0.01, requires_grad=True)
@@ -96,8 +99,9 @@ class TestRickshawRLModels(unittest.TestCase):
             for layer in teacher.encoder.context
             if isinstance(layer, nn.Linear)
         ]
-        self.assertEqual(context_shapes, [(96, 64), (64, 16)])
+        self.assertEqual(context_shapes, [(64, 48), (48, 16)])
         student = G1RickshawStudentActor()
+        self.assertEqual(student.context_encoder.context.in_features, 48)
         student_distribution, z_hat = student.forward_with_context(current, history)
 
         self.assertEqual(teacher_distribution.mean.shape, (batch, 29))

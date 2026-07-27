@@ -12,12 +12,13 @@ from g1_rickshaw_lab.policy_schema import (
     ACTOR_OBSERVATION_DIM,
     DEFAULT_CONTEXT_DIM,
     HISTORY_LENGTH,
+    TEMPORAL_FEATURE_DIM,
     validate_context_dim,
     validate_history_length,
 )
 
 OBSERVATION_DIM: Final[int] = ACTOR_OBSERVATION_DIM
-FEATURE_DIM: Final[int] = 64
+FEATURE_DIM: Final[int] = TEMPORAL_FEATURE_DIM
 KERNEL_SIZE: Final[int] = 5
 DILATIONS: Final[tuple[int, ...]] = (1, 2, 4, 8)
 HISTORY_KERNEL_SIZES: Final[dict[int, int]] = {61: 5, 91: 7}

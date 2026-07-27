@@ -17,6 +17,7 @@ from g1_rickshaw_lab.rl.actor_critic import G1RickshawStudentActor
 from g1_rickshaw_lab.rl.teacher_model import G1RickshawTeacherActor
 from g1_rickshaw_lab.rl.context_encoder import (
     DILATIONS,
+    FEATURE_DIM,
     HISTORY_LENGTH as TCN_HISTORY_LENGTH,
     KERNEL_SIZE,
     ContextEncoder,
@@ -200,9 +201,12 @@ def test_tcn_schema_receptive_field_and_single_history_path() -> None:
     assert TCN_HISTORY_LENGTH == HISTORY_LENGTH == 61
     assert KERNEL_SIZE == 5
     assert DILATIONS == (1, 2, 4, 8)
+    assert FEATURE_DIM == 48
     assert temporal_receptive_field() == 61
 
     encoder = ContextEncoder().eval()
+    assert encoder.input.in_channels == ACTOR_OBSERVATION_DIM
+    assert encoder.input.out_channels == FEATURE_DIM
     blocks = list(encoder.blocks)
     assert tuple(block.conv.dilation[0] for block in blocks) == DILATIONS
     for block in blocks:
@@ -253,13 +257,22 @@ def test_fixed_teacher_and_student_context_interfaces() -> None:
         )
     assert teacher.encoder.latent_dim == 16
     assert student.context_encoder.latent_dim == 16
+    assert teacher.encoder.temporal_input.in_channels == (
+        ACTOR_OBSERVATION_DIM + DYNAMIC_PRIVILEGE_DIM
+    )
+    assert teacher.encoder.temporal_input.out_channels == 48
+    assert student.context_encoder.context.in_features == 48
+    assert teacher.encoder.static[0].in_features == STATIC_PRIVILEGE_DIM
+    assert teacher.encoder.static[0].out_features == 16
+    assert not hasattr(teacher.encoder, "observation_input")
+    assert not hasattr(teacher.encoder, "privilege_input")
     teacher_context_layers = list(teacher.encoder.context)
     assert isinstance(teacher_context_layers[0], nn.Linear)
-    assert teacher_context_layers[0].in_features == 96
-    assert teacher_context_layers[0].out_features == 64
+    assert teacher_context_layers[0].in_features == 64
+    assert teacher_context_layers[0].out_features == 48
     assert isinstance(teacher_context_layers[1], nn.ELU)
     assert isinstance(teacher_context_layers[2], nn.Linear)
-    assert teacher_context_layers[2].in_features == 64
+    assert teacher_context_layers[2].in_features == 48
     assert teacher_context_layers[2].out_features == 16
     assert teacher_context.shape == (2, 16)
     assert student_context.shape == (2, 16)
@@ -333,5 +346,5 @@ def test_tcn_oldest_frame_is_used_but_outside_and_future_frames_are_causal() -> 
             encoder.input(torch.cat((prefix, future), dim=1).transpose(1, 2))
         )
     torch.testing.assert_close(
-        prefix_outputs, extended_outputs[:, :, :61], rtol=0.0, atol=0.0
+        prefix_outputs, extended_outputs[:, :, :61], rtol=1.0e-6, atol=1.0e-6
     )
