@@ -8,6 +8,5 @@ __pycache__/
 dist/
 logs/
 outputs/
-.gitignore
-.RUN_COMMANDS.md
+MUJOCO_LOG.TXT
 

@@ -24,7 +24,6 @@ from .mdp.rewards import (
     HITCH_HEIGHT_RECOVERY_DEADBAND_M,
     HITCH_HEIGHT_RECOVERY_SCALE_M,
     angle_deviation_l2_value,
-    hitch_height_exp_value,
     hitch_height_recovery_l2_value,
     mimic_joint_error_exp_value,
     peak_force_value,
@@ -275,16 +274,6 @@ def peak_force(env: Any, soft_limit: float = 10.0, hard_limit: float = 50.0) -> 
     )
 
 
-def hitch_height_exp(env: Any, std: float) -> torch.Tensor:
-    ensure_mjlab_physical_state(env)
-    return hitch_height_exp_value(
-        env.rickshaw_state.hitch_height,
-        env.hitch_height_target,
-        env.rickshaw_state.two_wheel_contact,
-        std=std,
-    )
-
-
 def hitch_height_recovery_l2(
     env: Any,
     deadband: float = HITCH_HEIGHT_RECOVERY_DEADBAND_M,
@@ -305,7 +294,6 @@ __all__ = [
     "critic_actor_observation",
     "critic_privileged_state",
     "current_actor_observation",
-    "hitch_height_exp",
     "hitch_height_recovery_l2",
     "mimic_joint_position_exp",
     "mimic_joint_velocity_exp",

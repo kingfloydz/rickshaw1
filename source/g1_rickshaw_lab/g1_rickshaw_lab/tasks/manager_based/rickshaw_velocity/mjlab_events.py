@@ -19,7 +19,6 @@ from g1_rickshaw_lab.assets.rickshaw import (
     HITCH_SITE_NAMES,
     RICKSHAW_CENTER_OF_MASS,
     RICKSHAW_TOTAL_MASS,
-    RICKSHAW_URDF_SPEC,
     WHEEL_JOINT_NAMES,
     WHEEL_LINK_NAMES,
     WHEEL_RADIUS,
@@ -30,19 +29,13 @@ from g1_rickshaw_lab.static_equilibrium import MujocoStaticEquilibrium, load_muj
 
 from .closed_chain import CONNECTION_NAMES, build_assembled_spec
 from .mdp.dynamics import (
-    AnalyticForceCfg,
-    AnalyticHandleForceState,
     RickshawKinematicState,
-    RickshawMassProperties,
     combine_mass_properties,
     connect_constraint_forces,
-    effective_cart_mass,
-    effective_wheel_damping,
     relative_position_in_yaw_frame,
     relative_yaw_from_quaternions,
     rickshaw_pitch_from_quaternion,
     rolling_resistance_force,
-    update_analytic_handle_force_state,
     wheel_longitudinal_slip,
 )
 from .mdp.events import (
@@ -67,7 +60,6 @@ from .terrain import (
 class MjlabTaskRuntimeCfg:
     domain: DomainRandomizationCfg
     rickshaw_pose: RickshawPoseTargetCfg
-    analytic_force: AnalyticForceCfg
     history_length: int = HISTORY_LENGTH
     play: bool = False
     terrain_slope: float | None = None
@@ -188,7 +180,6 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     zeros = torch.zeros(env.num_envs, device=env.device)
     zeros3 = torch.zeros((env.num_envs, 3), device=env.device)
     env.rickshaw_kinematic_state = RickshawKinematicState.initialized(zeros, zeros3)
-    env.analytic_force_state = AnalyticHandleForceState.initialized(zeros)
     env.cart_previous_com_velocity_w = torch.zeros((env.num_envs, 3), device=env.device)
     env.last_rolling_force_w = torch.zeros((env.num_envs, 2, 3), device=env.device)
     env.rickshaw_speed_s = zeros.clone()
@@ -267,28 +258,11 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
     dof_grid, wheel_grid = torch.meshgrid(ids, wheel_dof_ids, indexing="ij")
     wheel_damping = torch.stack((sampled["wheel.left_damping"], sampled["wheel.right_damping"]), dim=-1)
     env.sim.model.dof_damping[dof_grid, wheel_grid] = wheel_damping
-    env._wheel_damping = wheel_damping
-
     env.c_rr = sampled["rolling_resistance.c_rr"]
     cart_mass = RICKSHAW_TOTAL_MASS + payload_mass
     nominal_com = torch.tensor(RICKSHAW_CENTER_OF_MASS, device=env.device)
     cart_com = (RICKSHAW_TOTAL_MASS * nominal_com[None, :] + payload_mass[:, None] * payload_com) / cart_mass[:, None]
     env.effective_cart_mass_com = torch.cat((cart_mass[:, None], cart_com), dim=-1)
-    wheel_radius = torch.full((env.num_envs, 2), RICKSHAW_URDF_SPEC.wheel_radius, device=env.device)
-    wheel_spin = torch.full((env.num_envs, 2), RICKSHAW_URDF_SPEC.wheel_inertia_diagonal[1], device=env.device)
-    axle_z = RICKSHAW_URDF_SPEC.wheel_radius
-    env.rickshaw_mass_properties = RickshawMassProperties(
-        m_cart=cart_mass,
-        com_x_from_axle=cart_com[:, 0],
-        com_z_from_axle=cart_com[:, 2] - axle_z,
-        pitch_inertia_about_axle=torch.full(
-            (env.num_envs,), float(cfg.domain.calibration["rickshaw.pitch_inertia_about_axle"]), device=env.device
-        ),
-        m_eff=effective_cart_mass(cart_mass, wheel_spin, wheel_radius),
-        b_eff=effective_wheel_damping(wheel_damping, wheel_radius),
-        handle_x_from_axle=torch.full((env.num_envs,), RICKSHAW_URDF_SPEC.hitch_x, device=env.device),
-        handle_z_from_axle=torch.full((env.num_envs,), RICKSHAW_URDF_SPEC.hitch_z - axle_z, device=env.device),
-    )
     _update_teacher_static_domain(env, cfg.domain, sampled)
 
 
@@ -368,7 +342,6 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
         torch.zeros((env_ids.numel(), 3), device=env.device),
         env_ids,
     )
-    env.analytic_force_state.reset(env_ids)
     env.cart_previous_com_velocity_w[env_ids] = 0.0
     env.last_rolling_force_w[env_ids] = 0.0
     env._mjlab_physical_state_step = -1
@@ -451,18 +424,6 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     )
     env.rickshaw_state.hand_force_w[:] = -force_on_cart
     env.cart_previous_com_velocity_w[:] = cart_velocity
-
-    update_analytic_handle_force_state(
-        env.analytic_force_state,
-        env.rickshaw_speed_s,
-        env.rickshaw_kinematic_state.forward_acceleration,
-        pitch,
-        env.rickshaw_kinematic_state.pitch_angular_acceleration,
-        env.c_rr,
-        wheel_normal,
-        env.rickshaw_mass_properties,
-        env.runtime_cfg.analytic_force,
-    )
 
     rolling_force = rolling_resistance_force(
         cart.data.body_link_lin_vel_w[:, env.wheel_body_ids],

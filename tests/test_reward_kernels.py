@@ -10,13 +10,8 @@ import torch
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp import rewards
 
 
-def test_rickshaw_height_reward_kernels() -> None:
+def test_rickshaw_height_recovery_reward_kernel() -> None:
     height = torch.tensor([0.80, 0.82, 0.90])
-    contact = torch.tensor([True, True, False])
-    torch.testing.assert_close(
-        rewards.hitch_height_exp_value(height, 0.80, contact),
-        torch.tensor([1.0, torch.exp(torch.tensor(-1.0)), 0.0]),
-    )
     torch.testing.assert_close(
         rewards.hitch_height_recovery_l2_value(height, 0.80),
         torch.tensor([0.0, 0.0, 1.0]),
@@ -113,31 +108,31 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     rickshaw_penalties = {
         "rickshaw_forward_acceleration_l2": (
             mjlab_mdp.rickshaw_forward_acceleration_l2,
-            -0.01,
+            -0.05,
         ),
         "rickshaw_pitch_angular_acceleration_l2": (
             mjlab_mdp.rickshaw_pitch_angular_acceleration_l2,
-            -0.0025,
+            -0.01,
         ),
         "rickshaw_yaw_angular_acceleration_l2": (
             mjlab_mdp.rickshaw_yaw_angular_acceleration_l2,
-            -0.0025,
+            -0.01,
         ),
         "rickshaw_pitch_angular_velocity_l2": (
             mjlab_mdp.rickshaw_pitch_angular_velocity_l2,
-            -0.05,
+            -1.0,
         ),
         "rickshaw_wheel_slip_l2": (mjlab_mdp.rickshaw_wheel_slip_l2, -0.1),
     }
     relative_pose_and_force_penalties = {
         "rickshaw_g1_relative_position_l2": (
             mjlab_mdp.rickshaw_g1_relative_position_l2,
-            -1.0,
+            -4.0,
             {"axle_weight": 4.0},
         ),
         "rickshaw_g1_relative_yaw_l2": (
             mjlab_mdp.rickshaw_g1_relative_yaw_l2,
-            -0.5,
+            -0.6,
             {},
         ),
         "rickshaw_absolute_pitch_deviation_l2": (
@@ -147,7 +142,7 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         ),
         "peak_force": (
             mjlab_mdp.peak_force,
-            -4.0,
+            -3.0,
             {"soft_limit": 10.0, "hard_limit": 50.0},
         ),
     }
@@ -314,9 +309,9 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         "mimic_joint_position",
         "mimic_joint_velocity",
     }
-    assert mimic_cfg.rewards["mimic_joint_position"].weight == 1.0
+    assert mimic_cfg.rewards["mimic_joint_position"].weight == 2.0
     assert mimic_cfg.rewards["mimic_joint_position"].params["std"] == 0.3
-    assert mimic_cfg.rewards["mimic_joint_velocity"].weight == 1.0
+    assert mimic_cfg.rewards["mimic_joint_velocity"].weight == 30.0
     assert mimic_cfg.rewards["mimic_joint_velocity"].params["std"] == 1.0
     for name in ("mimic_joint_position", "mimic_joint_velocity"):
         asset_cfg = mimic_cfg.rewards[name].params["asset_cfg"]

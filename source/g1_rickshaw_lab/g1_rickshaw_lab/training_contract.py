@@ -34,7 +34,7 @@ from .policy_schema import (
     validate_context_dim,
     validate_history_length,
 )
-from .project_paths import CONFIG_ROOT, PROJECT_ROOT
+from .project_paths import CONFIG_ROOT
 from .provenance import (
     RSL_RL_VERSION,
     CheckpointMetadata,
@@ -52,7 +52,6 @@ TRAINING_CONFIGURATION_KEY = "g1_rickshaw_training_configuration"
 TRAINING_CONFIGURATION_SCHEMA_VERSION = 16
 EXPECTED_RSL_RL_DISTRIBUTION_VERSION = RSL_RL_VERSION.removeprefix("v")
 
-REPOSITORY_ROOT = PROJECT_ROOT
 DEFAULT_FEASIBILITY_PATH = CONFIG_ROOT / "feasibility_envelope.yaml"
 GUIDE_TRAINING_TASK = "Mjlab-G1-Rickshaw-Slopes-Teacher"
 GUIDE_TRAINING_NUM_ENVS = 8192

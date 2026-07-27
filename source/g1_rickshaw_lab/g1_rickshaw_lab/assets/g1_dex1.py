@@ -43,7 +43,6 @@ G1_DEX1_ASSET_DIR = ASSET_ROOT / "g1_dex1"
 G1_DEX1_URDF_PATH = G1_DEX1_ASSET_DIR / "g1_29dof_mode_15_with_dex1_1.urdf"
 
 G1_DOF_COUNT = 29
-G1_TOTAL_MASS = 34.1299349
 FIXED_GRIP_POSITION = -0.01609
 GRASP_SITE_X = 0.11066269
 GRASP_SITE_NAMES = ("left_grasp_site", "right_grasp_site")
@@ -349,7 +348,6 @@ __all__ = [
     "G1_JOINT_DAMPING",
     "G1_JOINT_EFFORT_LIMITS",
     "G1_JOINT_STIFFNESS",
-    "G1_TOTAL_MASS",
     "GRASP_SITE_NAMES",
     "JointPartition",
     "add_g1_position_actuators",

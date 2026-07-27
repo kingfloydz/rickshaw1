@@ -12,7 +12,6 @@ import time
 from typing import Any
 
 from _mjlab_wrappers import (
-    add_mjlab_sources_to_path,
     add_project_source_to_path,
     load_mjlab_configs,
     require_existing_file,
@@ -143,7 +142,6 @@ def _checkpoint(
 
 
 def train(args: argparse.Namespace) -> Path:  # noqa: C901
-    add_mjlab_sources_to_path()
     require_pinned_rsl_rl()
     seed_s1_training(args.training_seed)
     teacher_path = require_existing_file(args.teacher, "teacher checkpoint").resolve()

@@ -2,17 +2,12 @@
 
 from importlib.util import find_spec
 
-from .env_cfg import (
-    G1RickshawSlopesEnvCfg,
-    G1RickshawSlopesPlayEnvCfg,
-    g1_rickshaw_env_cfg,
-)
+from .env_cfg import g1_rickshaw_env_cfg
 
 TRAIN_TASK_ID = "Mjlab-G1-Rickshaw-Slopes-Teacher"
 STUDENT_TASK_ID = "Mjlab-G1-Rickshaw-Slopes-Student"
 HISTORY_91_TEACHER_TASK_ID = TRAIN_TASK_ID + "-H91"
 HISTORY_91_STUDENT_TASK_ID = STUDENT_TASK_ID + "-H91"
-PLAY_TASK_ID = STUDENT_TASK_ID
 
 if find_spec("mjlab") is not None:
     from mjlab.tasks.registry import register_mjlab_task
@@ -41,11 +36,8 @@ if find_spec("mjlab") is not None:
         )
 
 __all__ = [
-    "G1RickshawSlopesEnvCfg",
-    "G1RickshawSlopesPlayEnvCfg",
     "HISTORY_91_STUDENT_TASK_ID",
     "HISTORY_91_TEACHER_TASK_ID",
-    "PLAY_TASK_ID",
     "STUDENT_TASK_ID",
     "TRAIN_TASK_ID",
     "g1_rickshaw_env_cfg",

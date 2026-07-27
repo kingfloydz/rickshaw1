@@ -6,13 +6,13 @@ before returning an object that can be used by training or deployment code.
 
 Canonical ``feasibility_envelope.yaml`` layout::
 
-    schema_version: 4
+    schema_version: 5
     joint_order: [29 exact G1 joint names]
     ranges:
       payload.mass: {min: -3.0, max: 3.0}
       # all names in REQUIRED_FEASIBILITY_RANGES are required
     calibration:
-      rickshaw.pitch_inertia_about_axle: 1.0
+      rickshaw_pose.hitch_height_tolerance: 0.01
       # all names in REQUIRED_CALIBRATION_FIELDS are required
 
 Nested mappings are accepted in ``ranges`` and ``calibration`` and are
@@ -30,7 +30,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-FEASIBILITY_SCHEMA_VERSION = 4
+FEASIBILITY_SCHEMA_VERSION = 5
 
 # This is the source-URDF order after applying the guide's one-time grouping
 # rule: lower_names + waist_names + arm_names.  Runtime regex ordering is never
@@ -83,23 +83,19 @@ REQUIRED_FEASIBILITY_RANGES = (
 # hardware specification, calibration, or feasibility validation has run.
 # Vector lengths are validated below; scalar fields must be finite.
 REQUIRED_CALIBRATION_FIELDS = (
-    "rickshaw.pitch_inertia_about_axle",
     "rickshaw_pose.hitch_height_tolerance",
     "rickshaw_pose.hitch_vertical_speed_tolerance",
     "rolling_resistance.c_rr_nominal",
     "terrain.friction_nominal",
-    "safety.minimum_wheel_normal_force",
     "safety.overspeed_margin",
 )
 
 _CALIBRATION_STRICTLY_POSITIVE = frozenset(
     {
-        "rickshaw.pitch_inertia_about_axle",
         "rickshaw_pose.hitch_height_tolerance",
         "rickshaw_pose.hitch_vertical_speed_tolerance",
         "rolling_resistance.c_rr_nominal",
         "terrain.friction_nominal",
-        "safety.minimum_wheel_normal_force",
         "safety.overspeed_margin",
     }
 )
@@ -459,22 +455,6 @@ def load_feasibility_envelope(path: str | Path) -> FeasibilityEnvelope:
     return FeasibilityEnvelope.from_mapping(_load_yaml_mapping(file_path), source_path=file_path)
 
 
-def assert_sampling_ranges_within_envelope(
-    sampling_ranges: Mapping[str, Any],
-    envelope: FeasibilityEnvelope | str | Path,
-    *,
-    require_all: bool = True,
-    tolerance: float = 1.0e-12,
-) -> FeasibilityEnvelope:
-    """Assert that every configured training interval lies in scan output."""
-
-    loaded = load_feasibility_envelope(envelope) if isinstance(envelope, (str, Path)) else envelope
-    if not isinstance(loaded, FeasibilityEnvelope):
-        raise TypeError("envelope must be a FeasibilityEnvelope or YAML path")
-    loaded.assert_sampling_ranges(sampling_ranges, require_all=require_all, tolerance=tolerance)
-    return loaded
-
-
 __all__ = [
     "ConfigurationContractError",
     "ConfigurationDependencyError",
@@ -484,7 +464,6 @@ __all__ = [
     "NumericRange",
     "REQUIRED_CALIBRATION_FIELDS",
     "REQUIRED_FEASIBILITY_RANGES",
-    "assert_sampling_ranges_within_envelope",
     "load_feasibility_envelope",
     "validate_joint_order",
 ]

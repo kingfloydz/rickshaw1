@@ -15,19 +15,13 @@ from typing import Any, Final
 
 import numpy as np
 
-POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 5
+POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 6
 GUIDE_POLICY_EVALUATION_TASK: Final[str] = "Mjlab-G1-Rickshaw-Slopes-Student"
 COMMAND_PHASE_LABELS: Final[tuple[str, ...]] = (
     "standing",
     "moving",
 )
-CROSS_CASE_LABELS: Final[tuple[str, ...]] = (
-    "RANDOM",
-)
 FORMAL_EVALUATION_COMMAND_PROTOCOL: Final[str] = "deterministic_0_to_1_to_0_mps"
-FORMAL_EVALUATION_CROSS_CASE_PROTOCOL: Final[str] = (
-    "single_training_distribution"
-)
 METRIC_DEFINITIONS: Final[dict[str, str]] = {
     "tracking.lin_vel_x_rmse_mps": "rickshaw forward-speed RMSE over policy samples",
     "tracking.ang_vel_z_rmse_radps": "rickshaw yaw-rate RMSE over policy samples",
@@ -43,18 +37,9 @@ METRIC_DEFINITIONS: Final[dict[str, str]] = {
     "actuation.power": "sum(abs(actuator_force * joint_velocity)) over the 29 policy joints",
     "connection.residual": "maximum position residual of the two MuJoCo site connections",
     "connection.force": "resultant robot-on-cart hand-force norm",
-    "analytic_force.relative_error": (
-        "instantaneous symmetric relative error after projecting robot-on-cart connection force"
-    ),
-    "actuation.arm/leg_torque_margin": (
-        "minimum per-environment 1-|actuator_force|/current actuator.effort_limit"
-    ),
+    "actuation.arm/leg_torque_margin": ("minimum per-environment 1-|actuator_force|/current actuator.effort_limit"),
     "distillation.teacher_student_action_kl": "KL(teacher Gaussian || student Gaussian), summed over 29 actions",
-    "curriculum.distribution": "policy-sample histogram for training stage",
-    "stratified": (
-        "full metric reductions under the deterministic 0->1->0 m/s command protocol "
-        "over the single training distribution"
-    ),
+    "stratified": ("full metric reductions by command phase under the deterministic 0->1->0 m/s protocol"),
 }
 
 
@@ -76,17 +61,12 @@ def command_phase_labels(
 
 
 def validate_stratified_summary(value: Any, *, label: str = "stratified") -> None:
-    """Require the complete phase/cross-case evaluation grid in an artifact."""
+    """Require the complete command-phase evaluation grid in an artifact."""
 
-    if not isinstance(value, Mapping) or set(value) != {
-        "by_phase",
-        "by_cross_case",
-    }:
+    if not isinstance(value, Mapping) or set(value) != {"by_phase"}:
         raise ValueError(f"{label} must contain the exact stratified reductions")
 
-    def validate_leaves(
-        raw: Any, expected: Sequence[str], *, leaf_label: str
-    ) -> None:
+    def validate_leaves(raw: Any, expected: Sequence[str], *, leaf_label: str) -> None:
         if not isinstance(raw, Mapping) or set(raw) != set(expected):
             raise ValueError(f"{leaf_label} has an incomplete label set")
         for name, summary in raw.items():
@@ -96,11 +76,7 @@ def validate_stratified_summary(value: Any, *, label: str = "stratified") -> Non
             episodes = summary.get("episodes")
             completed = episodes.get("completed") if isinstance(episodes, Mapping) else None
             fall_rate = episodes.get("fall_rate") if isinstance(episodes, Mapping) else None
-            causes = (
-                episodes.get("termination_cause_histogram")
-                if isinstance(episodes, Mapping)
-                else None
-            )
+            causes = episodes.get("termination_cause_histogram") if isinstance(episodes, Mapping) else None
             if (
                 isinstance(completed, bool)
                 or not isinstance(completed, int)
@@ -113,11 +89,8 @@ def validate_stratified_summary(value: Any, *, label: str = "stratified") -> Non
                 raise ValueError(f"{leaf_label}.{name} has incomplete episode evidence")
 
     validate_leaves(value["by_phase"], COMMAND_PHASE_LABELS, leaf_label=f"{label}.by_phase")
-    validate_leaves(
-        value["by_cross_case"],
-        CROSS_CASE_LABELS,
-        leaf_label=f"{label}.by_cross_case",
-    )
+
+
 def validate_s1_baseline_diagnostic_report(
     report: Any,
     *,
@@ -150,19 +123,11 @@ def validate_s1_baseline_diagnostic_report(
         or not isinstance(episodes_per_stage, int)
         or episodes_per_stage <= 0
         or not expected_seeds
-        or any(
-            isinstance(seed, bool) or not isinstance(seed, int)
-            for seed in expected_seeds
-        )
+        or any(isinstance(seed, bool) or not isinstance(seed, int) for seed in expected_seeds)
         or len(set(expected_seeds)) != len(expected_seeds)
-        or episodes_per_stage
-        % (len(expected_seeds) * len(CROSS_CASE_LABELS))
-        != 0
+        or episodes_per_stage % len(expected_seeds) != 0
     ):
-        raise ValueError(
-            "S1/S2 diagnostic episode quota must be positive and divisible "
-            "by the number of fixed seeds and cross cases"
-        )
+        raise ValueError("S1/S2 diagnostic episode quota must be positive and divisible by the number of fixed seeds")
     curriculum_stages = evaluation.get("curriculum_stages") if isinstance(evaluation, Mapping) else None
     num_envs = evaluation.get("num_envs") if isinstance(evaluation, Mapping) else None
     if (
@@ -173,10 +138,7 @@ def validate_s1_baseline_diagnostic_report(
         or isinstance(num_envs, bool)
         or not isinstance(num_envs, int)
         or num_envs <= 0
-        or evaluation.get("command_protocol")
-        != FORMAL_EVALUATION_COMMAND_PROTOCOL
-        or evaluation.get("cross_case_protocol")
-        != FORMAL_EVALUATION_CROSS_CASE_PROTOCOL
+        or evaluation.get("command_protocol") != FORMAL_EVALUATION_COMMAND_PROTOCOL
         or not isinstance(curriculum_stages, (list, tuple))
         or list(curriculum_stages) != ["training"]
     ):
@@ -190,9 +152,7 @@ def validate_s1_baseline_diagnostic_report(
         stage_report = stages.get(stage_name)
         if not isinstance(stage_report, Mapping):
             raise ValueError(f"S1 baseline report is missing {stage_name} results")
-        validate_stratified_summary(
-            stage_report.get("stratified"), label=f"S1 {stage_name}.stratified"
-        )
+        validate_stratified_summary(stage_report.get("stratified"), label=f"S1 {stage_name}.stratified")
         baseline = stage_report.get("return")
         if not isinstance(baseline, Mapping):
             raise ValueError(f"S1 {stage_name} report has no baseline return")
@@ -290,12 +250,6 @@ class MetricStore:
     episode_returns: list[float] = field(default_factory=list)
     falls: int = 0
     termination_causes: Counter[str] = field(default_factory=Counter)
-    curriculum: dict[str, Counter[str]] = field(
-        default_factory=lambda: {
-            "stage": Counter(),
-            "cross_case": Counter(),
-        }
-    )
 
     def add_samples(self, samples: Mapping[str, Any]) -> None:
         """Append an equally-sized batch, excluding but accounting for NaN/Inf."""
@@ -319,11 +273,6 @@ class MetricStore:
         self.episode_returns.append(value)
         self.falls += int(fell)
         self.termination_causes.update(str(cause) for cause in causes)
-
-    def add_curriculum(self, kind: str, labels: Sequence[str]) -> None:
-        if kind not in self.curriculum:
-            raise KeyError(f"unsupported curriculum histogram {kind!r}")
-        self.curriculum[kind].update(str(label) for label in labels)
 
     def values(self, name: str) -> np.ndarray:
         chunks = self.chunks.get(name, ())
@@ -379,21 +328,8 @@ class MetricStore:
                 "residual_m": distribution("connection_residual"),
                 "force_n": distribution("connection_force"),
             },
-            "analytic_force": {
-                "t_s_relative_error": distribution("t_s_relative_error"),
-                "t_n_relative_error": distribution("t_n_relative_error"),
-                "t_s_sign_agreement_rate": _mean(self.values("t_s_sign_agreement")),
-                "t_n_sign_agreement_rate": _mean(self.values("t_n_sign_agreement")),
-                "valid_rate": _mean(self.values("analytic_force_valid")),
-            },
             "distillation": {
                 "teacher_student_action_kl": distribution("teacher_student_kl"),
-            },
-            "curriculum": {
-                "distribution": {
-                    kind: dict(sorted(counter.items()))
-                    for kind, counter in self.curriculum.items()
-                }
             },
         }
         return summary
@@ -401,11 +337,10 @@ class MetricStore:
 
 @dataclass
 class PolicyEvaluationAccumulator:
-    """Global metrics with command-phase and randomization reductions."""
+    """Global metrics with command-phase reductions."""
 
     global_store: MetricStore = field(default_factory=MetricStore)
     phase_stores: dict[str, MetricStore] = field(default_factory=dict)
-    cross_case_stores: dict[str, MetricStore] = field(default_factory=dict)
 
     @staticmethod
     def _add_labeled_samples(
@@ -424,8 +359,6 @@ class PolicyEvaluationAccumulator:
         self,
         samples: Mapping[str, Any],
         *,
-        stage_labels: Sequence[str] | None = None,
-        cross_case_labels: Sequence[str] | None = None,
         phase_labels: Sequence[str] | None = None,
     ) -> None:
         vectors = {name: _as_vector(value, name) for name, value in samples.items()}
@@ -434,18 +367,6 @@ class PolicyEvaluationAccumulator:
             raise ValueError("sample arrays must have equal length")
         batch_size = sizes.pop() if sizes else 0
         self.global_store.add_samples(vectors)
-        if stage_labels is not None:
-            if len(stage_labels) != batch_size:
-                raise ValueError("stage labels have the wrong length")
-            self.global_store.add_curriculum("stage", stage_labels)
-        if cross_case_labels is not None:
-            if len(cross_case_labels) != batch_size:
-                raise ValueError("cross-case labels have the wrong length")
-            self.global_store.add_curriculum("cross_case", cross_case_labels)
-            unknown = sorted(set(cross_case_labels) - set(CROSS_CASE_LABELS))
-            if unknown:
-                raise ValueError(f"unknown cross-case labels: {unknown}")
-            self._add_labeled_samples(self.cross_case_stores, cross_case_labels, vectors)
         if phase_labels is not None:
             if len(phase_labels) != batch_size:
                 raise ValueError("command-phase labels have the wrong length")
@@ -453,6 +374,7 @@ class PolicyEvaluationAccumulator:
             if unknown:
                 raise ValueError(f"unknown command-phase labels: {unknown}")
             self._add_labeled_samples(self.phase_stores, phase_labels, vectors)
+
     def add_episode(
         self,
         episode_return: float,
@@ -460,7 +382,6 @@ class PolicyEvaluationAccumulator:
         fell: bool,
         causes: Sequence[str],
         phase_labels: Sequence[str],
-        cross_case_label: str,
     ) -> None:
         observed_phases = tuple(dict.fromkeys(str(label) for label in phase_labels))
         if not observed_phases:
@@ -468,40 +389,27 @@ class PolicyEvaluationAccumulator:
         unknown_phases = sorted(set(observed_phases) - set(COMMAND_PHASE_LABELS))
         if unknown_phases:
             raise ValueError(f"unknown command-phase labels {unknown_phases}")
-        if cross_case_label not in CROSS_CASE_LABELS:
-            raise ValueError(f"unknown cross-case label {cross_case_label!r}")
         self.global_store.add_episode(episode_return, fell=fell, causes=causes)
         for phase_label in observed_phases:
             self.phase_stores.setdefault(phase_label, MetricStore()).add_episode(
                 episode_return, fell=fell, causes=causes
             )
-        self.cross_case_stores.setdefault(cross_case_label, MetricStore()).add_episode(
-            episode_return, fell=fell, causes=causes
-        )
 
     def summary(self) -> dict[str, Any]:
         return self.global_store.summary()
 
     def stratified_summary(self) -> dict[str, Any]:
-        def summarize(
-            stores: Mapping[str, MetricStore], labels: Sequence[str]
-        ) -> dict[str, Any]:
-            return {
-                label: stores.get(label, MetricStore()).summary()
-                for label in labels
-            }
+        def summarize(stores: Mapping[str, MetricStore], labels: Sequence[str]) -> dict[str, Any]:
+            return {label: stores.get(label, MetricStore()).summary() for label in labels}
 
         return {
             "by_phase": summarize(self.phase_stores, COMMAND_PHASE_LABELS),
-            "by_cross_case": summarize(self.cross_case_stores, CROSS_CASE_LABELS),
         }
 
 
 __all__ = [
     "COMMAND_PHASE_LABELS",
-    "CROSS_CASE_LABELS",
     "FORMAL_EVALUATION_COMMAND_PROTOCOL",
-    "FORMAL_EVALUATION_CROSS_CASE_PROTOCOL",
     "GUIDE_POLICY_EVALUATION_TASK",
     "METRIC_DEFINITIONS",
     "POLICY_DIAGNOSTIC_SCHEMA_VERSION",

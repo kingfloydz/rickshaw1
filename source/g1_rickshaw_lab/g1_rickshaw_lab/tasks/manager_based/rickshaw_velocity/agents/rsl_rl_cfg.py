@@ -100,14 +100,7 @@ def g1_rickshaw_student_ppo_runner_cfg(
     )
 
 
-g1_rickshaw_ppo_runner_cfg = g1_rickshaw_teacher_ppo_runner_cfg
-G1RickshawTeacherPPORunnerCfg = g1_rickshaw_teacher_ppo_runner_cfg
-G1RickshawStudentPPORunnerCfg = g1_rickshaw_student_ppo_runner_cfg
-
 __all__ = [
-    "G1RickshawStudentPPORunnerCfg",
-    "G1RickshawTeacherPPORunnerCfg",
-    "g1_rickshaw_ppo_runner_cfg",
     "g1_rickshaw_student_ppo_runner_cfg",
     "g1_rickshaw_teacher_ppo_runner_cfg",
 ]

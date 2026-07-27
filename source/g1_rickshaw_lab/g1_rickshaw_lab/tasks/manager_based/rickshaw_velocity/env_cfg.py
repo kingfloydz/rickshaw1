@@ -71,7 +71,6 @@ def enable_mimic(env_cfg):
 
 
 def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None):
-    from .mdp.dynamics import AnalyticForceCfg
     from .mdp.events import DomainRandomizationCfg
     from .mjlab_events import MjlabTaskRuntimeCfg
     from .task_spec import RickshawPoseTargetCfg
@@ -113,7 +112,6 @@ def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None
             hitch_height_tolerance=calibration["rickshaw_pose.hitch_height_tolerance"],
             hitch_vertical_speed_tolerance=calibration["rickshaw_pose.hitch_vertical_speed_tolerance"],
         ),
-        analytic_force=AnalyticForceCfg(minimum_wheel_normal_force=calibration["safety.minimum_wheel_normal_force"]),
         history_length=history_length,
         play=play,
         terrain_slope=terrain_slope,
@@ -598,9 +596,9 @@ def g1_rickshaw_env_cfg(
         enable_mimic(cfg)
     if play:
         cfg.episode_length_s = int(1e9)
-        cfg.curriculum.pop("rickshaw_penalty_weights", None)
+        del cfg.curriculum["rickshaw_penalty_weights"]
     if not velocity_curriculum:
-        cfg.curriculum.pop("command_vel", None)
+        del cfg.curriculum["command_vel"]
         twist_cmd = cfg.commands["twist"]
         twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
         twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
@@ -609,17 +607,7 @@ def g1_rickshaw_env_cfg(
     return cfg
 
 
-def G1RickshawSlopesEnvCfg():
-    return g1_rickshaw_env_cfg(play=False)
-
-
-def G1RickshawSlopesPlayEnvCfg():
-    return g1_rickshaw_env_cfg(play=True)
-
-
 __all__ = [
-    "G1RickshawSlopesEnvCfg",
-    "G1RickshawSlopesPlayEnvCfg",
     "MIMIC_MOTION_PATH",
     "enable_mimic",
     "g1_rickshaw_env_cfg",

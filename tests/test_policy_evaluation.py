@@ -6,16 +6,11 @@ import numpy as np
 import pytest
 
 from g1_rickshaw_lab.policy_evaluation import (
-    CROSS_CASE_LABELS,
     MetricStore,
     PolicyEvaluationAccumulator,
     command_phase_labels,
     evaluate_s2_return_floor,
 )
-
-
-def test_evaluation_uses_one_randomization_case() -> None:
-    assert CROSS_CASE_LABELS == ("RANDOM",)
 
 
 def test_s2_return_comparison_is_diagnostic_only() -> None:
@@ -71,8 +66,6 @@ def test_accumulator_keeps_global_and_phase_diagnostics() -> None:
             "ang_vel_z_error": [0.0, 0.1],
             "overspeed": [0.0, 1.0],
         },
-        stage_labels=["training", "training"],
-        cross_case_labels=["RANDOM", "RANDOM"],
         phase_labels=["standing", "moving"],
     )
     accumulator.add_episode(
@@ -80,11 +73,10 @@ def test_accumulator_keeps_global_and_phase_diagnostics() -> None:
         fell=False,
         causes=("timeout",),
         phase_labels=("moving",),
-        cross_case_label="RANDOM",
     )
     global_summary = accumulator.summary()
     assert global_summary["samples"] == 2
-    assert accumulator.stratified_summary()["by_cross_case"]["RANDOM"]["samples"] == 2
+    assert accumulator.stratified_summary()["by_phase"]["moving"]["samples"] == 1
 
 
 def test_accumulator_rejects_mismatched_sample_lengths() -> None:

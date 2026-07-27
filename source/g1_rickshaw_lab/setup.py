@@ -17,6 +17,7 @@ setup(
         "mujoco-warp==3.10.0.3",
         "rsl-rl-lib==5.4.0",
         "scipy>=1.15.0",
+        "tensorboard",
     ],
     extras_require={
         "test": ["pytest", "trimesh"],

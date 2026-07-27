@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from _mjlab_wrappers import (
-    add_mjlab_sources_to_path,
     add_project_source_to_path,
     load_mjlab_configs,
     require_existing_file,
@@ -21,9 +20,7 @@ add_project_source_to_path()
 
 from g1_rickshaw_lab.policy_evaluation import (  # noqa: E402
     COMMAND_PHASE_LABELS,
-    CROSS_CASE_LABELS,
     FORMAL_EVALUATION_COMMAND_PROTOCOL,
-    FORMAL_EVALUATION_CROSS_CASE_PROTOCOL,
     METRIC_DEFINITIONS,
     POLICY_DIAGNOSTIC_SCHEMA_VERSION,
     PolicyEvaluationAccumulator,
@@ -74,7 +71,6 @@ class PolicyHandle:
 
 
 def _parser() -> argparse.ArgumentParser:
-    add_mjlab_sources_to_path()
     require_pinned_rsl_rl()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", default=DEFAULT_TASK)
@@ -83,9 +79,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--s1-baseline-report",
         default=None,
-        help=(
-            "Optional S1 fixed-seed TRAINING report for an S2 return comparison."
-        ),
+        help=("Optional S1 fixed-seed TRAINING report for an S2 return comparison."),
     )
     parser.add_argument("--output", required=True)
     parser.add_argument("--num-envs", type=int, default=100)
@@ -102,7 +96,7 @@ def _validate_args(args: argparse.Namespace, stage: str) -> None:
         raise ValueError("--num-envs must be positive")
     if not args.seeds:
         raise ValueError("fixed seeds must be non-empty")
-    quota_divisor = len(args.seeds) * len(CROSS_CASE_LABELS)
+    quota_divisor = len(args.seeds)
     if (
         args.episodes <= 0
         or args.episodes % quota_divisor != 0
@@ -182,12 +176,25 @@ def _load_policy(
         return PolicyHandle(model, kind="standalone_student"), keepalive
 
     from mjlab.rl import MjlabOnPolicyRunner
-    registry_key = "rsl_rl_cfg_entry_point" if stage == "s0_teacher" else "rsl_rl_student_cfg_entry_point"
-    agent_cfg = _load_rsl_runner_cfg(task, registry_key, device, latent_dim, history_length)
+
+    registry_key = (
+        "rsl_rl_cfg_entry_point"
+        if stage == "s0_teacher"
+        else "rsl_rl_student_cfg_entry_point"
+    )
+    agent_cfg = _load_rsl_runner_cfg(
+        task, registry_key, device, latent_dim, history_length
+    )
     runner = MjlabOnPolicyRunner(env, asdict(agent_cfg), log_dir=None, device=device)
     runner.load(
         os.fspath(checkpoint_path),
-        load_cfg={"actor": True, "critic": False, "optimizer": False, "iteration": False, "rnd": False},
+        load_cfg={
+            "actor": True,
+            "critic": False,
+            "optimizer": False,
+            "iteration": False,
+            "rnd": False,
+        },
         strict=True,
     )
     runner.alg.actor.eval()
@@ -200,6 +207,7 @@ def _load_teacher_policy(
     env: Any, checkpoint_path: Path, device: str, task: str
 ) -> tuple[PolicyHandle, list[Any]]:
     from mjlab.rl import MjlabOnPolicyRunner
+
     checkpoint = load_stage_checkpoint(
         checkpoint_path,
         expected_stage="s0_teacher",
@@ -216,7 +224,13 @@ def _load_teacher_policy(
     runner = MjlabOnPolicyRunner(env, asdict(agent_cfg), log_dir=None, device=device)
     runner.load(
         os.fspath(checkpoint_path),
-        load_cfg={"actor": True, "critic": False, "optimizer": False, "iteration": False, "rnd": False},
+        load_cfg={
+            "actor": True,
+            "critic": False,
+            "optimizer": False,
+            "iteration": False,
+            "rnd": False,
+        },
         strict=True,
     )
     runner.alg.actor.eval()
@@ -256,7 +270,6 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
 
     robot = base_env.scene["robot"]
     state = base_env.rickshaw_state
-    analytic = base_env.analytic_force_state
     command = base_env.command_manager.get_command("twist")
     actual_speed = base_env.rickshaw_speed_s
     speed_command = command[:, 0]
@@ -276,11 +289,15 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     foot_velocity = robot.data.body_link_lin_vel_w[:, base_env.foot_body_ids]
     foot_s = torch.sum(foot_velocity * base_env.path_tangent_w[:, None, :], dim=-1)
     foot_y = torch.sum(foot_velocity * base_env.path_lateral_w[:, None, :], dim=-1)
-    foot_slip = torch.sum(torch.sqrt(foot_s.square() + foot_y.square()) * foot_contact, dim=-1)
+    foot_slip = torch.sum(
+        torch.sqrt(foot_s.square() + foot_y.square()) * foot_contact, dim=-1
+    )
 
     dt = float(base_env.step_dt)
     action = base_env.action_manager
-    action_rate = torch.sqrt(torch.mean(((action.action - action.prev_action) / dt).square(), dim=-1))
+    action_rate = torch.sqrt(
+        torch.mean(((action.action - action.prev_action) / dt).square(), dim=-1)
+    )
     action_jerk = torch.sqrt(
         torch.mean(
             (
@@ -303,21 +320,6 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     power = torch.sum(torch.abs(torque * velocity), dim=-1)
 
     connection_force = torch.linalg.vector_norm(state.hand_force_w, dim=-1)
-    # The adapter stores cart-on-robot reaction; analytic T_s/T_n are
-    # robot-on-cart forces.
-    force_on_cart_w = -state.hand_force_w
-    projected_t_s = torch.sum(force_on_cart_w * base_env.path_tangent_w, dim=-1)
-    projected_t_n = torch.sum(force_on_cart_w * base_env.path_normal_w, dim=-1)
-
-    def relative_error(reference: Any, measured: Any) -> Any:
-        denominator = torch.maximum(torch.maximum(torch.abs(reference), torch.abs(measured)), torch.ones_like(reference))
-        return torch.abs(reference - measured) / denominator
-
-    sign_active_s = (torch.abs(analytic.t_s) > 1.0) | (torch.abs(projected_t_s) > 1.0)
-    sign_active_n = (torch.abs(analytic.t_n) > 1.0) | (torch.abs(projected_t_n) > 1.0)
-    sign_s = torch.where(sign_active_s, torch.sign(analytic.t_s) == torch.sign(projected_t_s), torch.ones_like(sign_active_s))
-    sign_n = torch.where(sign_active_n, torch.sign(analytic.t_n) == torch.sign(projected_t_n), torch.ones_like(sign_active_n))
-
     result = {
         "lin_vel_x_error": lin_vel_x_error,
         "ang_vel_z_error": ang_vel_z_error,
@@ -333,11 +335,6 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
         "power": power,
         "connection_residual": state.connection_residual,
         "connection_force": connection_force,
-        "t_s_relative_error": relative_error(analytic.t_s, projected_t_s),
-        "t_n_relative_error": relative_error(analytic.t_n, projected_t_n),
-        "t_s_sign_agreement": sign_s,
-        "t_n_sign_agreement": sign_n,
-        "analytic_force_valid": analytic.valid,
         "arm_torque_margin": arm_margin,
         "leg_torque_margin": leg_margin,
     }
@@ -346,15 +343,12 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     return result
 
 
-def _labels(base_env: Any, env_ids: Any) -> tuple[list[str], list[str], list[str]]:
-    stages = ["TRAINING"] * int(env_ids.numel())
-    phases = command_phase_labels(
-        base_env.command_manager.get_command("twist")[env_ids, 0].detach().cpu().numpy(),
-    )
-    return (
-        stages,
-        ["RANDOM"] * len(stages),
-        phases,
+def _phase_labels(base_env: Any, env_ids: Any) -> list[str]:
+    return command_phase_labels(
+        base_env.command_manager.get_command("twist")[env_ids, 0]
+        .detach()
+        .cpu()
+        .numpy(),
     )
 
 
@@ -372,7 +366,7 @@ def _run_mode(
 
     if not seeds:
         raise ValueError("fixed evaluation seeds must be non-empty")
-    quota_divisor = len(seeds) * len(CROSS_CASE_LABELS)
+    quota_divisor = len(seeds)
     if episodes % quota_divisor != 0:
         raise ValueError("episodes must be divisible by the number of seeds")
     accumulator = PolicyEvaluationAccumulator()
@@ -399,7 +393,9 @@ def _run_mode(
         observation, _ = env.reset()
         observation = observation.to(base_env.device)
         if in_flight:
-            raise RuntimeError("evaluation seed changed with unfinished reserved episodes")
+            raise RuntimeError(
+                "evaluation seed changed with unfinished reserved episodes"
+            )
         enrolled.zero_()
 
         reserve_episodes(
@@ -423,7 +419,9 @@ def _run_mode(
                 teacher_kl = None
                 if teacher is not None:
                     teacher_distribution = teacher.distribution(observation)
-                    teacher_kl = torch.distributions.kl_divergence(teacher_distribution, distribution)
+                    teacher_kl = torch.distributions.kl_divergence(
+                        teacher_distribution, distribution
+                    )
                 if torch.any(active):
                     raw_samples = _sample_metrics(base_env, teacher_kl)
                     ids = torch.nonzero(active, as_tuple=False).flatten()
@@ -431,7 +429,7 @@ def _run_mode(
                         name: value[ids].detach().cpu().numpy()
                         for name, value in raw_samples.items()
                     }
-                    stage_labels, case_labels, phase_labels = _labels(base_env, ids)
+                    phase_labels = _phase_labels(base_env, ids)
                     for env_id, phase in zip(
                         ids.detach().cpu().tolist(),
                         phase_labels,
@@ -440,8 +438,6 @@ def _run_mode(
                         episode_phases[int(env_id)].add(str(phase))
                     accumulator.add_step(
                         samples,
-                        stage_labels=stage_labels,
-                        cross_case_labels=case_labels,
                         phase_labels=phase_labels,
                     )
                 actions = distribution.mean
@@ -452,10 +448,14 @@ def _run_mode(
             if done_ids.numel() > 0:
                 time_outs = extras["time_outs"]
                 if not torch.is_tensor(time_outs) or time_outs.shape != dones.shape:
-                    raise RuntimeError("evaluation step did not expose per-environment timeout flags")
+                    raise RuntimeError(
+                        "evaluation step did not expose per-environment timeout flags"
+                    )
                 reusable_ids: list[int] = []
                 for env_id in done_ids.detach().cpu().tolist():
-                    if not bool(enrolled[env_id].item()) or not bool(active[env_id].item()):
+                    if not bool(enrolled[env_id].item()) or not bool(
+                        active[env_id].item()
+                    ):
                         episode_return[env_id] = 0.0
                         episode_phases[env_id].clear()
                         continue
@@ -463,7 +463,9 @@ def _run_mode(
                     causes = [
                         name
                         for name in cause_names
-                        if bool(base_env.termination_manager.get_term(name)[env_id].item())
+                        if bool(
+                            base_env.termination_manager.get_term(name)[env_id].item()
+                        )
                     ]
                     fell = _episode_fell(
                         timed_out=bool(time_outs[env_id].item()),
@@ -475,7 +477,9 @@ def _run_mode(
                     enrolled[env_id] = False
                     reusable_ids.append(env_id)
                     if not episode_phases[env_id]:
-                        raise RuntimeError("active completed episode has no phase evidence")
+                        raise RuntimeError(
+                            "active completed episode has no phase evidence"
+                        )
                     accumulator.add_episode(
                         value,
                         fell=fell,
@@ -485,7 +489,6 @@ def _run_mode(
                             for label in COMMAND_PHASE_LABELS
                             if label in episode_phases[env_id]
                         ],
-                        cross_case_label="RANDOM",
                     )
                     episode_return[env_id] = 0.0
                     episode_phases[env_id].clear()
@@ -498,11 +501,10 @@ def _run_mode(
                     )
             policy_steps += 1
 
-        if (
-            in_flight
-            or torch.any(enrolled)
-        ):
-            raise RuntimeError("evaluation milestone completed with reserved episodes still active")
+        if in_flight or torch.any(enrolled):
+            raise RuntimeError(
+                "evaluation milestone completed with reserved episodes still active"
+            )
 
     if completed != episodes:
         raise RuntimeError(f"episode quota drifted: {completed}")
@@ -524,7 +526,9 @@ def _checkpoint_binding(path: Path, checkpoint: Any) -> dict[str, Any]:
 def main() -> int:  # noqa: C901
     parser = _parser()
     args = parser.parse_args()
-    checkpoint_path = require_existing_file(args.checkpoint, "policy checkpoint").resolve()
+    checkpoint_path = require_existing_file(
+        args.checkpoint, "policy checkpoint"
+    ).resolve()
     checkpoint = load_stage_checkpoint(
         checkpoint_path,
         expected_stage=SUPPORTED_STAGES,
@@ -569,82 +573,88 @@ def main() -> int:  # noqa: C901
     teacher_path: Path | None = None
     teacher_checkpoint: Any | None = None
     if args.teacher_checkpoint is not None:
-        teacher_path = require_existing_file(args.teacher_checkpoint, "teacher checkpoint").resolve()
+        teacher_path = require_existing_file(
+            args.teacher_checkpoint, "teacher checkpoint"
+        ).resolve()
         teacher_checkpoint = load_stage_checkpoint(
             teacher_path, expected_stage="s0_teacher", validate_runtime=False
         )
-        if teacher_checkpoint[TRAINING_CONFIGURATION_KEY]["training_parameters"] != training_parameters:
+        if (
+            teacher_checkpoint[TRAINING_CONFIGURATION_KEY]["training_parameters"]
+            != training_parameters
+        ):
             raise ValueError("teacher checkpoint uses different training parameters")
 
     stage_reports: dict[str, Any] = {}
     omitted_diagnostics: list[str] = []
+    import torch
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.rl import RslRlVecEnvWrapper
+
+    import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity  # noqa: F401
+
+    device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
+    raw_env = None
+    env = None
     try:
-        import torch
-        from mjlab.envs import ManagerBasedRlEnv
-        from mjlab.rl import RslRlVecEnvWrapper
+        env_cfg, _ = load_mjlab_configs(
+            args.task,
+            play=True,
+            num_envs=args.num_envs,
+            seed=args.seeds[0],
+            history_length=history_length,
+        )
+        _configure_evaluation(env_cfg)
+        if is_student and teacher_path is None:
+            del env_cfg.observations["teacher_dynamic_history"]
+            del env_cfg.observations["teacher_static"]
+        agent_key = (
+            "rsl_rl_cfg_entry_point"
+            if stage == "s0_teacher"
+            else "rsl_rl_student_cfg_entry_point"
+        )
+        agent_cfg = _load_rsl_runner_cfg(
+            args.task,
+            agent_key,
+            device,
+            latent_dim,
+            history_length,
+        )
+        raw_env = ManagerBasedRlEnv(env_cfg, device=device)
+        env = RslRlVecEnvWrapper(raw_env, clip_actions=agent_cfg.clip_actions)
+        base_env = raw_env.unwrapped
+        policy, keepalive = _load_policy(
+            env, checkpoint_path, checkpoint, stage, device, args.task
+        )
+        teacher: PolicyHandle | None = None
+        if is_student and teacher_path is not None:
+            teacher, teacher_keepalive = _load_teacher_policy(
+                env, teacher_path, device, args.task
+            )
+            keepalive.extend(teacher_keepalive)
+        del keepalive  # Actors/runners remain reachable through PolicyHandle objects.
 
-        import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity  # noqa: F401
-
-        device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-        raw_env = None
-        env = None
-        try:
-            env_cfg, _ = load_mjlab_configs(
-                args.task,
-                play=True,
-                num_envs=args.num_envs,
-                seed=args.seeds[0],
-                history_length=history_length,
-            )
-            _configure_evaluation(env_cfg)
-            if is_student and teacher_path is None:
-                env_cfg.observations.pop("teacher_dynamic_history", None)
-                env_cfg.observations.pop("teacher_static", None)
-            agent_key = "rsl_rl_cfg_entry_point" if stage == "s0_teacher" else "rsl_rl_student_cfg_entry_point"
-            agent_cfg = _load_rsl_runner_cfg(
-                args.task,
-                agent_key,
-                device,
-                latent_dim,
-                history_length,
-            )
-            raw_env = ManagerBasedRlEnv(env_cfg, device=device)
-            env = RslRlVecEnvWrapper(raw_env, clip_actions=agent_cfg.clip_actions)
-            base_env = raw_env.unwrapped
-            policy, keepalive = _load_policy(
-                env, checkpoint_path, checkpoint, stage, device, args.task
-            )
-            teacher: PolicyHandle | None = None
-            if is_student and teacher_path is not None:
-                teacher, teacher_keepalive = _load_teacher_policy(
-                    env, teacher_path, device, args.task
-                )
-                keepalive.extend(teacher_keepalive)
-            del keepalive  # Actors/runners remain reachable through PolicyHandle objects.
-
-            baseline_accumulator, baseline_return = _run_mode(
-                env,
-                base_env,
-                policy,
-                teacher,
-                seeds=list(args.seeds),
-                episodes=args.episodes,
-                max_steps_per_seed=args.max_policy_steps_per_seed,
-            )
-            metrics = baseline_accumulator.summary()
-            stratified = baseline_accumulator.stratified_summary()
-            stage_reports[EVALUATION_STAGE] = {
-                "metrics": metrics,
-                "stratified": stratified,
-                "return": baseline_return,
-            }
-        finally:
-            if env is not None:
-                env.close()
-            elif raw_env is not None:
-                raw_env.close()
-    except BaseException:
-        raise
+        baseline_accumulator, baseline_return = _run_mode(
+            env,
+            base_env,
+            policy,
+            teacher,
+            seeds=list(args.seeds),
+            episodes=args.episodes,
+            max_steps_per_seed=args.max_policy_steps_per_seed,
+        )
+        metrics = baseline_accumulator.summary()
+        stratified = baseline_accumulator.stratified_summary()
+        stage_reports[EVALUATION_STAGE] = {
+            "metrics": metrics,
+            "stratified": stratified,
+            "return": baseline_return,
+        }
+    finally:
+        if env is not None:
+            env.close()
+        elif raw_env is not None:
+            raw_env.close()
 
     if is_student and teacher_checkpoint is None:
         omitted_diagnostics.append("teacher_student_action_kl")
@@ -680,7 +690,6 @@ def main() -> int:  # noqa: C901
             "num_envs": args.num_envs,
             "curriculum_stages": [EVALUATION_STAGE],
             "command_protocol": FORMAL_EVALUATION_COMMAND_PROTOCOL,
-            "cross_case_protocol": FORMAL_EVALUATION_CROSS_CASE_PROTOCOL,
             "rollout_steps": rollout_steps,
             "latent_dim": latent_dim,
             "history_length": history_length,

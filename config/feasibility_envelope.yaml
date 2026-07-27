@@ -1,5 +1,5 @@
 # Feasibility envelope for the fixed 35.04 kg cart on flat ground.
-schema_version: 4
+schema_version: 5
 joint_order:
   - left_hip_pitch_joint
   - left_hip_roll_joint
@@ -41,10 +41,8 @@ ranges:
   wheel.left_damping: {min: 0.015, max: 0.025}
   wheel.right_damping: {min: 0.015, max: 0.025}
 calibration:
-  rickshaw.pitch_inertia_about_axle: 23.114540082188146
   rickshaw_pose.hitch_height_tolerance: 0.005
   rickshaw_pose.hitch_vertical_speed_tolerance: 0.02
   rolling_resistance.c_rr_nominal: 0.02
   terrain.friction_nominal: 1.0
-  safety.minimum_wheel_normal_force: 25.0
   safety.overspeed_margin: 0.25

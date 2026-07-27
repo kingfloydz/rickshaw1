@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import MISSING, dataclass
+from dataclasses import dataclass
 
 import torch
-
-GRAVITY = 9.81
 
 
 def rolling_resistance_force(
@@ -64,20 +62,6 @@ def wheel_longitudinal_slip(
     return torch.sum(contact_velocity_w * path_tangent_w[:, None, :], dim=-1)
 
 
-@dataclass(frozen=True)
-class RickshawMassProperties:
-    """Per-environment cart quantities in the cart frame about the wheel axle."""
-
-    m_cart: torch.Tensor
-    com_x_from_axle: torch.Tensor
-    com_z_from_axle: torch.Tensor
-    pitch_inertia_about_axle: torch.Tensor
-    m_eff: torch.Tensor
-    b_eff: torch.Tensor
-    handle_x_from_axle: torch.Tensor
-    handle_z_from_axle: torch.Tensor
-
-
 def parallel_axis_inertia(inertia_at_com: torch.Tensor, mass: torch.Tensor, displacement: torch.Tensor) -> torch.Tensor:
     """Shift a 3-D inertia tensor from its CoM by ``displacement``."""
 
@@ -109,27 +93,6 @@ def combine_mass_properties(
         payload_inertia_at_com, payload_mass, payload_shift
     )
     return total_mass, total_com, total_inertia
-
-
-def effective_cart_mass(
-    cart_mass: torch.Tensor, wheel_spin_inertia: torch.Tensor, wheel_radius: torch.Tensor
-) -> torch.Tensor:
-    if torch.any(wheel_radius <= 0.0):
-        raise ValueError("wheel radii must be positive")
-    return cart_mass + torch.sum(wheel_spin_inertia / torch.square(wheel_radius), dim=-1)
-
-
-def effective_wheel_damping(wheel_damping: torch.Tensor, wheel_radius: torch.Tensor) -> torch.Tensor:
-    if torch.any(wheel_radius <= 0.0):
-        raise ValueError("wheel radii must be positive")
-    return torch.sum(wheel_damping / torch.square(wheel_radius), dim=-1)
-
-
-@dataclass
-class AnalyticForceCfg:
-    minimum_wheel_normal_force: float = MISSING
-    velocity_epsilon: float = 0.05
-    minimum_handle_x: float = 0.5
 
 
 @dataclass
@@ -186,115 +149,6 @@ class RickshawKinematicState:
         self.yaw_angular_acceleration[:] = torch.sum(angular_acceleration_w * path_normal_w, dim=-1)
         self.previous_velocity[:] = tangential_velocity
         self.previous_angular_velocity_w[:] = angular_velocity_w
-
-
-@dataclass
-class AnalyticHandleForceState:
-    t_s: torch.Tensor
-    t_n: torch.Tensor
-    valid: torch.Tensor
-
-    @classmethod
-    def initialized(cls, reference: torch.Tensor) -> AnalyticHandleForceState:
-        zeros = torch.zeros_like(reference)
-        return cls(
-            t_s=zeros.clone(),
-            t_n=zeros.clone(),
-            valid=torch.zeros_like(reference, dtype=torch.bool),
-        )
-
-    def reset(self, env_ids: torch.Tensor | None = None) -> None:
-        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
-        self.t_s[ids] = 0.0
-        self.t_n[ids] = 0.0
-        self.valid[ids] = False
-
-
-def analytic_handle_force(
-    v_s: torch.Tensor,
-    a_s: torch.Tensor,
-    alpha_ddot: torch.Tensor,
-    alpha: torch.Tensor,
-    c_rr: torch.Tensor,
-    wheel_normal_force: torch.Tensor,
-    properties: RickshawMassProperties,
-    *,
-    velocity_epsilon: float = 0.05,
-    minimum_handle_x: float = 0.5,
-    handle_from_axle_sn: torch.Tensor | None = None,
-    com_from_axle_sn: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Evaluate the complete cart tangent force and axle moment balance.
-
-    The stored CoM and handle coordinates are cart-frame vectors from the axle.
-    They are rotated by the current front-lift pitch before evaluating moments
-    in the ground-aligned path frame.
-    """
-
-    if velocity_epsilon <= 0.0:
-        raise ValueError("velocity_epsilon must be positive")
-    n_w = torch.sum(wheel_normal_force, dim=-1)
-    rr_magnitude = c_rr * n_w * torch.tanh(v_s / velocity_epsilon)
-    t_s = properties.m_eff * a_s + rr_magnitude + properties.b_eff * v_s
-    if (handle_from_axle_sn is None) != (com_from_axle_sn is None):
-        raise ValueError("actual handle and CoM geometry must be supplied together")
-    if handle_from_axle_sn is None:
-        cosine = torch.cos(alpha)
-        sine = torch.sin(alpha)
-        handle_x = cosine * properties.handle_x_from_axle - sine * properties.handle_z_from_axle
-        handle_z = sine * properties.handle_x_from_axle + cosine * properties.handle_z_from_axle
-        com_x = cosine * properties.com_x_from_axle - sine * properties.com_z_from_axle
-        com_z = sine * properties.com_x_from_axle + cosine * properties.com_z_from_axle
-    else:
-        expected_shape = (v_s.shape[0], 2)
-        if handle_from_axle_sn.shape != expected_shape or com_from_axle_sn.shape != expected_shape:
-            raise ValueError(f"actual cart geometry must have shape {expected_shape}")
-        handle_x, handle_z = handle_from_axle_sn.unbind(dim=-1)
-        com_x, com_z = com_from_axle_sn.unbind(dim=-1)
-    valid = handle_x > minimum_handle_x
-    denominator = torch.where(valid, handle_x, torch.ones_like(v_s))
-    t_n = (
-        properties.pitch_inertia_about_axle * alpha_ddot + handle_z * t_s + properties.m_cart * GRAVITY * com_x
-    ) / denominator
-    t_s = torch.where(valid, t_s, torch.zeros_like(t_s))
-    t_n = torch.where(valid, t_n, torch.zeros_like(t_n))
-    return t_s, t_n, valid
-
-
-def update_analytic_handle_force_state(
-    state: AnalyticHandleForceState,
-    v_s: torch.Tensor,
-    a_s: torch.Tensor,
-    pitch: torch.Tensor,
-    pitch_angular_acceleration: torch.Tensor,
-    c_rr: torch.Tensor,
-    wheel_normal_force: torch.Tensor,
-    properties: RickshawMassProperties,
-    cfg: AnalyticForceCfg,
-    *,
-    handle_from_axle_sn: torch.Tensor | None = None,
-    com_from_axle_sn: torch.Tensor | None = None,
-) -> AnalyticHandleForceState:
-    """Update the analytic handle force from the current cart kinematics."""
-
-    t_s, t_n, geometry_valid = analytic_handle_force(
-        v_s,
-        a_s,
-        pitch_angular_acceleration,
-        pitch,
-        c_rr,
-        wheel_normal_force,
-        properties,
-        velocity_epsilon=cfg.velocity_epsilon,
-        minimum_handle_x=cfg.minimum_handle_x,
-        handle_from_axle_sn=handle_from_axle_sn,
-        com_from_axle_sn=com_from_axle_sn,
-    )
-    wheel_valid = torch.all(wheel_normal_force >= cfg.minimum_wheel_normal_force, dim=-1)
-    state.t_s[:] = t_s
-    state.t_n[:] = t_n
-    state.valid[:] = geometry_valid & wheel_valid
-    return state
 
 
 def quat_apply_wxyz(quaternion: torch.Tensor, vector: torch.Tensor) -> torch.Tensor:
@@ -399,23 +253,15 @@ def rickshaw_pitch_from_quaternion(
 
 
 __all__ = [
-    "AnalyticForceCfg",
-    "AnalyticHandleForceState",
-    "GRAVITY",
-    "RickshawMassProperties",
     "RickshawKinematicState",
-    "analytic_handle_force",
     "combine_mass_properties",
     "connect_constraint_forces",
-    "effective_cart_mass",
-    "effective_wheel_damping",
     "parallel_axis_inertia",
     "quat_apply_wxyz",
     "relative_position_in_yaw_frame",
     "relative_yaw_from_quaternions",
     "rickshaw_pitch_from_quaternion",
     "rolling_resistance_force",
-    "update_analytic_handle_force_state",
     "wheel_longitudinal_slip",
     "wheel_ground_frame",
     "yaw_from_quaternion_wxyz",

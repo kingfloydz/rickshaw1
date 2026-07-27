@@ -88,7 +88,6 @@ for side in ("left", "right"):
         )
 
 G1_MOTOR_PARAMETERS_BY_JOINT = MappingProxyType(_parameters)
-G1_MOTOR_JOINT_ORDER = tuple(_parameters)
 G1_JOINT_STIFFNESS = tuple(value[0] for value in _parameters.values())
 G1_JOINT_DAMPING = tuple(value[1] for value in _parameters.values())
 G1_JOINT_EFFORT_LIMITS = tuple(value[2] for value in _parameters.values())
@@ -113,7 +112,6 @@ __all__ = [
     "G1_JOINT_DAMPING",
     "G1_JOINT_EFFORT_LIMITS",
     "G1_JOINT_STIFFNESS",
-    "G1_MOTOR_JOINT_ORDER",
     "G1_MOTOR_PARAMETERS_BY_JOINT",
     "STIFFNESS_4010",
     "STIFFNESS_5020",

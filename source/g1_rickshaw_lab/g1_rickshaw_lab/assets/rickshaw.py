@@ -16,10 +16,8 @@ from ..rickshaw_spec import (
     RICKSHAW_CENTER_OF_MASS,
     RICKSHAW_TOTAL_MASS,
     RICKSHAW_URDF_SPEC,
-    WHEEL_JOINT_DAMPING,
     WHEEL_RADIUS,
     WHEEL_TRACK,
-    WHEEL_WIDTH,
     RickshawUrdfSpec,
 )
 from .mujoco_spec import (
@@ -230,11 +228,9 @@ __all__ = [
     "RICKSHAW_URDF_PATH",
     "RICKSHAW_URDF_SPEC",
     "RickshawUrdfSpec",
-    "WHEEL_JOINT_DAMPING",
     "WHEEL_JOINT_NAMES",
     "WHEEL_RADIUS",
     "WHEEL_TRACK",
-    "WHEEL_WIDTH",
     "get_rickshaw_cfg",
     "get_rickshaw_spec",
     "validate_rickshaw_urdf",
