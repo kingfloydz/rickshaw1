@@ -563,7 +563,7 @@ def g1_rickshaw_env_cfg(
         ),
         sim=SimulationCfg(
             nconmax=None,
-            njmax=300,
+            njmax=600,
             contact_sensor_maxmatch=64,
             nan_guard=NanGuardCfg(
                 enabled=not play,

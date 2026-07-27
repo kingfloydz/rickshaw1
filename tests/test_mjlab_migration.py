@@ -161,7 +161,7 @@ def test_training_enables_mjlab_nan_guard() -> None:
     assert training.sim.mujoco.ls_iterations == 20
     assert training.sim.mujoco.ccd_iterations == 50
     assert training.sim.nconmax is None
-    assert training.sim.njmax == 300
+    assert training.sim.njmax == 600
     assert training.sim.contact_sensor_maxmatch == 64
     assert training.decimation == 4
     assert training.scene.terrain.terrain_type == "plane"
