@@ -89,11 +89,13 @@ GUIDE_TRAINING_PARAMETERS = {
         "observation_noise": "unitree_g1_uniform",
     },
     "s1_context_distillation": {
-        "implementation": "rsl_rl_v5.4.0_online_distillation",
+        "implementation": "rsl_rl.algorithms.Distillation",
+        "optimizer": "adam",
         "learning_rate": 1.0e-3,
         "loss_type": "mse",
         "num_learning_epochs": 1,
-        "gradient_clip": 1.0,
+        "gradient_length": 15,
+        "max_grad_norm": None,
         "actor_initialized_from_teacher": True,
         "student_actions_drive_environment": True,
         "teacher_target": "deterministic_action_mean",
@@ -360,25 +362,9 @@ def validate_student_checkpoint_architecture(
     if not isinstance(state, Mapping):
         raise ValueError("student checkpoint has no model state_dict")
 
-    def tensor(*names: str) -> torch.Tensor | None:
-        for name in names:
-            value = state.get(name)
-            if torch.is_tensor(value):
-                return value
-        return None
-
-    input_weight = tensor(
-        "context_encoder.input.weight",
-        "encoder.input.weight",
-    )
-    latent_weight = tensor(
-        "context_encoder.context.weight",
-        "encoder.context.weight",
-    )
-    policy_weight = tensor(
-        "actor.network.0.weight",
-        "policy.network.0.weight",
-    )
+    input_weight = state.get("encoder.input.weight")
+    latent_weight = state.get("encoder.context.weight")
+    policy_weight = state.get("policy.network.0.weight")
     if input_weight is None or input_weight.shape != (
         TEMPORAL_FEATURE_DIM,
         ACTOR_OBSERVATION_DIM,
@@ -577,69 +563,25 @@ def load_s0_resume_checkpoint(
 
 
 def _state_dicts(checkpoint: Mapping[str, Any]) -> Iterable[Mapping[str, torch.Tensor]]:
-    for key in ("actor_state_dict", "model_state_dict"):
+    for key in ("actor_state_dict", "student_state_dict"):
         value = checkpoint.get(key)
         if isinstance(value, Mapping):
             yield value
 
 
-def _select_prefix(state: Mapping[str, torch.Tensor], prefix: str) -> dict[str, torch.Tensor]:
-    return {
-        key[len(prefix) :]: value
-        for key, value in state.items()
-        if isinstance(key, str) and key.startswith(prefix) and torch.is_tensor(value)
-    }
-
-
-def extract_gaussian_actor_state(checkpoint: Mapping[str, Any]) -> dict[str, torch.Tensor]:
-    """Extract ``GaussianActor`` weights from the native S0 actor state."""
-
-    required_suffixes = {"network.0.weight", "network.6.bias", "std_param"}
-    state = checkpoint.get("actor_state_dict")
-    if not isinstance(state, Mapping):
-        raise ValueError("S0 checkpoint is missing actor_state_dict")
-    candidate = _select_prefix(state, "policy.")
-    if not required_suffixes.issubset(candidate):
-        raise ValueError("S0 checkpoint does not contain the fixed Gaussian actor")
-    return {key: value for key, value in candidate.items() if key.startswith("network.") or key == "std_param"}
-
-
-def extract_policy_observation_normalizer_state(
-    checkpoint: Mapping[str, Any],
-) -> dict[str, torch.Tensor]:
-    state = checkpoint.get("actor_state_dict")
-    if not isinstance(state, Mapping):
-        raise ValueError("S0 checkpoint is missing actor_state_dict")
-    candidate = _select_prefix(state, "policy_obs_normalizer.")
-    required = {"_mean", "_var", "_std", "count"}
-    if set(candidate) != required:
-        raise ValueError("S0 checkpoint does not contain the policy observation normalizer")
-    return candidate
-
-
 def extract_student_rsl_actor_state(checkpoint: Mapping[str, Any]) -> dict[str, torch.Tensor]:
-    """Convert an S1 student checkpoint to the native RSL actor adapter layout."""
+    """Extract the native RSL student actor state from an S1 checkpoint."""
 
-    state = checkpoint.get("model_state_dict")
+    state = checkpoint.get("student_state_dict")
     if not isinstance(state, Mapping):
-        raise ValueError("S1 checkpoint is missing model_state_dict")
+        raise ValueError("S1 checkpoint is missing student_state_dict")
     if (
-        "context_encoder.input.weight" not in state
-        or "actor.network.0.weight" not in state
-        or "obs_normalizer._mean" not in state
+        "encoder.input.weight" not in state
+        or "policy.network.0.weight" not in state
+        or "policy_obs_normalizer._mean" not in state
     ):
         raise ValueError("S1 checkpoint does not contain the fixed student actor")
-    result: dict[str, torch.Tensor] = {}
-    for key, value in state.items():
-        if not torch.is_tensor(value):
-            continue
-        if key.startswith("context_encoder."):
-            result["encoder." + key.removeprefix("context_encoder.")] = value
-        elif key.startswith("actor."):
-            result["policy." + key.removeprefix("actor.")] = value
-        elif key.startswith("obs_normalizer."):
-            result["policy_obs_normalizer." + key.removeprefix("obs_normalizer.")] = value
-    return result
+    return {key: value for key, value in state.items() if torch.is_tensor(value)}
 
 
 def build_s2_bootstrap_checkpoint(
@@ -848,8 +790,6 @@ __all__ = [
     "checkpoint_stage",
     "cli_value",
     "collect_runtime_metadata",
-    "extract_gaussian_actor_state",
-    "extract_policy_observation_normalizer_state",
     "extract_student_rsl_actor_state",
     "finalize_training_configuration",
     "feasibility_config_path",

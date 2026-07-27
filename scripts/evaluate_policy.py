@@ -18,6 +18,7 @@ from _mjlab_wrappers import (
 
 add_project_source_to_path()
 
+from g1_rickshaw_lab.policy_schema import ACTION_DIM  # noqa: E402
 from g1_rickshaw_lab.policy_evaluation import (  # noqa: E402
     COMMAND_PHASE_LABELS,
     FORMAL_EVALUATION_COMMAND_PROTOCOL,
@@ -52,22 +53,14 @@ EVALUATION_STAGE = "training"
 
 
 class PolicyHandle:
-    """Uniform distribution interface over native RSL and S1 actors."""
+    """Uniform distribution interface over native RSL actors."""
 
-    def __init__(self, actor: Any, *, kind: str) -> None:
-        if kind not in {"standalone_student", "rsl_student", "rsl_teacher"}:
-            raise ValueError(f"unknown policy handle kind {kind!r}")
+    def __init__(self, actor: Any) -> None:
         self.actor = actor
-        self.kind = kind
 
     def distribution(self, observation: Any):
-        if self.kind == "standalone_student":
-            context = self.actor.encode(observation["history"])
-            policy = self.actor.actor
-        else:
-            context = self.actor.encode(observation)
-            policy = self.actor.policy
-        return policy.distribution(observation["policy"], context)
+        context = self.actor.encode(observation)
+        return self.actor.policy.distribution(observation["policy"], context)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -166,14 +159,25 @@ def _load_policy(
         checkpoint[TRAINING_CONFIGURATION_KEY]["training_parameters"]["history_length"]
     )
     if stage == "s1_context_distillation":
-        from g1_rickshaw_lab.rl import G1RickshawStudentActor
+        from g1_rickshaw_lab.rl.rsl_rl_models import RslRickshawActorModel
 
-        state = checkpoint["model_state_dict"]
-        model = G1RickshawStudentActor(latent_dim, history_length).to(device)
-        model.load_state_dict(state, strict=True)
+        observation = env.get_observations().to(device)
+        model = RslRickshawActorModel(
+            observation,
+            {"student": ["policy", "history"]},
+            "student",
+            ACTION_DIM,
+            hidden_dims=(512, 256, 128),
+            activation="elu",
+            obs_normalization=True,
+            distribution_cfg={"class_name": "GaussianDistribution"},
+            latent_dim=latent_dim,
+            history_length=history_length,
+        ).to(device)
+        model.load_state_dict(checkpoint["student_state_dict"], strict=True)
         model.eval()
         keepalive.append(model)
-        return PolicyHandle(model, kind="standalone_student"), keepalive
+        return PolicyHandle(model), keepalive
 
     from mjlab.rl import MjlabOnPolicyRunner
 
@@ -199,8 +203,7 @@ def _load_policy(
     )
     runner.alg.actor.eval()
     keepalive.append(runner)
-    kind = "rsl_teacher" if stage == "s0_teacher" else "rsl_student"
-    return PolicyHandle(runner.alg.actor, kind=kind), keepalive
+    return PolicyHandle(runner.alg.actor), keepalive
 
 
 def _load_teacher_policy(
@@ -234,7 +237,7 @@ def _load_teacher_policy(
         strict=True,
     )
     runner.alg.actor.eval()
-    return PolicyHandle(runner.alg.actor, kind="rsl_teacher"), [runner]
+    return PolicyHandle(runner.alg.actor), [runner]
 
 
 def _load_rsl_runner_cfg(
@@ -275,8 +278,7 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     speed_command = command[:, 0]
     lin_vel_x_error = actual_speed - speed_command
     ang_vel_z_error = base_env.rickshaw_ang_vel_z - command[:, 2]
-    overspeed_margin = base_env.overspeed_margin
-    overspeed = actual_speed > speed_command + overspeed_margin
+    overspeed = actual_speed > speed_command + base_env.overspeed_margin
     pitch_error = state.pitch - target_pitch_from_hitch_height(float(base_env.hitch_height_target))
     hitch_error = state.hitch_height - float(base_env.hitch_height_target)
 

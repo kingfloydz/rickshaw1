@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the S1 student with online RSL-RL 5.4.0-style distillation."""
+"""Train the S1 student with RSL-RL 5.4.0 Distillation."""
 
 from __future__ import annotations
 
@@ -21,17 +21,14 @@ add_project_source_to_path()
 
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
+from rsl_rl.algorithms import Distillation  # noqa: E402
+from rsl_rl.storage import RolloutStorage  # noqa: E402
 
 from g1_rickshaw_lab.provenance import (  # noqa: E402
     extract_checkpoint_metadata,
     save_checkpoint_atomic,
 )
 from g1_rickshaw_lab.policy_schema import ACTION_DIM  # noqa: E402
-from g1_rickshaw_lab.rl import (  # noqa: E402
-    G1RickshawStudentActor,
-    OnlineDistillationStorage,
-    OnlineStudentDistillation,
-)
 from g1_rickshaw_lab.rl.rsl_rl_models import RslRickshawActorModel  # noqa: E402
 from g1_rickshaw_lab.training_contract import (  # noqa: E402
     CHECKPOINT_CURRICULUM_ITERATION_KEY,
@@ -45,8 +42,6 @@ from g1_rickshaw_lab.training_contract import (  # noqa: E402
     TRAINING_ARTIFACT_INTERVAL,
     TRAINING_CONFIGURATION_KEY,
     build_training_configuration,
-    extract_gaussian_actor_state,
-    extract_policy_observation_normalizer_state,
     load_stage_checkpoint,
     require_pinned_rsl_rl,
     training_mimic_enabled,
@@ -75,14 +70,14 @@ def seed_s1_training(seed: int) -> None:
 
 
 def initialize_student_from_teacher(
-    student: G1RickshawStudentActor,
-    checkpoint: Mapping[str, Any],
+    student: RslRickshawActorModel,
+    teacher: RslRickshawActorModel,
 ) -> None:
     """Initialize the shared actor and observation normalizer from S0."""
 
-    student.actor.load_state_dict(extract_gaussian_actor_state(checkpoint), strict=True)
-    student.obs_normalizer.load_state_dict(
-        extract_policy_observation_normalizer_state(checkpoint), strict=True
+    student.policy.load_state_dict(teacher.policy.state_dict(), strict=True)
+    student.policy_obs_normalizer.load_state_dict(
+        teacher.policy_obs_normalizer.state_dict(), strict=True
     )
 
 
@@ -96,22 +91,30 @@ def _saved_environment_step(checkpoint: Mapping[str, Any]) -> int:
 
 
 def _validate_args(args: argparse.Namespace) -> None:
-    for name in ("num_envs", "max_iterations", "log_interval", "save_interval"):
+    for name in (
+        "num_envs",
+        "max_iterations",
+        "num_learning_epochs",
+        "gradient_length",
+        "log_interval",
+        "save_interval",
+    ):
         value = getattr(args, name)
         if isinstance(value, bool) or value <= 0:
             raise ValueError(f"{name} must be a positive integer")
-    for name in ("learning_rate", "max_grad_norm"):
-        value = getattr(args, name)
-        if not np.isfinite(value) or value <= 0.0:
-            raise ValueError(f"{name} must be positive and finite")
+    if not np.isfinite(args.learning_rate) or args.learning_rate <= 0.0:
+        raise ValueError("learning_rate must be positive and finite")
+    if args.max_grad_norm is not None and (
+        not np.isfinite(args.max_grad_norm) or args.max_grad_norm <= 0.0
+    ):
+        raise ValueError("max_grad_norm must be positive and finite")
     if isinstance(args.training_seed, bool) or not 0 <= args.training_seed <= 2**32 - 1:
         raise ValueError("training_seed must lie in [0, 2**32-1]")
 
 
 def _checkpoint(
     *,
-    student: G1RickshawStudentActor,
-    algorithm: OnlineStudentDistillation,
+    algorithm: Distillation,
     training_configuration: Mapping[str, Any],
     teacher_path: Path,
     teacher_curriculum_iteration: int,
@@ -119,12 +122,11 @@ def _checkpoint(
     completed_iterations: int,
     metrics: Mapping[str, float],
 ) -> dict[str, Any]:
-    return {
+    checkpoint = algorithm.save()
+    checkpoint.update({
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         CHECKPOINT_STAGE_KEY: "s1_context_distillation",
         CHECKPOINT_CURRICULUM_ITERATION_KEY: teacher_curriculum_iteration,
-        "model_state_dict": student.state_dict(),
-        "optimizer_state_dict": algorithm.optimizer.state_dict(),
         "iter": completed_iterations,
         "infos": {
             "env_state": {"common_step_counter": common_step_counter},
@@ -132,13 +134,14 @@ def _checkpoint(
         TRAINING_CONFIGURATION_KEY: dict(training_configuration),
         "training": {
             "completed_iterations": completed_iterations,
-            "algorithm": "rsl_rl_v5.4.0_online_distillation",
+            "algorithm": "rsl_rl.algorithms.Distillation",
         },
         "metrics": dict(metrics),
         CHECKPOINT_LINEAGE_KEY: {
             "teacher_checkpoint": os.fspath(teacher_path),
         },
-    }
+    })
+    return checkpoint
 
 
 def train(args: argparse.Namespace) -> Path:  # noqa: C901
@@ -174,12 +177,13 @@ def train(args: argparse.Namespace) -> Path:  # noqa: C901
         max_iterations=args.max_iterations,
         guide_parameters=S1_GUIDE_PARAMETERS,
         resolved_parameters={
-            "algorithm": "rsl_rl_v5.4.0_online_distillation",
+            "algorithm": "rsl_rl.algorithms.Distillation",
             "optimizer": "adam",
-            "loss_type": "mse",
+            "loss_type": args.loss_type,
             "learning_rate": args.learning_rate,
             "max_grad_norm": args.max_grad_norm,
-            "num_learning_epochs": 1,
+            "num_learning_epochs": args.num_learning_epochs,
+            "gradient_length": args.gradient_length,
             "num_steps_per_env": rollout_steps,
             "student_actions_drive_environment": True,
             "teacher_target": "deterministic_action_mean",
@@ -240,23 +244,50 @@ def train(args: argparse.Namespace) -> Path:  # noqa: C901
             latent_dim=latent_dim,
             history_length=history_length,
         ).to(device)
-        teacher.load_state_dict(teacher_checkpoint["actor_state_dict"], strict=True)
-        teacher.eval()
-        student = G1RickshawStudentActor(latent_dim, history_length).to(device)
-        initialize_student_from_teacher(student, teacher_checkpoint)
-        storage = OnlineDistillationStorage(
-            rollout_steps,
+        student = RslRickshawActorModel(
+            observation,
+            {"student": ["policy", "history"]},
+            "student",
+            ACTION_DIM,
+            hidden_dims=(512, 256, 128),
+            activation="elu",
+            obs_normalization=True,
+            distribution_cfg={"class_name": "GaussianDistribution"},
+            latent_dim=latent_dim,
+            history_length=history_length,
+        ).to(device)
+        storage = RolloutStorage(
+            "distillation",
             args.num_envs,
-            history_length,
-            device,
+            rollout_steps,
+            observation,
+            [ACTION_DIM],
+            device_name,
         )
-        algorithm = OnlineStudentDistillation(
+        algorithm = Distillation(
             student,
             teacher,
             storage,
+            num_learning_epochs=args.num_learning_epochs,
+            gradient_length=args.gradient_length,
             learning_rate=args.learning_rate,
             max_grad_norm=args.max_grad_norm,
+            loss_type=args.loss_type,
+            optimizer="adam",
+            device=device_name,
         )
+        algorithm.load(
+            teacher_checkpoint,
+            load_cfg={
+                "student": False,
+                "teacher": True,
+                "optimizer": False,
+                "iteration": False,
+            },
+            strict=True,
+        )
+        initialize_student_from_teacher(student, teacher)
+        algorithm.train_mode()
         env.episode_length_buf = torch.randint_like(
             env.episode_length_buf,
             high=int(env.max_episode_length),
@@ -265,16 +296,26 @@ def train(args: argparse.Namespace) -> Path:  # noqa: C901
         last_metrics: dict[str, float] = {}
         start_time = time.perf_counter()
         for iteration in range(1, args.max_iterations + 1):
-            reward_sum = 0.0
-            for _ in range(rollout_steps):
-                actions = algorithm.act(observation)
-                observation, rewards, dones, _ = env.step(actions)
-                check_nan(observation, rewards, dones)
-                observation = observation.to(device)
-                algorithm.process_env_step(observation)
-                reward_sum += float(rewards.mean())
+            reward_sum = torch.zeros((), device=device)
+            with torch.inference_mode():
+                for _ in range(rollout_steps):
+                    actions = algorithm.act(observation)
+                    observation, rewards, dones, extras = env.step(
+                        actions.to(env.device)
+                    )
+                    check_nan(observation, rewards, dones)
+                    observation, rewards, dones = (
+                        observation.to(device),
+                        rewards.to(device),
+                        dones.to(device),
+                    )
+                    algorithm.process_env_step(
+                        observation, rewards, dones, extras
+                    )
+                    reward_sum += rewards.mean()
+            algorithm.compute_returns(observation)
             last_metrics = algorithm.update()
-            last_metrics["mean_reward"] = reward_sum / rollout_steps
+            last_metrics["mean_reward"] = float(reward_sum / rollout_steps)
             if iteration % args.log_interval == 0:
                 elapsed = time.perf_counter() - start_time
                 steps = iteration * rollout_steps * args.num_envs
@@ -285,7 +326,6 @@ def train(args: argparse.Namespace) -> Path:  # noqa: C901
                 )
             if iteration % args.save_interval == 0 or iteration == args.max_iterations:
                 payload = _checkpoint(
-                    student=student,
                     algorithm=algorithm,
                     training_configuration=training_configuration,
                     teacher_path=teacher_path,
@@ -321,7 +361,10 @@ def main() -> int:
         default=GUIDE_MAX_ITERATIONS["s1_context_distillation"],
     )
     parser.add_argument("--learning-rate", type=float, default=1.0e-3)
-    parser.add_argument("--max-grad-norm", type=float, default=1.0)
+    parser.add_argument("--num-learning-epochs", type=int, default=1)
+    parser.add_argument("--gradient-length", type=int, default=15)
+    parser.add_argument("--max-grad-norm", type=float, default=None)
+    parser.add_argument("--loss-type", choices=("mse", "huber"), default="mse")
     parser.add_argument("--log-interval", type=int, default=10)
     parser.add_argument(
         "--save-interval",

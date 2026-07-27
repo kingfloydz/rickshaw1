@@ -13,7 +13,6 @@ from g1_rickshaw_lab.policy_schema import (
 from g1_rickshaw_lab.training_contract import (
     GUIDE_MAX_ITERATIONS,
     GUIDE_TRAINING_PARAMETERS,
-    extract_policy_observation_normalizer_state,
     extract_student_rsl_actor_state,
     guide_max_iterations,
     rollout_scaled_iterations,
@@ -32,21 +31,13 @@ def test_observation_normalizer_state_survives_s0_s1_s2_handoff() -> None:
         "_std": torch.rand(1, ACTOR_OBSERVATION_DIM),
         "count": torch.tensor(1024),
     }
-    teacher = {
-        "actor_state_dict": {
-            **{f"policy_obs_normalizer.{key}": value for key, value in normalizer.items()},
-        }
-    }
-    extracted = extract_policy_observation_normalizer_state(teacher)
-    assert set(extracted) == set(normalizer)
-
     student = {
-        "model_state_dict": {
-            "context_encoder.input.weight": torch.zeros(
+        "student_state_dict": {
+            "encoder.input.weight": torch.zeros(
                 TEMPORAL_FEATURE_DIM, ACTOR_OBSERVATION_DIM, 1
             ),
-            "actor.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + 16),
-            **{f"obs_normalizer.{key}": value for key, value in normalizer.items()},
+            "policy.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + 16),
+            **{f"policy_obs_normalizer.{key}": value for key, value in normalizer.items()},
         }
     }
     bootstrap = extract_student_rsl_actor_state(student)
@@ -72,11 +63,13 @@ def test_mainline_has_fixed_stage_budgets_and_sloped_terrain() -> None:
 
 def test_s1_uses_online_rsl_distillation() -> None:
     assert GUIDE_TRAINING_PARAMETERS["s1_context_distillation"] == {
-        "implementation": "rsl_rl_v5.4.0_online_distillation",
+        "implementation": "rsl_rl.algorithms.Distillation",
+        "optimizer": "adam",
         "learning_rate": 1.0e-3,
         "loss_type": "mse",
         "num_learning_epochs": 1,
-        "gradient_clip": 1.0,
+        "gradient_length": 15,
+        "max_grad_norm": None,
         "actor_initialized_from_teacher": True,
         "student_actions_drive_environment": True,
         "teacher_target": "deterministic_action_mean",
@@ -128,14 +121,14 @@ def test_ppo_resume_uses_only_the_remaining_iteration_budget(
 def test_checkpoint_tensor_widths_match_the_recorded_latent(latent_dim: int) -> None:
     configuration = {"training_parameters": {"latent_dim": latent_dim}}
     student = {
-        "model_state_dict": {
-            "context_encoder.input.weight": torch.zeros(
+        "student_state_dict": {
+            "encoder.input.weight": torch.zeros(
                 TEMPORAL_FEATURE_DIM, ACTOR_OBSERVATION_DIM, 1
             ),
-            "context_encoder.context.weight": torch.zeros(
+            "encoder.context.weight": torch.zeros(
                 latent_dim, TEMPORAL_FEATURE_DIM
             ),
-            "actor.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + latent_dim),
+            "policy.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + latent_dim),
         }
     }
     teacher = {
@@ -161,11 +154,11 @@ def test_checkpoint_tensor_widths_match_the_recorded_latent(latent_dim: int) -> 
     validate_student_checkpoint_architecture(student, configuration)
     validate_teacher_checkpoint_architecture(teacher, configuration)
 
-    student["model_state_dict"]["actor.network.0.weight"] = torch.zeros(
+    student["student_state_dict"]["policy.network.0.weight"] = torch.zeros(
         512, ACTOR_OBSERVATION_DIM + 16
     )
     if latent_dim == 16:
-        student["model_state_dict"]["actor.network.0.weight"] = torch.zeros(
+        student["student_state_dict"]["policy.network.0.weight"] = torch.zeros(
             512, ACTOR_OBSERVATION_DIM + 17
         )
     with pytest.raises(ValueError, match="recorded latent width"):
@@ -175,12 +168,12 @@ def test_checkpoint_tensor_widths_match_the_recorded_latent(latent_dim: int) -> 
 def test_checkpoint_validation_rejects_the_legacy_temporal_width() -> None:
     configuration = {"training_parameters": {"latent_dim": 16}}
     student = {
-        "model_state_dict": {
-            "context_encoder.input.weight": torch.zeros(
+        "student_state_dict": {
+            "encoder.input.weight": torch.zeros(
                 64, ACTOR_OBSERVATION_DIM, 1
             ),
-            "context_encoder.context.weight": torch.zeros(16, 64),
-            "actor.network.0.weight": torch.zeros(
+            "encoder.context.weight": torch.zeros(16, 64),
+            "policy.network.0.weight": torch.zeros(
                 512, ACTOR_OBSERVATION_DIM + 16
             ),
         }
