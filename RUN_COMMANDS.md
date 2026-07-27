@@ -49,6 +49,7 @@ python scripts/play.py \
   --device cuda:0 \
   --viewer viser
 
+<<<<<<< Updated upstream
 python scripts/train_context.py \
   --task Mjlab-G1-Rickshaw-Slopes-Teacher \
   --teacher "$TEACHER" \
@@ -63,3 +64,15 @@ python scripts/finetune_student.py \
   --context "$CONTEXT" \
   --num-envs 8192 \
   --device cuda:0
+=======
+
+cd /inspire/hdd/project/leverage-robot/ky26212/slopes
+
+PYTHONPATH="$PWD/source/g1_rickshaw_lab${PYTHONPATH:+:$PYTHONPATH}" \
+python scripts/play.py Mjlab-G1-Rickshaw-Slopes-Teacher \
+  --checkpoint-file /inspire/hdd/project/leverage-robot/ky26212/slopes/logs/rsl_rl/g1_rickshaw_teacher/2026-07-26_16-23-24_s0/model_4950.pt \
+  --slope 0.10 \
+  --num-envs 1 \
+  --device cuda:0 \
+  --viewer viser
+>>>>>>> Stashed changes

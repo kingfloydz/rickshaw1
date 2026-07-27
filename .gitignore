@@ -9,5 +9,5 @@ dist/
 logs/
 outputs/
 .gitignore
-RUN_COMMANDS.md
+.RUN_COMMANDS.md
 
