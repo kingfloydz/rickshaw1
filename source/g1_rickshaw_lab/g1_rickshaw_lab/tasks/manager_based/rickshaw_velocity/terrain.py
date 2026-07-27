@@ -64,10 +64,29 @@ def terrain_frame(
     return tangent, lateral, normal
 
 
+def write_terrain_collision_pose(
+    geom_xpos: torch.Tensor,
+    geom_xmat: torch.Tensor,
+    *,
+    env_origins: torch.Tensor,
+    terrain_types: torch.Tensor,
+    env_ids: torch.Tensor,
+    geom_id: int,
+) -> None:
+    """Write the world-space plane pose consumed by MJWarp collision detection."""
+
+    selected_types = terrain_types[env_ids]
+    positions, _ = terrain_plane_poses(env_origins[env_ids], selected_types)
+    tangent, lateral, normal = terrain_frame(selected_types, dtype=geom_xmat.dtype)
+    geom_xpos[env_ids, geom_id] = positions
+    geom_xmat[env_ids, geom_id] = torch.stack((tangent, lateral, normal), dim=-1)
+
+
 __all__ = [
     "TERRAIN_SLOPES",
     "assign_terrain_types",
     "terrain_frame",
     "terrain_plane_poses",
     "terrain_type_for_slope",
+    "write_terrain_collision_pose",
 ]

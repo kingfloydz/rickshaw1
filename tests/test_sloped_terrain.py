@@ -20,6 +20,7 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.terrain import (
     terrain_frame,
     terrain_plane_poses,
     terrain_type_for_slope,
+    write_terrain_collision_pose,
 )
 
 
@@ -68,6 +69,86 @@ def test_terrain_plane_poses_and_frames_match_each_slope() -> None:
     torch.testing.assert_close(torch.cross(tangent, lateral, dim=-1), normal)
 
 
+def test_terrain_collision_pose_updates_selected_mjwarp_worlds() -> None:
+    env_origins = torch.tensor(
+        ((0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (6.0, 0.0, 0.0)),
+        dtype=torch.float64,
+    )
+    terrain_types = torch.tensor((0, 8, 18))
+    env_ids = torch.tensor((0, 2))
+    geom_xpos = torch.full((3, 2, 3), torch.nan, dtype=torch.float64)
+    geom_xmat = torch.full((3, 2, 3, 3), torch.nan, dtype=torch.float64)
+
+    write_terrain_collision_pose(
+        geom_xpos,
+        geom_xmat,
+        env_origins=env_origins,
+        terrain_types=terrain_types,
+        env_ids=env_ids,
+        geom_id=1,
+    )
+
+    tangent, lateral, normal = terrain_frame(terrain_types[env_ids], dtype=torch.float64)
+    torch.testing.assert_close(geom_xpos[env_ids, 1], env_origins[env_ids])
+    torch.testing.assert_close(
+        geom_xmat[env_ids, 1],
+        torch.stack((tangent, lateral, normal), dim=-1),
+    )
+    assert torch.isnan(geom_xpos[1]).all()
+    assert torch.isnan(geom_xmat[1]).all()
+
+
+def test_mjwarp_static_plane_uses_written_world_pose_for_collision() -> None:
+    mjwarp = pytest.importorskip("mujoco_warp")
+    warp = pytest.importorskip("warp")
+    model = mujoco.MjModel.from_xml_string(
+        """
+        <mujoco>
+          <option gravity="0 0 0"/>
+          <worldbody>
+            <body name="terrain">
+              <geom name="terrain" type="plane" size="0 0 0.1"/>
+            </body>
+            <body name="ball" pos="5 0 0.58">
+              <freejoint/>
+              <geom name="ball" type="sphere" size="0.1"/>
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+    )
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+
+    with warp.ScopedDevice("cpu"):
+        warp_model = mjwarp.put_model(model)
+        warp_data = mjwarp.put_data(model, data, nworld=2, nconmax=8, njmax=16)
+        terrain_geom_id = model.geom("terrain").id
+        geom_xpos = warp.to_torch(warp_data.geom_xpos)
+        geom_xmat = warp.to_torch(warp_data.geom_xmat)
+        write_terrain_collision_pose(
+            geom_xpos,
+            geom_xmat,
+            env_origins=torch.zeros((2, 3)),
+            terrain_types=torch.tensor((8, 18)),
+            env_ids=torch.tensor((1,)),
+            geom_id=terrain_geom_id,
+        )
+        expected_matrix = geom_xmat[1, terrain_geom_id].clone()
+
+        mjwarp.forward(warp_model, warp_data)
+
+        torch.testing.assert_close(geom_xmat[1, terrain_geom_id], expected_matrix)
+        assert int(warp_data.nacon.numpy()[0]) == 1
+        assert int(warp_data.contact.worldid.numpy()[0]) == 1
+        _, _, expected_normal = terrain_frame(torch.tensor((18,)), dtype=torch.float32)
+        np.testing.assert_allclose(
+            warp_data.contact.frame.numpy()[0, 0],
+            expected_normal[0].numpy(),
+            atol=1.0e-6,
+        )
+
+
 def test_each_cylinder_wheel_has_two_plane_contacts_on_every_slope() -> None:
     flat_model = build_assembled_spec(with_ground=True).compile()
     flat_qpos = load_mujoco_static_equilibrium(flat_model).qpos
@@ -98,12 +179,6 @@ def test_each_cylinder_wheel_has_two_plane_contacts_on_every_slope() -> None:
 
     for slope_index, slope in enumerate(TERRAIN_SLOPES):
         model.body_quat[terrain_body_id] = (
-            np.cos(-0.5 * slope),
-            0.0,
-            np.sin(-0.5 * slope),
-            0.0,
-        )
-        model.geom_quat[terrain_geom_id] = (
             np.cos(-0.5 * slope),
             0.0,
             np.sin(-0.5 * slope),

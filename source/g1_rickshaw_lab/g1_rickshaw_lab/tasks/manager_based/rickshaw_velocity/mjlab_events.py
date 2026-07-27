@@ -67,7 +67,12 @@ from .mdp.observations import ObservationHistoryState
 from .mjlab_commands import rickshaw_velocity
 from .sloped_reset import TERRAIN_SLOPES, build_sloped_reset_templates
 from .task_spec import RickshawPoseTargetCfg
-from .terrain import assign_terrain_types, terrain_frame, terrain_plane_poses
+from .terrain import (
+    assign_terrain_types,
+    terrain_frame,
+    terrain_plane_poses,
+    write_terrain_collision_pose,
+)
 
 
 @dataclass(frozen=True)
@@ -107,13 +112,7 @@ def _load_static() -> tuple[Any, MujocoStaticEquilibrium]:
     return model, load_mujoco_static_equilibrium(model)
 
 
-@requires_model_fields(
-    "body_pos",
-    "body_quat",
-    "geom_pos",
-    "geom_quat",
-    recompute=RecomputeLevel.set_const_0,
-)
+@requires_model_fields("geom_pos", "geom_quat")
 def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTaskRuntimeCfg) -> None:
     """Load the certified rest pose and allocate policy-rate state."""
 
@@ -125,13 +124,17 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
         terrain_slope=cfg.terrain_slope,
     )
     plane_positions, plane_quaternions = terrain_plane_poses(env.scene.env_origins, env.terrain_types)
-    plane_body_id = env.scene["terrain"].indexing.body_ids[0]
-    plane_geom_id = env.scene["terrain"].indexing.geom_ids[0]
-    env.sim.model.body_pos[ids, plane_body_id] = plane_positions
-    env.sim.model.body_quat[ids, plane_body_id] = plane_quaternions
-    # Viser draws fixed planes from the geom pose without composing the parent body pose.
-    env.sim.model.geom_pos[ids, plane_geom_id] = plane_positions
-    env.sim.model.geom_quat[ids, plane_geom_id] = plane_quaternions
+    env.terrain_geom_id = int(env.scene["terrain"].indexing.geom_ids[0])
+    env.sim.model.geom_pos[ids, env.terrain_geom_id] = plane_positions
+    env.sim.model.geom_quat[ids, env.terrain_geom_id] = plane_quaternions
+    write_terrain_collision_pose(
+        env.sim.data.geom_xpos,
+        env.sim.data.geom_xmat,
+        env_origins=env.scene.env_origins,
+        terrain_types=env.terrain_types,
+        env_ids=ids,
+        geom_id=env.terrain_geom_id,
+    )
     env.path_tangent_w, env.path_lateral_w, env.path_normal_w = terrain_frame(
         env.terrain_types,
         dtype=torch.float32,
@@ -323,6 +326,15 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
         env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
     else:
         env_ids = env_ids.to(device=env.device, dtype=torch.long)
+    # MJWarp does not recompute world-space poses for static geoms during forward().
+    write_terrain_collision_pose(
+        env.sim.data.geom_xpos,
+        env.sim.data.geom_xmat,
+        env_origins=env.scene.env_origins,
+        terrain_types=env.terrain_types,
+        env_ids=env_ids,
+        geom_id=env.terrain_geom_id,
+    )
     robot = env.scene["robot"]
     cart = env.scene["rickshaw"]
     model = env._mujoco_static_model
