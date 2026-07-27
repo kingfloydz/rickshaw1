@@ -63,7 +63,7 @@ python scripts/play_student.py --checkpoint <student.pt>
 ```
 
 The Mjlab runtime owns 19 fixed slopes from -0.08 to 0.10 rad, startup-fixed nine-parameter domain
-randomization, online FAT2/ZMP diagnostics, observations, rewards, and RSL-RL
+randomization, online dynamics diagnostics, observations, rewards, and RSL-RL
 rollout state. The command observation contains only rickshaw `lin_vel_x` and
 `ang_vel_z`; their tracking rewards use the rickshaw axle and terrain-normal
 frame. The 100-D actor observation includes the command and measured rickshaw

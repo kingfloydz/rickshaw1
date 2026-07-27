@@ -1,5 +1,5 @@
 # Feasibility envelope for the fixed 35.04 kg cart on flat ground.
-schema_version: 3
+schema_version: 4
 joint_order:
   - left_hip_pitch_joint
   - left_hip_roll_joint
@@ -46,20 +46,5 @@ calibration:
   rickshaw_pose.hitch_vertical_speed_tolerance: 0.02
   rolling_resistance.c_rr_nominal: 0.02
   terrain.friction_nominal: 1.0
-  fat.robot_mass: 34.1299349
-  fat.com_radius: 0.715092420262594
-  # Runtime uses the current sagittal support-to-CoM distance.
-  fat.com_radius_bounds: [0.5, 0.85]
-  fat.force_consistency_relative_tolerance: 0.35
-  # Normalize the FAT2 diagnostic's low-force regime by
-  # one nominal G1 body weight (34.1299349 kg * 9.81 m/s^2 = 334.81 N), rounded
-  # upward. This does not relax the independent 12 N measured/analytic gate.
-  fat.force_consistency_absolute_floor_n: 335.0
-  support.foot_half_length: 0.085
-  support.foot_half_width: 0.03
-  # URDF collision sphere extrema are x=-0.05 and +0.12 m in the ankle frame.
-  support.foot_center_offset_x: 0.035
-  safety.theta_max: 0.8
   safety.minimum_wheel_normal_force: 25.0
-  safety.min_ground_reaction: 100.0
   safety.overspeed_margin: 0.25

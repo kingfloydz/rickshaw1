@@ -15,7 +15,7 @@ from typing import Any, Final
 
 import numpy as np
 
-POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 4
+POLICY_DIAGNOSTIC_SCHEMA_VERSION: Final[int] = 5
 GUIDE_POLICY_EVALUATION_TASK: Final[str] = "Mjlab-G1-Rickshaw-Slopes-Student"
 COMMAND_PHASE_LABELS: Final[tuple[str, ...]] = (
     "standing",
@@ -46,8 +46,6 @@ METRIC_DEFINITIONS: Final[dict[str, str]] = {
     "analytic_force.relative_error": (
         "instantaneous symmetric relative error after projecting robot-on-cart connection force"
     ),
-    "analytic_force.fat_consistency": "instantaneous analytic/measured handle-force consistency gate",
-    "stability.zmp_margin": "signed ZMP support-polygon margin for valid samples",
     "actuation.arm/leg_torque_margin": (
         "minimum per-environment 1-|actuator_force|/current actuator.effort_limit"
     ),
@@ -387,19 +385,6 @@ class MetricStore:
                 "t_s_sign_agreement_rate": _mean(self.values("t_s_sign_agreement")),
                 "t_n_sign_agreement_rate": _mean(self.values("t_n_sign_agreement")),
                 "valid_rate": _mean(self.values("analytic_force_valid")),
-                "fat_consistency_rate": _mean(
-                    self.values("fat_force_consistent")
-                ),
-                "fat_t_s_relative_error": distribution(
-                    "fat_force_t_s_relative_error"
-                ),
-                "fat_t_n_relative_error": distribution(
-                    "fat_force_t_n_relative_error"
-                ),
-            },
-            "stability": {
-                "zmp_margin_m": distribution("zmp_margin"),
-                "zmp_valid_rate": _mean(self.values("zmp_valid")),
             },
             "distillation": {
                 "teacher_student_action_kl": distribution("teacher_student_kl"),

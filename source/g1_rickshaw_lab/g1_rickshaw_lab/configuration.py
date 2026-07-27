@@ -6,7 +6,7 @@ before returning an object that can be used by training or deployment code.
 
 Canonical ``feasibility_envelope.yaml`` layout::
 
-    schema_version: 3
+    schema_version: 4
     joint_order: [29 exact G1 joint names]
     ranges:
       payload.mass: {min: -3.0, max: 3.0}
@@ -30,7 +30,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-FEASIBILITY_SCHEMA_VERSION = 3
+FEASIBILITY_SCHEMA_VERSION = 4
 
 # This is the source-URDF order after applying the guide's one-time grouping
 # rule: lower_names + waist_names + arm_names.  Runtime regex ordering is never
@@ -88,23 +88,10 @@ REQUIRED_CALIBRATION_FIELDS = (
     "rickshaw_pose.hitch_vertical_speed_tolerance",
     "rolling_resistance.c_rr_nominal",
     "terrain.friction_nominal",
-    "fat.robot_mass",
-    "fat.com_radius",
-    "fat.com_radius_bounds",
-    "fat.force_consistency_relative_tolerance",
-    "fat.force_consistency_absolute_floor_n",
-    "support.foot_half_length",
-    "support.foot_half_width",
-    "support.foot_center_offset_x",
-    "safety.theta_max",
     "safety.minimum_wheel_normal_force",
-    "safety.min_ground_reaction",
     "safety.overspeed_margin",
 )
 
-_CALIBRATION_VECTOR_LENGTHS = {
-    "fat.com_radius_bounds": 2,
-}
 _CALIBRATION_STRICTLY_POSITIVE = frozenset(
     {
         "rickshaw.pitch_inertia_about_axle",
@@ -112,15 +99,7 @@ _CALIBRATION_STRICTLY_POSITIVE = frozenset(
         "rickshaw_pose.hitch_vertical_speed_tolerance",
         "rolling_resistance.c_rr_nominal",
         "terrain.friction_nominal",
-        "fat.robot_mass",
-        "fat.com_radius",
-        "fat.force_consistency_absolute_floor_n",
-        "support.foot_half_length",
-        "support.foot_half_width",
-        "support.foot_center_offset_x",
-        "safety.theta_max",
         "safety.minimum_wheel_normal_force",
-        "safety.min_ground_reaction",
         "safety.overspeed_margin",
     }
 )
@@ -310,33 +289,10 @@ def _validate_calibration(calibration: Mapping[str, Any]) -> Mapping[str, Any]:
     _expect_exact_keys(flattened, set(REQUIRED_CALIBRATION_FIELDS), "calibration")
     validated: dict[str, Any] = {}
     for name in REQUIRED_CALIBRATION_FIELDS:
-        value = flattened[name]
-        vector_length = _CALIBRATION_VECTOR_LENGTHS.get(name)
-        if vector_length is None:
-            scalar = _finite_float(value, f"calibration.{name}")
-            if name in _CALIBRATION_STRICTLY_POSITIVE and scalar <= 0.0:
-                raise ConfigurationContractError(f"calibration.{name} must be positive")
-            validated[name] = scalar
-            continue
-        if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-            raise ConfigurationContractError(f"calibration.{name} must be a length-{vector_length} sequence")
-        if len(value) != vector_length:
-            raise ConfigurationContractError(f"calibration.{name} must have length {vector_length}, got {len(value)}")
-        vector = tuple(
-            _finite_float(component, f"calibration.{name}[{index}]") for index, component in enumerate(value)
-        )
-        if name == "fat.com_radius_bounds" and vector[0] >= vector[1]:
-            raise ConfigurationContractError(f"calibration.{name} lower bound must be less than its upper bound")
-        validated[name] = vector
-    theta_max = validated["safety.theta_max"]
-    if theta_max >= math.pi / 2.0:
-        raise ConfigurationContractError("calibration.safety.theta_max must lie in (0, pi/2)")
-    force_tolerance = validated["fat.force_consistency_relative_tolerance"]
-    if not 0.0 <= force_tolerance <= 1.0:
-        raise ConfigurationContractError("calibration.fat.force_consistency_relative_tolerance must lie in [0,1]")
-    radius_min, radius_max = validated["fat.com_radius_bounds"]
-    if radius_min <= 0.0 or not radius_min <= validated["fat.com_radius"] <= radius_max:
-        raise ConfigurationContractError("calibration.fat.com_radius must lie within positive fat.com_radius_bounds")
+        scalar = _finite_float(flattened[name], f"calibration.{name}")
+        if name in _CALIBRATION_STRICTLY_POSITIVE and scalar <= 0.0:
+            raise ConfigurationContractError(f"calibration.{name} must be positive")
+        validated[name] = scalar
     return MappingProxyType(validated)
 
 

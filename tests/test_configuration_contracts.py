@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from g1_rickshaw_lab.configuration import (
+    FEASIBILITY_SCHEMA_VERSION,
     G1_JOINT_ORDER,
     REQUIRED_CALIBRATION_FIELDS,
     REQUIRED_FEASIBILITY_RANGES,
@@ -23,22 +24,13 @@ def _range_for(name: str) -> dict[str, float]:
     return {"min": 0.01, "max": 10.0}
 
 
-def _calibration_for(name: str):
-    vectors = {
-        "fat.com_radius_bounds": [0.5, 0.85],
-    }
-    if name in vectors:
-        return vectors[name]
-    return 0.7 if name == "fat.com_radius" else 1.0
-
-
 def _valid_mapping() -> dict:
     return {
-        "schema_version": 3,
+        "schema_version": FEASIBILITY_SCHEMA_VERSION,
         "joint_order": list(G1_JOINT_ORDER),
         "ranges": {name: _range_for(name) for name in REQUIRED_FEASIBILITY_RANGES},
         "calibration": {
-            name: _calibration_for(name) for name in REQUIRED_CALIBRATION_FIELDS
+            name: 1.0 for name in REQUIRED_CALIBRATION_FIELDS
         },
     }
 

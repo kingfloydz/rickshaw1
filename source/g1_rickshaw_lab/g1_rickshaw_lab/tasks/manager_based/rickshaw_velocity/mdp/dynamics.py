@@ -1,8 +1,7 @@
-"""Pure Torch cart, FAT2, and ZMP dynamics kernels."""
+"""Pure Torch rickshaw dynamics kernels."""
 
 from __future__ import annotations
 
-import math
 from dataclasses import MISSING, dataclass
 
 import torch
@@ -77,32 +76,6 @@ class RickshawMassProperties:
     b_eff: torch.Tensor
     handle_x_from_axle: torch.Tensor
     handle_z_from_axle: torch.Tensor
-
-
-def articulation_center_of_mass(
-    body_com_pos_w: torch.Tensor,
-    body_com_lin_vel_w: torch.Tensor,
-    body_masses: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return mass-weighted whole-articulation CoM position and velocity.
-
-    Root-link ``root_com_*`` fields describe only the root rigid body. ZMP
-    and FAT require the system CoM across every retained articulation body.
-    """
-
-    if body_com_pos_w.ndim != 3 or body_com_pos_w.shape[-1] != 3:
-        raise ValueError("body CoM positions must have shape [N,B,3]")
-    if body_com_lin_vel_w.shape != body_com_pos_w.shape:
-        raise ValueError("body CoM linear velocities must match positions")
-    if body_masses.shape != body_com_pos_w.shape[:2]:
-        raise ValueError("body masses must have shape [N,B]")
-    if torch.any(~torch.isfinite(body_masses)) or torch.any(body_masses <= 0.0):
-        raise ValueError("every retained articulation body must have finite positive mass")
-    total_mass = torch.sum(body_masses, dim=-1)
-    weights = body_masses / total_mass[:, None]
-    position = torch.sum(body_com_pos_w * weights[..., None], dim=1)
-    velocity = torch.sum(body_com_lin_vel_w * weights[..., None], dim=1)
-    return position, velocity, total_mass
 
 
 def parallel_axis_inertia(inertia_at_com: torch.Tensor, mass: torch.Tensor, displacement: torch.Tensor) -> torch.Tensor:
@@ -237,35 +210,6 @@ class AnalyticHandleForceState:
         self.valid[ids] = False
 
 
-def force_consistency(
-    analytic_force_sn: torch.Tensor,
-    measured_force_sn: torch.Tensor,
-    source_valid: torch.Tensor,
-    *,
-    relative_tolerance: float,
-    absolute_floor_n: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compare current analytic and measured handle forces for FAT2 validity."""
-
-    if analytic_force_sn.ndim != 2 or analytic_force_sn.shape[1] != 2:
-        raise ValueError("analytic handle force must have shape [N, 2]")
-    if measured_force_sn.shape != analytic_force_sn.shape:
-        raise ValueError("measured handle force must match analytic handle force")
-    if source_valid.shape != analytic_force_sn.shape[:1] or source_valid.dtype != torch.bool:
-        raise ValueError("force consistency source_valid must be bool [N]")
-    if not 0.0 <= relative_tolerance <= 1.0 or absolute_floor_n <= 0.0:
-        raise ValueError("force consistency tolerances are invalid")
-    floor = torch.as_tensor(absolute_floor_n, device=analytic_force_sn.device, dtype=analytic_force_sn.dtype)
-    normalization_force = torch.maximum(torch.abs(analytic_force_sn), floor)
-    relative_error = torch.abs(measured_force_sn - analytic_force_sn) / normalization_force
-    sign_resolved = (torch.abs(analytic_force_sn) > relative_tolerance * normalization_force) & (
-        torch.abs(measured_force_sn) > relative_tolerance * normalization_force
-    )
-    same_sign = (~sign_resolved) | (torch.sign(analytic_force_sn) == torch.sign(measured_force_sn))
-    consistent = source_valid & torch.all(same_sign & (relative_error <= relative_tolerance), dim=-1)
-    return consistent, relative_error
-
-
 def analytic_handle_force(
     v_s: torch.Tensor,
     a_s: torch.Tensor,
@@ -331,7 +275,7 @@ def update_analytic_handle_force_state(
     handle_from_axle_sn: torch.Tensor | None = None,
     com_from_axle_sn: torch.Tensor | None = None,
 ) -> AnalyticHandleForceState:
-    """Update the analytic FAT2 reference from the current cart kinematics."""
+    """Update the analytic handle force from the current cart kinematics."""
 
     t_s, t_n, geometry_valid = analytic_handle_force(
         v_s,
@@ -454,336 +398,25 @@ def rickshaw_pitch_from_quaternion(
     return torch.atan2(forward_n, forward_s)
 
 
-def torso_pitch_from_world_vertical(
-    torso_quaternion_wxyz: torch.Tensor,
-    path_tangent_w: torch.Tensor,
-) -> torch.Tensor:
-    """Return torso tilt from world vertical, positive along the path."""
-
-    local_z = torch.zeros_like(path_tangent_w)
-    local_z[..., 2] = 1.0
-    up_w = quat_apply_wxyz(torso_quaternion_wxyz, local_z)
-    world_up = torch.zeros_like(path_tangent_w)
-    world_up[..., 2] = 1.0
-    horizontal_forward = path_tangent_w - torch.sum(path_tangent_w * world_up, dim=-1, keepdim=True) * world_up
-    horizontal_norm = torch.linalg.vector_norm(horizontal_forward, dim=-1, keepdim=True)
-    if torch.any(horizontal_norm <= 1.0e-6):
-        raise ValueError("path tangent must have a nonzero horizontal projection")
-    horizontal_forward = horizontal_forward / horizontal_norm
-    return torch.atan2(
-        torch.sum(up_w * horizontal_forward, dim=-1),
-        torch.sum(up_w * world_up, dim=-1),
-    )
-
-
-@dataclass
-class FAT2Cfg:
-    robot_mass: float = MISSING
-    com_radius: float = MISSING
-    com_radius_bounds: tuple[float, float] = MISSING
-    theta_max: float = MISSING
-    force_consistency_relative_tolerance: float = MISSING
-    force_consistency_absolute_floor_n: float = MISSING
-
-    def validate(self) -> None:
-        if self.robot_mass <= 0.0 or self.com_radius <= 0.0:
-            raise ValueError("FAT2 robot mass and CoM radius must be calibrated")
-        if len(self.com_radius_bounds) != 2:
-            raise ValueError("FAT2 CoM radius bounds must contain two values")
-        radius_min, radius_max = self.com_radius_bounds
-        if radius_min <= 0.0 or radius_min >= radius_max:
-            raise ValueError("FAT2 CoM radius bounds must be positive and ordered")
-        if not radius_min <= self.com_radius <= radius_max:
-            raise ValueError("FAT2 calibrated CoM radius must lie within its bounds")
-        if not 0.0 < self.theta_max < math.pi / 2.0:
-            raise ValueError("FAT2 theta_max must lie in (0, pi/2)")
-        if not 0.0 <= self.force_consistency_relative_tolerance <= 1.0:
-            raise ValueError("FAT2 force relative tolerance must lie in [0,1]")
-        if self.force_consistency_absolute_floor_n <= 0.0:
-            raise ValueError("FAT2 force absolute floor must be positive")
-
-
-def fat2_reference_angle(
-    handle_s: torch.Tensor,
-    handle_n: torch.Tensor,
-    hand_force_s: torch.Tensor,
-    hand_force_n: torch.Tensor,
-    robot_mass: torch.Tensor | float,
-    com_radius: torch.Tensor | float,
-    theta_max: torch.Tensor | float,
-) -> torch.Tensor:
-    """Compute the hand-force FAT2 weak torso prior."""
-
-    mass = torch.as_tensor(robot_mass, device=handle_s.device, dtype=handle_s.dtype)
-    radius = torch.as_tensor(com_radius, device=handle_s.device, dtype=handle_s.dtype)
-    maximum = torch.as_tensor(theta_max, device=handle_s.device, dtype=handle_s.dtype)
-    if torch.any(mass <= 0.0) or torch.any(radius <= 0.0):
-        raise ValueError("robot_mass and com_radius must be positive")
-    if torch.any((maximum <= 0.0) | (maximum >= math.pi / 2.0)):
-        raise ValueError("theta_max must lie in (0, pi/2)")
-    hand_moment = handle_s * hand_force_n - handle_n * hand_force_s
-    ratio = hand_moment / (mass * GRAVITY * radius)
-    limit = torch.sin(maximum)
-    return torch.asin(torch.clamp(ratio, min=-limit, max=limit))
-
-
-def sagittal_com_radius(
-    robot_com_w: torch.Tensor,
-    support_center_w: torch.Tensor,
-    path_tangent_w: torch.Tensor,
-    path_normal_w: torch.Tensor,
-) -> torch.Tensor:
-    """Return support-to-CoM distance in the path tangent/normal plane."""
-
-    if robot_com_w.ndim != 2 or robot_com_w.shape[-1] != 3:
-        raise ValueError("robot CoM must have shape [N,3]")
-    if any(value.shape != robot_com_w.shape for value in (support_center_w, path_tangent_w, path_normal_w)):
-        raise ValueError("FAT2 sagittal geometry tensors must have identical shapes")
-    offset = robot_com_w - support_center_w
-    offset_s = torch.sum(offset * path_tangent_w, dim=-1)
-    offset_n = torch.sum(offset * path_normal_w, dim=-1)
-    return torch.sqrt(torch.square(offset_s) + torch.square(offset_n))
-
-
-@dataclass
-class ZMPCfg:
-    min_ground_reaction: float = MISSING
-
-
-@dataclass(kw_only=True)
-class SupportPolygonCfg:
-    foot_half_length: float = MISSING
-    foot_half_width: float = MISSING
-    foot_center_offset_x: float = MISSING
-
-    def validate(self) -> None:
-        if self.foot_half_length <= 0.0 or self.foot_half_width <= 0.0:
-            raise ValueError("calibrated foot half dimensions must be positive")
-        if not math.isfinite(self.foot_center_offset_x):
-            raise ValueError("calibrated foot center offset must be finite")
-
-
-@dataclass
-class ZMPKinematicState:
-    previous_velocity_s: torch.Tensor
-    previous_velocity_n: torch.Tensor
-    acceleration_s: torch.Tensor
-    acceleration_n: torch.Tensor
-
-    @classmethod
-    def initialized(cls, velocity_s: torch.Tensor, velocity_n: torch.Tensor) -> ZMPKinematicState:
-        zeros = torch.zeros_like(velocity_s)
-        return cls(
-            previous_velocity_s=velocity_s.clone(),
-            previous_velocity_n=velocity_n.clone(),
-            acceleration_s=zeros.clone(),
-            acceleration_n=zeros.clone(),
-        )
-
-    def update(
-        self, velocity_s: torch.Tensor, velocity_n: torch.Tensor, dt: float
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        self.acceleration_s[:] = (velocity_s - self.previous_velocity_s) / dt
-        self.acceleration_n[:] = (velocity_n - self.previous_velocity_n) / dt
-        self.previous_velocity_s[:] = velocity_s
-        self.previous_velocity_n[:] = velocity_n
-        return self.acceleration_s, self.acceleration_n
-
-    def reset(
-        self,
-        velocity_s: torch.Tensor,
-        velocity_n: torch.Tensor,
-        env_ids: torch.Tensor | None = None,
-    ) -> None:
-        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
-        self.previous_velocity_s[ids] = velocity_s
-        self.previous_velocity_n[ids] = velocity_n
-        self.acceleration_s[ids] = 0.0
-        self.acceleration_n[ids] = 0.0
-
-
-def zmp_from_hand_force(
-    com_s: torch.Tensor,
-    com_n: torch.Tensor,
-    com_acceleration_s: torch.Tensor,
-    com_acceleration_n: torch.Tensor,
-    handle_s: torch.Tensor,
-    handle_n: torch.Tensor,
-    hand_force_s: torch.Tensor,
-    hand_force_n: torch.Tensor,
-    robot_mass: torch.Tensor | float,
-    *,
-    min_ground_reaction: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Compute sagittal ZMP in the ground-aligned frame."""
-
-    mass = torch.as_tensor(robot_mass, device=com_s.device, dtype=com_s.dtype)
-    r_s = mass * com_acceleration_s - hand_force_s
-    r_n = mass * (com_acceleration_n + GRAVITY) - hand_force_n
-    valid = r_n > min_ground_reaction
-    denominator = torch.where(valid, r_n, torch.ones_like(r_n))
-    hand_moment_about_com = (handle_s - com_s) * hand_force_n - (handle_n - com_n) * hand_force_s
-    zmp_s = com_s + (-com_n * r_s - hand_moment_about_com) / denominator
-    zmp_s = torch.where(valid, zmp_s, torch.zeros_like(zmp_s))
-    return zmp_s, r_s, r_n, valid
-
-
-def _cross_2d(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
-    return lhs[..., 0] * rhs[..., 1] - lhs[..., 1] * rhs[..., 0]
-
-
-def convex_support_margin(
-    support_points: torch.Tensor,
-    query_point: torch.Tensor,
-    point_mask: torch.Tensor | None = None,
-    *,
-    tolerance: float = 1.0e-7,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Signed distance from points to batched convex support polygons.
-
-    ``support_points`` may be unordered.  All directed point pairs whose other
-    valid points lie to their left form candidate hull half-spaces.  The minimum
-    inward distance is positive inside and negative outside the convex hull.
-    """
-
-    if support_points.ndim != 3 or support_points.shape[-1] != 2:
-        raise ValueError("support_points must have shape [N, K, 2]")
-    if query_point.shape != (support_points.shape[0], 2):
-        raise ValueError("query_point must have shape [N, 2]")
-    num_envs, num_points, _ = support_points.shape
-    if point_mask is None:
-        point_mask = torch.ones((num_envs, num_points), device=support_points.device, dtype=torch.bool)
-    if point_mask.shape != (num_envs, num_points):
-        raise ValueError("point_mask must have shape [N, K]")
-
-    starts = support_points[:, :, None, :]  # [N, i, 1, 2]
-    edges = support_points[:, None, :, :] - starts  # [N, i, j, 2]
-    lengths = torch.linalg.vector_norm(edges, dim=-1)
-    # Compute the batched cross products directly by component.  This avoids
-    # materializing [N, i, j, k, 2] vectors while preserving the original
-    # unordered-edge convex-hull test.
-    edge_x = edges[..., 0, None]
-    edge_y = edges[..., 1, None]
-    point_x = support_points[:, None, None, :, 0] - support_points[:, :, None, None, 0]
-    point_y = support_points[:, None, None, :, 1] - support_points[:, :, None, None, 1]
-    side = edge_x * point_y - edge_y * point_x
-    other_valid = point_mask[:, None, None, :]
-    all_left = torch.all((side >= -tolerance) | ~other_valid, dim=-1)
-    endpoints_valid = point_mask[:, :, None] & point_mask[:, None, :]
-    candidate = endpoints_valid & (lengths > tolerance) & all_left
-
-    vector_to_query = query_point[:, None, None, :] - starts
-    distances = _cross_2d(edges, vector_to_query) / torch.clamp(lengths, min=tolerance)
-    infinity = torch.full_like(distances, torch.inf)
-    margin = torch.min(torch.where(candidate, distances, infinity), dim=-1).values
-    margin = torch.min(margin, dim=-1).values
-
-    # At least three non-collinear valid points are required for a polygon.
-    has_three_points = torch.sum(point_mask, dim=-1) >= 3
-    area_witness = torch.amax(torch.abs(side), dim=(-1, -2, -3)) > tolerance
-    valid = has_three_points & area_witness & torch.isfinite(margin)
-    margin = torch.where(valid, margin, torch.zeros_like(margin))
-    return margin, valid
-
-
-def foot_support_polygon(
-    foot_position_w: torch.Tensor,
-    foot_quaternion_wxyz: torch.Tensor,
-    foot_contact: torch.Tensor,
-    path_origin_w: torch.Tensor,
-    path_tangent_w: torch.Tensor,
-    path_lateral_w: torch.Tensor,
-    *,
-    foot_half_length: float,
-    foot_half_width: float,
-    foot_center_offset_x: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return actual-pose foot corners, contact mask, and support center."""
-
-    if foot_position_w.ndim != 3 or foot_position_w.shape[1:] != (2, 3):
-        raise ValueError("foot_position_w must have shape [N,2,3]")
-    if foot_quaternion_wxyz.shape != (foot_position_w.shape[0], 2, 4):
-        raise ValueError("foot quaternion must have shape [N,2,4]")
-    if foot_contact.shape != (foot_position_w.shape[0], 2):
-        raise ValueError("foot_contact must have shape [N,2]")
-    if foot_half_length <= 0.0 or foot_half_width <= 0.0:
-        raise ValueError("foot half dimensions must be positive")
-    if not math.isfinite(foot_center_offset_x):
-        raise ValueError("foot center offset must be finite")
-    local_corners = getattr(foot_support_polygon, "_local_corners", None)
-    cache_key = (foot_half_length, foot_half_width, foot_center_offset_x)
-    if (
-        local_corners is None
-        or getattr(foot_support_polygon, "_local_corners_key", None) != cache_key
-        or local_corners.device != foot_position_w.device
-        or local_corners.dtype != foot_position_w.dtype
-    ):
-        local_corners = torch.tensor(
-            (
-                (foot_center_offset_x + foot_half_length, foot_half_width, 0.0),
-                (foot_center_offset_x - foot_half_length, foot_half_width, 0.0),
-                (foot_center_offset_x - foot_half_length, -foot_half_width, 0.0),
-                (foot_center_offset_x + foot_half_length, -foot_half_width, 0.0),
-            ),
-            device=foot_position_w.device,
-            dtype=foot_position_w.dtype,
-        )
-        foot_support_polygon._local_corners = local_corners
-        foot_support_polygon._local_corners_key = cache_key
-        local_center = torch.zeros((1, 1, 3), device=foot_position_w.device, dtype=foot_position_w.dtype)
-        local_center[..., 0] = foot_center_offset_x
-        foot_support_polygon._local_center = local_center
-    else:
-        local_center = foot_support_polygon._local_center
-    local_corners = local_corners.view(1, 1, 4, 3).expand(foot_position_w.shape[0], 2, -1, -1)
-    world_corners = foot_position_w[:, :, None, :] + quat_apply_wxyz(
-        foot_quaternion_wxyz[:, :, None, :].expand(-1, -1, 4, -1), local_corners
-    )
-    relative = world_corners - path_origin_w[:, None, None, :]
-    corner_s = torch.sum(relative * path_tangent_w[:, None, None, :], dim=-1)
-    corner_y = torch.sum(relative * path_lateral_w[:, None, None, :], dim=-1)
-    points = torch.stack((corner_s, corner_y), dim=-1).reshape(-1, 8, 2)
-    point_mask = foot_contact[:, :, None].expand(-1, -1, 4).reshape(-1, 8)
-    contact_count = torch.sum(foot_contact, dim=-1, keepdim=True)
-    foot_center_w = foot_position_w + quat_apply_wxyz(foot_quaternion_wxyz, local_center)
-    support_center = torch.sum(foot_center_w * foot_contact[..., None].to(foot_position_w.dtype), dim=1) / torch.clamp(
-        contact_count, min=1
-    ).to(foot_position_w.dtype)
-    support_center = torch.where((contact_count > 0), support_center, torch.zeros_like(support_center))
-    return points, point_mask, support_center
-
-
 __all__ = [
     "AnalyticForceCfg",
     "AnalyticHandleForceState",
-    "FAT2Cfg",
     "GRAVITY",
     "RickshawMassProperties",
     "RickshawKinematicState",
-    "SupportPolygonCfg",
-    "ZMPCfg",
-    "ZMPKinematicState",
     "analytic_handle_force",
-    "articulation_center_of_mass",
     "combine_mass_properties",
     "connect_constraint_forces",
-    "convex_support_margin",
     "effective_cart_mass",
     "effective_wheel_damping",
-    "fat2_reference_angle",
-    "force_consistency",
-    "foot_support_polygon",
     "parallel_axis_inertia",
     "quat_apply_wxyz",
     "relative_position_in_yaw_frame",
     "relative_yaw_from_quaternions",
     "rickshaw_pitch_from_quaternion",
     "rolling_resistance_force",
-    "sagittal_com_radius",
-    "torso_pitch_from_world_vertical",
     "update_analytic_handle_force_state",
     "wheel_longitudinal_slip",
     "wheel_ground_frame",
     "yaw_from_quaternion_wxyz",
-    "zmp_from_hand_force",
 ]

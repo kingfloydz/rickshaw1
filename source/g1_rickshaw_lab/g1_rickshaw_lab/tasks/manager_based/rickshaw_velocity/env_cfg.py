@@ -71,7 +71,7 @@ def enable_mimic(env_cfg):
 
 
 def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None):
-    from .mdp.dynamics import AnalyticForceCfg, FAT2Cfg, SupportPolygonCfg, ZMPCfg
+    from .mdp.dynamics import AnalyticForceCfg
     from .mdp.events import DomainRandomizationCfg
     from .mjlab_events import MjlabTaskRuntimeCfg
     from .task_spec import RickshawPoseTargetCfg
@@ -114,20 +114,6 @@ def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None
             hitch_vertical_speed_tolerance=calibration["rickshaw_pose.hitch_vertical_speed_tolerance"],
         ),
         analytic_force=AnalyticForceCfg(minimum_wheel_normal_force=calibration["safety.minimum_wheel_normal_force"]),
-        fat2=FAT2Cfg(
-            robot_mass=calibration["fat.robot_mass"],
-            com_radius=calibration["fat.com_radius"],
-            com_radius_bounds=tuple(calibration["fat.com_radius_bounds"]),
-            theta_max=calibration["safety.theta_max"],
-            force_consistency_relative_tolerance=calibration["fat.force_consistency_relative_tolerance"],
-            force_consistency_absolute_floor_n=calibration["fat.force_consistency_absolute_floor_n"],
-        ),
-        support=SupportPolygonCfg(
-            foot_half_length=calibration["support.foot_half_length"],
-            foot_half_width=calibration["support.foot_half_width"],
-            foot_center_offset_x=calibration["support.foot_center_offset_x"],
-        ),
-        zmp=ZMPCfg(min_ground_reaction=calibration["safety.min_ground_reaction"]),
         history_length=history_length,
         play=play,
         terrain_slope=terrain_slope,

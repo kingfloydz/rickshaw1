@@ -20,19 +20,13 @@ from g1_rickshaw_lab.policy_schema import ACTION_SCALE
 from g1_rickshaw_lab.policy_schema import ACTION_DIM
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.dynamics import (
     RickshawKinematicState,
-    ZMPKinematicState,
     connect_constraint_forces,
-    force_consistency,
-    foot_support_polygon,
     quat_apply_wxyz,
     relative_position_in_yaw_frame,
     relative_yaw_from_quaternions,
     rolling_resistance_force,
-    sagittal_com_radius,
-    torso_pitch_from_world_vertical,
     wheel_ground_frame,
     wheel_longitudinal_slip,
-    zmp_from_hand_force,
 )
 
 
@@ -56,7 +50,6 @@ def test_action_scale_matches_unitree_motor_defaults() -> None:
         torch.tensor(ACTION_SCALE, dtype=torch.float64),
         torch.tensor(expected, dtype=torch.float64),
     )
-
 
 def test_rolling_resistance_opposes_each_wheel() -> None:
     dtype = torch.float64
@@ -118,90 +111,6 @@ def test_rickshaw_kinematics_use_direct_policy_step_differences() -> None:
     )
     torch.testing.assert_close(
         state.yaw_angular_acceleration, torch.tensor([15.0], dtype=dtype)
-    )
-
-
-def test_force_consistency_uses_current_sample() -> None:
-    analytic = torch.tensor([[100.0, 50.0], [100.0, 50.0]], dtype=torch.float64)
-    measured = torch.tensor([[110.0, 55.0], [-100.0, 50.0]], dtype=torch.float64)
-    consistent, relative_error = force_consistency(
-        analytic,
-        measured,
-        torch.ones(2, dtype=torch.bool),
-        relative_tolerance=0.35,
-        absolute_floor_n=5.0,
-    )
-    torch.testing.assert_close(consistent, torch.tensor([True, False]))
-    torch.testing.assert_close(
-        relative_error[0], torch.tensor([0.1, 0.1], dtype=torch.float64)
-    )
-
-
-def test_zmp_kinematics_use_direct_finite_difference() -> None:
-    zeros = torch.zeros(2, dtype=torch.float64)
-    state = ZMPKinematicState.initialized(zeros, zeros)
-    acceleration_s, acceleration_n = state.update(
-        torch.tensor([1.0, -0.5], dtype=torch.float64),
-        torch.tensor([0.2, -0.1], dtype=torch.float64),
-        0.02,
-    )
-    torch.testing.assert_close(
-        acceleration_s, torch.tensor([50.0, -25.0], dtype=torch.float64)
-    )
-    torch.testing.assert_close(
-        acceleration_n, torch.tensor([10.0, -5.0], dtype=torch.float64)
-    )
-
-
-def test_fat2_radius_excludes_lateral_offset() -> None:
-    robot_com = torch.tensor([[0.6, 4.0, 0.3], [0.3, -7.0, 0.4]], dtype=torch.float64)
-    radius = sagittal_com_radius(
-        robot_com,
-        torch.zeros_like(robot_com),
-        torch.tensor([[1.0, 0.0, 0.0]] * 2, dtype=torch.float64),
-        torch.tensor([[0.0, 0.0, 1.0]] * 2, dtype=torch.float64),
-    )
-    torch.testing.assert_close(
-        radius, torch.tensor([math.sqrt(0.45), 0.5], dtype=torch.float64)
-    )
-
-
-def test_foot_support_polygon_uses_collision_center_offset() -> None:
-    points, mask, center = foot_support_polygon(
-        torch.tensor([[[0.0, 0.1, 0.0], [0.0, -0.1, 0.0]]], dtype=torch.float64),
-        torch.tensor([[[1.0, 0.0, 0.0, 0.0]] * 2], dtype=torch.float64),
-        torch.ones((1, 2), dtype=torch.bool),
-        torch.zeros((1, 3), dtype=torch.float64),
-        torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float64),
-        torch.tensor([[0.0, 1.0, 0.0]], dtype=torch.float64),
-        foot_half_length=0.085,
-        foot_half_width=0.03,
-        foot_center_offset_x=0.035,
-    )
-    torch.testing.assert_close(
-        torch.amin(points[..., 0]), torch.tensor(-0.05, dtype=torch.float64)
-    )
-    torch.testing.assert_close(
-        torch.amax(points[..., 0]), torch.tensor(0.12, dtype=torch.float64)
-    )
-    torch.testing.assert_close(
-        center, torch.tensor([[0.035, 0.0, 0.0]], dtype=torch.float64)
-    )
-    assert torch.all(mask)
-
-
-def test_torso_pitch_is_measured_from_world_vertical() -> None:
-    tangent = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float64)
-    pitch = 0.19
-    quaternion = torch.tensor(
-        [[math.cos(0.5 * pitch), 0.0, math.sin(0.5 * pitch), 0.0]],
-        dtype=torch.float64,
-    )
-    torch.testing.assert_close(
-        torso_pitch_from_world_vertical(quaternion, tangent),
-        torch.tensor([pitch], dtype=torch.float64),
-        rtol=0.0,
-        atol=1.0e-12,
     )
 
 
@@ -298,21 +207,3 @@ def test_connect_constraint_forces_select_each_hand_and_ignore_padding() -> None
             dtype=torch.float64,
         ),
     )
-
-
-def test_ground_aligned_zmp_uses_hand_force_moment() -> None:
-    zmp, _, reaction, valid = zmp_from_hand_force(
-        torch.tensor([0.0], dtype=torch.float64),
-        torch.tensor([1.0], dtype=torch.float64),
-        torch.zeros(1, dtype=torch.float64),
-        torch.zeros(1, dtype=torch.float64),
-        torch.tensor([1.0], dtype=torch.float64),
-        torch.tensor([1.0], dtype=torch.float64),
-        torch.zeros(1, dtype=torch.float64),
-        torch.ones(1, dtype=torch.float64),
-        1.0,
-        min_ground_reaction=1.0,
-    )
-    assert valid.item()
-    torch.testing.assert_close(reaction, torch.tensor([8.81], dtype=torch.float64))
-    torch.testing.assert_close(zmp, torch.tensor([-1.0 / 8.81], dtype=torch.float64))

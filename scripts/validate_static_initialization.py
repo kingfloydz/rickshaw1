@@ -37,7 +37,6 @@ def main() -> int:
         "support_height_error_m": solution.support_height_error,
         "hitch_height_m": solution.hitch_height,
         "acceleration_error": solution.acceleration_error,
-        "fat2_reference_angle_rad": solution.fat2_reference_angle,
         "actuator_torque_ratio_max": solution.actuator_torque_ratio,
     }
     print(json.dumps(report, indent=2))

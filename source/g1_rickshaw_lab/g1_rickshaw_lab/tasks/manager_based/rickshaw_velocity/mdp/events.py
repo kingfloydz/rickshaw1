@@ -55,46 +55,6 @@ class RickshawRuntimeState:
         )
 
 
-@dataclass
-class StabilityState:
-    theta_fat: torch.Tensor
-    fat_valid: torch.Tensor
-    fat_force_consistent: torch.Tensor
-    fat_force_relative_error: torch.Tensor
-    torso_pitch: torch.Tensor
-    zmp_s: torch.Tensor
-    zmp_margin: torch.Tensor
-    zmp_valid: torch.Tensor
-    ground_reaction_normal: torch.Tensor
-    support_center_w: torch.Tensor
-    support_points_sy: torch.Tensor
-    support_point_mask: torch.Tensor
-
-    @classmethod
-    def zeros(
-        cls,
-        num_envs: int,
-        *,
-        device: torch.device | str | None = None,
-        dtype: torch.dtype = torch.float32,
-    ) -> StabilityState:
-        scalar = torch.zeros(num_envs, device=device, dtype=dtype)
-        return cls(
-            theta_fat=scalar.clone(),
-            fat_valid=torch.zeros(num_envs, device=device, dtype=torch.bool),
-            fat_force_consistent=torch.zeros(num_envs, device=device, dtype=torch.bool),
-            fat_force_relative_error=torch.zeros((num_envs, 2), device=device, dtype=dtype),
-            torso_pitch=scalar.clone(),
-            zmp_s=scalar.clone(),
-            zmp_margin=scalar.clone(),
-            zmp_valid=torch.zeros(num_envs, device=device, dtype=torch.bool),
-            ground_reaction_normal=scalar.clone(),
-            support_center_w=torch.zeros((num_envs, 3), device=device, dtype=dtype),
-            support_points_sy=torch.zeros((num_envs, 8, 2), device=device, dtype=dtype),
-            support_point_mask=torch.zeros((num_envs, 8), device=device, dtype=torch.bool),
-        )
-
-
 DOMAIN_RANDOMIZATION_NAMES = (
     "torso.mass_delta",
     "payload.mass",
@@ -246,7 +206,6 @@ __all__ = [
     "DOMAIN_RANDOMIZATION_NAMES",
     "DomainRandomizationCfg",
     "RickshawRuntimeState",
-    "StabilityState",
     "effective_cart_mass_com_bounds",
     "sample_domain_parameters",
 ]

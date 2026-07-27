@@ -19,7 +19,6 @@ from g1_rickshaw_lab.rickshaw_spec import RICKSHAW_URDF_SPEC
 from g1_rickshaw_lab.project_paths import PROJECT_ROOT
 from g1_rickshaw_lab.static_equilibrium import (
     MujocoStaticEquilibrium,
-    fat2_reference_angle_scalar,
     load_mujoco_static_equilibrium,
     save_mujoco_static_equilibrium,
     solve_fixed_contact_statics,
@@ -247,7 +246,6 @@ def test_static_rest_pose_is_bound_to_the_compiled_model(tmp_path) -> None:
     solution = MujocoStaticEquilibrium(
         qpos=np.zeros(model.nq),
         joint_actuator_torque=np.zeros(29),
-        fat2_reference_angle=0.0,
         equality_position_error=0.0,
         support_height_error=0.0,
         hitch_height=0.85,
@@ -271,25 +269,3 @@ def test_static_rest_pose_is_bound_to_the_compiled_model(tmp_path) -> None:
     model.opt.timestep = 0.002
     with pytest.raises(ValueError, match="model signature"):
         load_mujoco_static_equilibrium(model, path)
-
-
-def test_fat2_prior_uses_tangent_and_normal_hand_force() -> None:
-    first = fat2_reference_angle_scalar(
-        handle_s=0.4,
-        handle_n=0.8,
-        hand_force_s=-120.0,
-        hand_force_n=40.0,
-        robot_mass=34.1299349,
-        com_radius=0.715,
-        theta_max=0.8,
-    )
-    without_normal = fat2_reference_angle_scalar(
-        handle_s=0.4,
-        handle_n=0.8,
-        hand_force_s=-120.0,
-        hand_force_n=0.0,
-        robot_mass=34.1299349,
-        com_radius=0.715,
-        theta_max=0.8,
-    )
-    assert first != without_normal

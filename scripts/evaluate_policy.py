@@ -256,7 +256,6 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
 
     robot = base_env.scene["robot"]
     state = base_env.rickshaw_state
-    stability = base_env.stability_state
     analytic = base_env.analytic_force_state
     command = base_env.command_manager.get_command("twist")
     actual_speed = base_env.rickshaw_speed_s
@@ -339,11 +338,6 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
         "t_s_sign_agreement": sign_s,
         "t_n_sign_agreement": sign_n,
         "analytic_force_valid": analytic.valid,
-        "fat_force_consistent": stability.fat_force_consistent,
-        "fat_force_t_s_relative_error": stability.fat_force_relative_error[:, 0],
-        "fat_force_t_n_relative_error": stability.fat_force_relative_error[:, 1],
-        "zmp_margin": stability.zmp_margin,
-        "zmp_valid": stability.zmp_valid,
         "arm_torque_margin": arm_margin,
         "leg_torque_margin": leg_margin,
     }
