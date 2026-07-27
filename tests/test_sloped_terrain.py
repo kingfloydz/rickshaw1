@@ -103,6 +103,12 @@ def test_each_cylinder_wheel_has_two_plane_contacts_on_every_slope() -> None:
             np.sin(-0.5 * slope),
             0.0,
         )
+        model.geom_quat[terrain_geom_id] = (
+            np.cos(-0.5 * slope),
+            0.0,
+            np.sin(-0.5 * slope),
+            0.0,
+        )
         data = mujoco.MjData(model)
         mujoco.mj_setConst(model, data)
         data.qpos[:] = flat_qpos

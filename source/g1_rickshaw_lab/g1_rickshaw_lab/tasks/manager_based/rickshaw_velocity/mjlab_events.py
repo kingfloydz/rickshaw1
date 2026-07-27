@@ -107,7 +107,13 @@ def _load_static() -> tuple[Any, MujocoStaticEquilibrium]:
     return model, load_mujoco_static_equilibrium(model)
 
 
-@requires_model_fields("body_pos", "body_quat", recompute=RecomputeLevel.set_const_0)
+@requires_model_fields(
+    "body_pos",
+    "body_quat",
+    "geom_pos",
+    "geom_quat",
+    recompute=RecomputeLevel.set_const_0,
+)
 def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTaskRuntimeCfg) -> None:
     """Load the certified rest pose and allocate policy-rate state."""
 
@@ -120,8 +126,12 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     )
     plane_positions, plane_quaternions = terrain_plane_poses(env.scene.env_origins, env.terrain_types)
     plane_body_id = env.scene["terrain"].indexing.body_ids[0]
+    plane_geom_id = env.scene["terrain"].indexing.geom_ids[0]
     env.sim.model.body_pos[ids, plane_body_id] = plane_positions
     env.sim.model.body_quat[ids, plane_body_id] = plane_quaternions
+    # Viser draws fixed planes from the geom pose without composing the parent body pose.
+    env.sim.model.geom_pos[ids, plane_geom_id] = plane_positions
+    env.sim.model.geom_quat[ids, plane_geom_id] = plane_quaternions
     env.path_tangent_w, env.path_lateral_w, env.path_normal_w = terrain_frame(
         env.terrain_types,
         dtype=torch.float32,
