@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import mujoco
 import numpy as np
+import pytest
 import torch
 
 from g1_rickshaw_lab.assets.mujoco_spec import ALL_COLLISION_BITS, GROUND_COLLISION_BIT
@@ -18,6 +19,7 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.terrain import (
     assign_terrain_types,
     terrain_frame,
     terrain_plane_poses,
+    terrain_type_for_slope,
 )
 
 
@@ -28,6 +30,15 @@ def test_terrain_has_nineteen_evenly_assigned_slopes() -> None:
     assert terrain_types[0] == 0
     assert terrain_types[-1] == len(TERRAIN_SLOPES) - 1
     assert int(counts.max() - counts.min()) <= 1
+
+
+def test_terrain_can_assign_every_environment_to_one_slope() -> None:
+    terrain_types = assign_terrain_types(8, device="cpu", terrain_slope=0.05)
+
+    assert terrain_type_for_slope(0.05) == 13
+    assert terrain_types.tolist() == [13] * 8
+    with pytest.raises(ValueError, match="must be one of"):
+        assign_terrain_types(1, device="cpu", terrain_slope=0.055)
 
 
 def test_terrain_plane_poses_and_frames_match_each_slope() -> None:

@@ -80,6 +80,7 @@ class MjlabTaskRuntimeCfg:
     zmp: ZMPCfg
     history_length: int = HISTORY_LENGTH
     play: bool = False
+    terrain_slope: float | None = None
 
 
 def _ids(entity: Any, kind: str, names: tuple[str, ...]) -> torch.Tensor:
@@ -112,7 +113,11 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
 
     del env_ids
     ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
-    env.terrain_types = assign_terrain_types(env.num_envs, device=env.device)
+    env.terrain_types = assign_terrain_types(
+        env.num_envs,
+        device=env.device,
+        terrain_slope=cfg.terrain_slope,
+    )
     plane_positions, plane_quaternions = terrain_plane_poses(env.scene.env_origins, env.terrain_types)
     plane_body_id = env.scene["terrain"].indexing.body_ids[0]
     env.sim.model.body_pos[ids, plane_body_id] = plane_positions

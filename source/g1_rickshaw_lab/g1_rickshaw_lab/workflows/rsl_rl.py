@@ -82,6 +82,7 @@ def _parser(mode: Literal["train", "play"]) -> argparse.ArgumentParser:
     if mode == "train":
         parser.add_argument("--video_interval", type=int, default=2000)
         parser.add_argument("--max_iterations", type=int, default=None)
+        parser.add_argument("--velocity-curriculum", action="store_true")
     else:
         parser.add_argument("--real-time", action="store_true", default=False)
     return parser
@@ -157,6 +158,8 @@ def run_rsl_rl(
 def _load_configs(args: argparse.Namespace, overrides: list[str], *, play: bool):
     from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
 
+    if not play:
+        os.environ["G1_RICKSHAW_VELOCITY_CURRICULUM"] = "1" if args.velocity_curriculum else "0"
     import g1_rickshaw_lab.tasks  # noqa: F401
 
     env_cfg = load_env_cfg(args.task, play=play)

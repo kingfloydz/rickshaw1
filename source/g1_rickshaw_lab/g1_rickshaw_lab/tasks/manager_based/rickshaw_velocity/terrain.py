@@ -2,15 +2,35 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 
 from .sloped_reset import TERRAIN_SLOPES
 
 
-def assign_terrain_types(num_envs: int, *, device: torch.device | str) -> torch.Tensor:
-    """Distribute environments evenly across the nineteen configured slopes."""
+def terrain_type_for_slope(slope: float) -> int:
+    """Return the terrain type matching an explicitly selected slope."""
+
+    if not math.isfinite(slope):
+        raise ValueError("terrain slope must be finite")
+    for terrain_type, configured_slope in enumerate(TERRAIN_SLOPES):
+        if math.isclose(slope, configured_slope, abs_tol=1.0e-9):
+            return terrain_type
+    raise ValueError(f"terrain slope must be one of {TERRAIN_SLOPES}, got {slope}")
+
+
+def assign_terrain_types(
+    num_envs: int,
+    *,
+    device: torch.device | str,
+    terrain_slope: float | None = None,
+) -> torch.Tensor:
+    """Distribute all slopes, or assign every environment to one selected slope."""
 
     env_ids = torch.arange(num_envs, device=device, dtype=torch.long)
+    if terrain_slope is not None:
+        return torch.full_like(env_ids, terrain_type_for_slope(terrain_slope))
     return env_ids * len(TERRAIN_SLOPES) // num_envs
 
 
@@ -49,4 +69,5 @@ __all__ = [
     "assign_terrain_types",
     "terrain_frame",
     "terrain_plane_poses",
+    "terrain_type_for_slope",
 ]

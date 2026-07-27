@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 
 from g1_rickshaw_lab.assets import get_g1_robot_cfg, get_rickshaw_cfg
 from g1_rickshaw_lab.configuration import G1_JOINT_ORDER, load_feasibility_envelope
@@ -12,6 +13,25 @@ from g1_rickshaw_lab.project_paths import CONFIG_ROOT, PROJECT_ROOT
 from .mdp.mimic import LEG_TORSO_JOINT_COUNT
 
 MIMIC_MOTION_PATH = PROJECT_ROOT / "hmr4d_results_straight_g1.pkl"
+PLAY_SLOPE_ENV = "G1_RICKSHAW_PLAY_SLOPE"
+VELOCITY_CURRICULUM_ENV = "G1_RICKSHAW_VELOCITY_CURRICULUM"
+
+
+def _velocity_curriculum_enabled() -> bool:
+    value = os.environ.get(VELOCITY_CURRICULUM_ENV, "0").lower()
+    if value not in {"0", "1", "false", "true"}:
+        raise ValueError(f"{VELOCITY_CURRICULUM_ENV} must be a boolean")
+    return value in {"1", "true"}
+
+
+def _play_slope() -> float | None:
+    value = os.environ.get(PLAY_SLOPE_ENV)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise ValueError(f"{PLAY_SLOPE_ENV} must be a slope in radians") from exc
 
 
 def enable_mimic(env_cfg):
@@ -50,7 +70,7 @@ def enable_mimic(env_cfg):
     return env_cfg
 
 
-def _runtime_cfg(*, play: bool, history_length: int):
+def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None):
     from .mdp.dynamics import AnalyticForceCfg, FAT2Cfg, SupportPolygonCfg, ZMPCfg
     from .mdp.events import DomainRandomizationCfg
     from .mjlab_events import MjlabTaskRuntimeCfg
@@ -110,6 +130,7 @@ def _runtime_cfg(*, play: bool, history_length: int):
         zmp=ZMPCfg(min_ground_reaction=calibration["safety.min_ground_reaction"]),
         history_length=history_length,
         play=play,
+        terrain_slope=terrain_slope,
     )
 
 
@@ -118,8 +139,15 @@ def g1_rickshaw_env_cfg(
     play: bool = False,
     history_length: int = HISTORY_LENGTH,
     mimic: bool = False,
+    velocity_curriculum: bool | None = None,
+    terrain_slope: float | None = None,
 ):
     """Create the nineteen-slope rickshaw velocity task using mjlab 1.5.3 APIs."""
+
+    if velocity_curriculum is None:
+        velocity_curriculum = _velocity_curriculum_enabled()
+    if terrain_slope is None and play:
+        terrain_slope = _play_slope()
 
     from mjlab.envs import ManagerBasedRlEnvCfg
     from mjlab.managers.curriculum_manager import CurriculumTermCfg
@@ -146,7 +174,6 @@ def g1_rickshaw_env_cfg(
     from . import mjlab_mdp
     from .closed_chain import add_closed_chain_constraints
     from .mdp.rewards import (
-        HITCH_HEIGHT_ERROR_SCALE_M,
         HITCH_HEIGHT_RECOVERY_DEADBAND_M,
         HITCH_HEIGHT_RECOVERY_SCALE_M,
     )
@@ -159,7 +186,7 @@ def g1_rickshaw_env_cfg(
         reset_from_mujoco_static,
     )
 
-    runtime = _runtime_cfg(play=play, history_length=history_length)
+    runtime = _runtime_cfg(play=play, history_length=history_length, terrain_slope=terrain_slope)
     observations = {
         "policy": ObservationGroupCfg(
             terms={"current": ObservationTermCfg(func=mjlab_mdp.current_actor_observation)},
@@ -422,11 +449,6 @@ def g1_rickshaw_env_cfg(
             weight=-1.0,
             params={"sensor_name": self_collision_sensor_name, "force_threshold": 10.0},
         ),
-        "hitch_height_exp": RewardTermCfg(
-            func=mjlab_mdp.hitch_height_exp,
-            weight=0.5,
-            params={"std": HITCH_HEIGHT_ERROR_SCALE_M},
-        ),
         "hitch_height_recovery_l2": RewardTermCfg(
             func=mjlab_mdp.hitch_height_recovery_l2,
             weight=-0.25,
@@ -590,10 +612,14 @@ def g1_rickshaw_env_cfg(
         enable_mimic(cfg)
     if play:
         cfg.episode_length_s = int(1e9)
-        cfg.curriculum = {}
+        cfg.curriculum.pop("rickshaw_penalty_weights", None)
+    if not velocity_curriculum:
+        cfg.curriculum.pop("command_vel", None)
         twist_cmd = cfg.commands["twist"]
         twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
         twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
+    cfg.velocity_curriculum_enabled = velocity_curriculum
+    cfg.terrain_slope = terrain_slope
     return cfg
 
 

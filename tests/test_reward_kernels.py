@@ -92,7 +92,7 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     )
     from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity import mjlab_mdp
 
-    cfg = g1_rickshaw_env_cfg()
+    cfg = g1_rickshaw_env_cfg(velocity_curriculum=True)
     mjlab_cfg = unitree_g1_flat_env_cfg()
     official = {
         "track_linear_velocity": (mjlab_mdp.track_rickshaw_lin_vel_x, 2.0),
@@ -156,7 +156,6 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         *rickshaw_penalties,
         *relative_pose_and_force_penalties,
         "arm_joint_velocity_l2",
-        "hitch_height_exp",
         "hitch_height_recovery_l2",
     }
     for name, (func, weight) in official.items():
@@ -230,7 +229,6 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
 
     assert cfg.rewards["foot_swing_height"].params["target_height"] == 0.08
     assert cfg.rewards["foot_clearance"].params["target_height"] == 0.10
-    assert cfg.rewards["hitch_height_exp"].weight == 0.5
     assert cfg.rewards["hitch_height_recovery_l2"].weight == -0.25
     assert cfg.commands["twist"].entity_name == "rickshaw"
     assert cfg.commands["twist"].ranges.lin_vel_y == (0.0, 0.0)
@@ -291,8 +289,18 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     play_cfg = g1_rickshaw_env_cfg(play=True)
     assert play_cfg.episode_length_s == int(1e9)
     assert play_cfg.curriculum == {}
+    assert not play_cfg.velocity_curriculum_enabled
     assert play_cfg.commands["twist"].ranges.lin_vel_x == (-1.5, 2.0)
     assert play_cfg.commands["twist"].ranges.ang_vel_z == (-0.7, 0.7)
+
+    slope_play_cfg = g1_rickshaw_env_cfg(play=True, terrain_slope=0.05)
+    assert slope_play_cfg.terrain_slope == 0.05
+    assert slope_play_cfg.events["initialize_task"].params["cfg"].terrain_slope == 0.05
+
+    fixed_training_cfg = g1_rickshaw_env_cfg(play=False)
+    assert set(fixed_training_cfg.curriculum) == {"rickshaw_penalty_weights"}
+    assert fixed_training_cfg.commands["twist"].ranges.lin_vel_x == (-1.5, 2.0)
+    assert fixed_training_cfg.commands["twist"].ranges.ang_vel_z == (-0.7, 0.7)
 
     mimic_cfg = g1_rickshaw_env_cfg(mimic=True)
     mimic_command = mimic_cfg.commands["twist"]
