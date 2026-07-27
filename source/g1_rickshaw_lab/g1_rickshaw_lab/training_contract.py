@@ -45,7 +45,7 @@ CHECKPOINT_STAGE_KEY = "g1_rickshaw_stage"
 CHECKPOINT_LINEAGE_KEY = "g1_rickshaw_lineage"
 CHECKPOINT_CURRICULUM_ITERATION_KEY = "g1_rickshaw_curriculum_iteration"
 TRAINING_CONFIGURATION_KEY = "g1_rickshaw_training_configuration"
-TRAINING_CONFIGURATION_SCHEMA_VERSION = 14
+TRAINING_CONFIGURATION_SCHEMA_VERSION = 15
 EXPECTED_RSL_RL_DISTRIBUTION_VERSION = RSL_RL_VERSION.removeprefix("v")
 
 REPOSITORY_ROOT = PROJECT_ROOT
@@ -737,17 +737,11 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
                 {"name": "base_angular_velocity", "slice": [3, 6], "scale": [0.25, 0.25, 0.25]},
                 {"name": "projected_gravity", "slice": [6, 9], "scale": [1.0, 1.0, 1.0]},
                 {"name": "command", "fields": ["lin_vel_x", "ang_vel_z"], "slice": [9, 11], "scale": [1.0, 1.0]},
-                {
-                    "name": "rickshaw_velocity",
-                    "fields": ["lin_vel_x", "ang_vel_z"],
-                    "slice": [11, 13],
-                    "scale": [1.0, 1.0],
-                },
-                {"name": "joint_position_minus_q_ref", "slice": [13, 42], "scale": [1.0] * ACTION_DIM},
-                {"name": "joint_velocity", "slice": [42, 71], "scale": [0.05] * ACTION_DIM},
+                {"name": "joint_position_minus_q_ref", "slice": [11, 40], "scale": [1.0] * ACTION_DIM},
+                {"name": "joint_velocity", "slice": [40, 69], "scale": [0.05] * ACTION_DIM},
                 {
                     "name": "previous_normalized_action",
-                    "slice": [71, ACTOR_OBSERVATION_DIM],
+                    "slice": [69, ACTOR_OBSERVATION_DIM],
                     "scale": [1.0] * ACTION_DIM,
                 },
             ],

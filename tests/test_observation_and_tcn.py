@@ -32,7 +32,6 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.observations impo
     JOINT_VELOCITY_SLICE,
     PREVIOUS_ACTION_SLICE,
     PROJECTED_GRAVITY_SLICE,
-    RICKSHAW_VELOCITY_SLICE,
     TEACHER_STATIC_FEATURE_NAMES,
     ObservationHistoryState,
     assemble_actor_observation,
@@ -48,7 +47,6 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
     angular_velocity = torch.tensor([[4.0, -2.0, 1.0]], dtype=dtype)
     gravity = torch.tensor([[0.1, 0.2, -0.9]], dtype=dtype)
     command = torch.tensor([[0.7, -0.2]], dtype=dtype)
-    rickshaw_velocity = torch.tensor([[0.6, -0.1]], dtype=dtype)
     q_ref = torch.linspace(-0.2, 0.2, 29, dtype=dtype).unsqueeze(0)
     position_error = torch.linspace(-0.1, 0.1, 29, dtype=dtype).unsqueeze(0)
     joint_position = q_ref + position_error
@@ -60,7 +58,6 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
         angular_velocity,
         gravity,
         command,
-        rickshaw_velocity,
         joint_position,
         q_ref,
         joint_velocity,
@@ -68,7 +65,7 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
     )
 
     assert observation.shape == (1, ACTOR_OBSERVATION_DIM)
-    assert ACTOR_OBSERVATION_DIM == 100
+    assert ACTOR_OBSERVATION_DIM == 98
     torch.testing.assert_close(
         observation[:, BASE_LINEAR_VELOCITY_SLICE], linear_velocity
     )
@@ -77,9 +74,6 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
     )
     torch.testing.assert_close(observation[:, PROJECTED_GRAVITY_SLICE], gravity)
     torch.testing.assert_close(observation[:, COMMAND_SLICE], command)
-    torch.testing.assert_close(
-        observation[:, RICKSHAW_VELOCITY_SLICE], rickshaw_velocity
-    )
     torch.testing.assert_close(observation[:, JOINT_POSITION_SLICE], position_error)
     torch.testing.assert_close(
         observation[:, JOINT_VELOCITY_SLICE], joint_velocity * 0.05
@@ -146,7 +140,7 @@ def test_history_excludes_current_observation() -> None:
 
     state.advance(first)
     assert state.history.shape == (1, HISTORY_LENGTH, ACTOR_OBSERVATION_DIM)
-    assert (HISTORY_LENGTH, ACTOR_OBSERVATION_DIM) == (61, 100)
+    assert (HISTORY_LENGTH, ACTOR_OBSERVATION_DIM) == (61, 98)
     torch.testing.assert_close(state.history, first[:, None, :].expand(-1, 61, -1))
     torch.testing.assert_close(state.current, first)
 

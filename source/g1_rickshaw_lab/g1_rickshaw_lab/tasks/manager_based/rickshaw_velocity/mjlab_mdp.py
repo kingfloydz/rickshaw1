@@ -81,11 +81,13 @@ def _dynamic_privilege(env: Any) -> torch.Tensor:
             dim=-1,
         )
 
+    cart_velocity_sln = project(cart.data.root_link_lin_vel_w)
     force_sln = project(env.rickshaw_state.hand_force_w)
     result = torch.cat(
         (
             project(robot.data.root_link_lin_vel_w),
-            project(cart.data.root_link_lin_vel_w),
+            torch.stack((env.rickshaw_speed_s, env.rickshaw_ang_vel_z), dim=-1),
+            cart_velocity_sln[:, 1:],
             env.rickshaw_state.pitch[:, None],
             env.rickshaw_state.wheel_normal_force,
             force_sln,
@@ -93,7 +95,7 @@ def _dynamic_privilege(env: Any) -> torch.Tensor:
         dim=-1,
     )
     if result.shape != (env.num_envs, TEACHER_DYNAMIC_DIM):
-        raise RuntimeError("teacher dynamic observation is not 12-D")
+        raise RuntimeError(f"teacher dynamic observation is not {TEACHER_DYNAMIC_DIM}-D")
     return result
 
 
@@ -111,7 +113,6 @@ def _update_observation_state(env: Any) -> None:
         robot.data.root_link_ang_vel_b,
         robot.data.projected_gravity_b,
         command[:, (0, 2)],
-        torch.stack((env.rickshaw_speed_s, env.rickshaw_ang_vel_z), dim=-1),
         robot.data.joint_pos[:, env.policy_joint_ids],
         action_term.q_ref,
         robot.data.joint_vel[:, env.policy_joint_ids],

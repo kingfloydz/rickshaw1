@@ -42,10 +42,16 @@ def test_policy_dimensions_are_shared_across_runtime_layers() -> None:
     assert observations.HISTORY_LENGTH == policy_schema.HISTORY_LENGTH
     assert observations.TEACHER_DYNAMIC_DIM == policy_schema.TEACHER_DYNAMIC_DIM
     assert observations.TEACHER_STATIC_DIM == policy_schema.TEACHER_STATIC_DIM
+    assert policy_schema.ACTOR_OBSERVATION_DIM == 98
+    assert policy_schema.TEACHER_DYNAMIC_DIM == 13
     assert policy_schema.TEACHER_STATIC_DIM == 10
-    assert policy_schema.CRITIC_PRIVILEGED_DIM == 37
+    assert policy_schema.CRITIC_PRIVILEGED_DIM == 38
     assert policy_schema.TEACHER_TERRAIN_SLOPE_BOUNDS == (-0.08, 0.10)
     assert observations.TEACHER_STATIC_FEATURE_NAMES[-1] == "terrain.slope"
+    assert observations.TEACHER_DYNAMIC_FEATURE_NAMES[3:5] == (
+        "rickshaw.velocity.lin_vel_x",
+        "rickshaw.velocity.ang_vel_z",
+    )
 
     for latent_dim in policy_schema.SUPPORTED_CONTEXT_DIMS:
         assert policy_schema.validate_context_dim(latent_dim) == latent_dim
@@ -116,24 +122,18 @@ def test_deployment_manifest_uses_the_policy_schema() -> None:
             "scale": [1.0, 1.0],
         },
         {
-            "name": "rickshaw_velocity",
-            "fields": ["lin_vel_x", "ang_vel_z"],
-            "slice": [11, 13],
-            "scale": [1.0, 1.0],
-        },
-        {
             "name": "joint_position_minus_q_ref",
-            "slice": [13, 42],
+            "slice": [11, 40],
             "scale": [1.0] * policy_schema.ACTION_DIM,
         },
         {
             "name": "joint_velocity",
-            "slice": [42, 71],
+            "slice": [40, 69],
             "scale": [0.05] * policy_schema.ACTION_DIM,
         },
         {
             "name": "previous_normalized_action",
-            "slice": [71, policy_schema.ACTOR_OBSERVATION_DIM],
+            "slice": [69, policy_schema.ACTOR_OBSERVATION_DIM],
             "scale": [1.0] * policy_schema.ACTION_DIM,
         },
     ]
