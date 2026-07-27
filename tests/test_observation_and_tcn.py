@@ -236,6 +236,14 @@ def test_fixed_teacher_and_student_context_interfaces() -> None:
         )
     assert teacher.encoder.latent_dim == 16
     assert student.context_encoder.latent_dim == 16
+    teacher_context_layers = list(teacher.encoder.context)
+    assert isinstance(teacher_context_layers[0], nn.Linear)
+    assert teacher_context_layers[0].in_features == 96
+    assert teacher_context_layers[0].out_features == 64
+    assert isinstance(teacher_context_layers[1], nn.ELU)
+    assert isinstance(teacher_context_layers[2], nn.Linear)
+    assert teacher_context_layers[2].in_features == 64
+    assert teacher_context_layers[2].out_features == 16
     assert teacher_context.shape == (2, 16)
     assert student_context.shape == (2, 16)
     assert teacher_distribution.mean.shape == (2, 29)

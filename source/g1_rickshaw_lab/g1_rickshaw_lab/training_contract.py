@@ -388,9 +388,12 @@ def validate_teacher_checkpoint_architecture(
     state = next(iter(_state_dicts(checkpoint)), None)
     if not isinstance(state, Mapping):
         raise ValueError("teacher checkpoint has no actor state_dict")
-    encoder_weight = state.get("encoder.context.weight")
+    encoder_weight = state.get("encoder.context.2.weight")
     policy_weight = state.get("policy.network.0.weight")
-    if not torch.is_tensor(encoder_weight) or encoder_weight.ndim != 2 or encoder_weight.shape[0] != latent_dim:
+    if (
+        not torch.is_tensor(encoder_weight)
+        or encoder_weight.shape != (latent_dim, 64)
+    ):
         raise ValueError("teacher encoder differs from its recorded latent width")
     if (
         not torch.is_tensor(policy_weight)

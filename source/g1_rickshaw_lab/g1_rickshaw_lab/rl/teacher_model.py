@@ -59,7 +59,11 @@ class TeacherEncoder(nn.Module):
             nn.Linear(STATIC_PRIVILEGE_DIM, STATIC_FEATURE_DIM),
             nn.ELU(),
         )
-        self.context = nn.Linear(FEATURE_DIM + STATIC_FEATURE_DIM, self.latent_dim)
+        self.context = nn.Sequential(
+            nn.Linear(FEATURE_DIM + STATIC_FEATURE_DIM, FEATURE_DIM),
+            nn.ELU(),
+            nn.Linear(FEATURE_DIM, self.latent_dim),
+        )
 
     def forward(
         self,

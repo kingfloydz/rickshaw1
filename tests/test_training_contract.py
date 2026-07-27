@@ -127,7 +127,7 @@ def test_checkpoint_tensor_widths_match_the_recorded_latent(latent_dim: int) -> 
     }
     teacher = {
         "actor_state_dict": {
-            "encoder.context.weight": torch.zeros(latent_dim, ACTOR_OBSERVATION_DIM),
+            "encoder.context.2.weight": torch.zeros(latent_dim, 64),
             "policy.network.0.weight": torch.zeros(512, ACTOR_OBSERVATION_DIM + latent_dim),
         }
     }

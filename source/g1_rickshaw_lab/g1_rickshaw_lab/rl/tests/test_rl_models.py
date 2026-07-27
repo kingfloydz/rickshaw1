@@ -91,6 +91,12 @@ class TestRickshawRLModels(unittest.TestCase):
 
         teacher = G1RickshawTeacherActor()
         teacher_distribution, z_star = teacher.forward_with_context(current, history, dynamic, static)
+        context_shapes = [
+            (layer.in_features, layer.out_features)
+            for layer in teacher.encoder.context
+            if isinstance(layer, nn.Linear)
+        ]
+        self.assertEqual(context_shapes, [(96, 64), (64, 16)])
         student = G1RickshawStudentActor()
         student_distribution, z_hat = student.forward_with_context(current, history)
 
