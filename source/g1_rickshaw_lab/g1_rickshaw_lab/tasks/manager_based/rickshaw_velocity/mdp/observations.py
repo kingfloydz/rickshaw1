@@ -58,17 +58,16 @@ TEACHER_STATIC_FEATURE_NAMES = (
     "terrain.slope",
 )
 TEACHER_DYNAMIC_FEATURE_NAMES = (
-    "robot.velocity.s",
-    "robot.velocity.l",
-    "robot.velocity.n",
     "rickshaw.velocity.lin_vel_x",
     "rickshaw.velocity.ang_vel_z",
-    "cart.velocity.l",
-    "cart.velocity.n",
     "cart.pitch",
     "wheel.left_normal_force",
     "wheel.right_normal_force",
-    *(f"hand.force.{axis}" for axis in ("s", "l", "n")),
+    *(
+        f"hand.{side}.force.{axis}"
+        for side in ("left", "right")
+        for axis in ("s", "l", "n")
+    ),
 )
 if len(TEACHER_STATIC_FEATURE_NAMES) != TEACHER_STATIC_DIM:
     raise RuntimeError("teacher static feature schema has the wrong dimension")
@@ -97,6 +96,35 @@ def assemble_actor_observation(
             (joint_position - q_ref) * JOINT_POSITION_SCALE,
             joint_velocity_value * JOINT_VELOCITY_SCALE,
             previous_action * PREVIOUS_ACTION_SCALE,
+        ),
+        dim=-1,
+    )
+
+
+def assemble_teacher_dynamic_privilege(
+    rickshaw_velocity: torch.Tensor,
+    rickshaw_pitch: torch.Tensor,
+    wheel_normal_force: torch.Tensor,
+    per_hand_force_w: torch.Tensor,
+    path_tangent_w: torch.Tensor,
+    path_lateral_w: torch.Tensor,
+    path_normal_w: torch.Tensor,
+) -> torch.Tensor:
+    """Assemble per-step Rickshaw state and separate left/right hand forces."""
+
+    hand_force_sln = torch.stack(
+        tuple(
+            torch.sum(per_hand_force_w * axis[:, None, :], dim=-1)
+            for axis in (path_tangent_w, path_lateral_w, path_normal_w)
+        ),
+        dim=-1,
+    )
+    return torch.cat(
+        (
+            rickshaw_velocity,
+            rickshaw_pitch[:, None],
+            wheel_normal_force,
+            hand_force_sln.flatten(start_dim=1),
         ),
         dim=-1,
     )
@@ -227,5 +255,6 @@ __all__ = [
     "ACTOR_OBSERVATION_NOISE_SCALE",
     "ObservationHistoryState",
     "assemble_actor_observation",
+    "assemble_teacher_dynamic_privilege",
     "normalize_features",
 ]

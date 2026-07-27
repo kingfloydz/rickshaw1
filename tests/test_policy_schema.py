@@ -43,14 +43,23 @@ def test_policy_dimensions_are_shared_across_runtime_layers() -> None:
     assert observations.TEACHER_DYNAMIC_DIM == policy_schema.TEACHER_DYNAMIC_DIM
     assert observations.TEACHER_STATIC_DIM == policy_schema.TEACHER_STATIC_DIM
     assert policy_schema.ACTOR_OBSERVATION_DIM == 98
-    assert policy_schema.TEACHER_DYNAMIC_DIM == 13
+    assert policy_schema.TEACHER_DYNAMIC_DIM == 11
     assert policy_schema.TEACHER_STATIC_DIM == 10
-    assert policy_schema.CRITIC_PRIVILEGED_DIM == 38
+    assert policy_schema.CRITIC_PRIVILEGED_DIM == 35
     assert policy_schema.TEACHER_TERRAIN_SLOPE_BOUNDS == (-0.08, 0.10)
     assert observations.TEACHER_STATIC_FEATURE_NAMES[-1] == "terrain.slope"
-    assert observations.TEACHER_DYNAMIC_FEATURE_NAMES[3:5] == (
+    assert observations.TEACHER_DYNAMIC_FEATURE_NAMES == (
         "rickshaw.velocity.lin_vel_x",
         "rickshaw.velocity.ang_vel_z",
+        "cart.pitch",
+        "wheel.left_normal_force",
+        "wheel.right_normal_force",
+        "hand.left.force.s",
+        "hand.left.force.l",
+        "hand.left.force.n",
+        "hand.right.force.s",
+        "hand.right.force.l",
+        "hand.right.force.n",
     )
 
     for latent_dim in policy_schema.SUPPORTED_CONTEXT_DIMS:

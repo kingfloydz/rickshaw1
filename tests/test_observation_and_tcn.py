@@ -35,6 +35,7 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.observations impo
     TEACHER_STATIC_FEATURE_NAMES,
     ObservationHistoryState,
     assemble_actor_observation,
+    assemble_teacher_dynamic_privilege,
 )
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.events import (
     _update_teacher_static_domain,
@@ -79,6 +80,28 @@ def test_actor_observation_has_the_fixed_scaled_order() -> None:
         observation[:, JOINT_VELOCITY_SLICE], joint_velocity * 0.05
     )
     torch.testing.assert_close(observation[:, PREVIOUS_ACTION_SLICE], previous_action)
+
+
+def test_teacher_dynamic_privilege_keeps_separate_hand_forces() -> None:
+    dtype = torch.float64
+    axes = torch.eye(3, dtype=dtype)
+    result = assemble_teacher_dynamic_privilege(
+        torch.tensor([[0.6, -0.1]], dtype=dtype),
+        torch.tensor([0.2], dtype=dtype),
+        torch.tensor([[10.0, 20.0]], dtype=dtype),
+        torch.tensor([[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]], dtype=dtype),
+        axes[0:1],
+        axes[1:2],
+        axes[2:3],
+    )
+
+    torch.testing.assert_close(
+        result,
+        torch.tensor(
+            [[0.6, -0.1, 0.2, 10.0, 20.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]],
+            dtype=dtype,
+        ),
+    )
 
 
 def test_teacher_static_and_critic_privilege_include_normalized_terrain_slope() -> None:

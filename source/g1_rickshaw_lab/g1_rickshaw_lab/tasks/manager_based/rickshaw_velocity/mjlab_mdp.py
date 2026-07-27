@@ -18,6 +18,7 @@ from g1_rickshaw_lab.policy_schema import (
 from .mdp.observations import (
     ACTOR_OBSERVATION_NOISE_SCALE,
     assemble_actor_observation,
+    assemble_teacher_dynamic_privilege,
 )
 from .mdp.rewards import (
     HITCH_HEIGHT_RECOVERY_DEADBAND_M,
@@ -68,31 +69,14 @@ def _shape_probe(env: Any, *shape: int) -> torch.Tensor:
 
 
 def _dynamic_privilege(env: Any) -> torch.Tensor:
-    robot = env.scene["robot"]
-    cart = env.scene["rickshaw"]
-
-    def project(vector: torch.Tensor) -> torch.Tensor:
-        return torch.stack(
-            (
-                torch.sum(vector * env.path_tangent_w, dim=-1),
-                torch.sum(vector * env.path_lateral_w, dim=-1),
-                torch.sum(vector * env.path_normal_w, dim=-1),
-            ),
-            dim=-1,
-        )
-
-    cart_velocity_sln = project(cart.data.root_link_lin_vel_w)
-    force_sln = project(env.rickshaw_state.hand_force_w)
-    result = torch.cat(
-        (
-            project(robot.data.root_link_lin_vel_w),
-            torch.stack((env.rickshaw_speed_s, env.rickshaw_ang_vel_z), dim=-1),
-            cart_velocity_sln[:, 1:],
-            env.rickshaw_state.pitch[:, None],
-            env.rickshaw_state.wheel_normal_force,
-            force_sln,
-        ),
-        dim=-1,
+    result = assemble_teacher_dynamic_privilege(
+        torch.stack((env.rickshaw_speed_s, env.rickshaw_ang_vel_z), dim=-1),
+        env.rickshaw_state.pitch,
+        env.rickshaw_state.wheel_normal_force,
+        env.rickshaw_state.connection_force_w,
+        env.path_tangent_w,
+        env.path_lateral_w,
+        env.path_normal_w,
     )
     if result.shape != (env.num_envs, TEACHER_DYNAMIC_DIM):
         raise RuntimeError(f"teacher dynamic observation is not {TEACHER_DYNAMIC_DIM}-D")
@@ -175,9 +159,8 @@ def critic_privileged_state(env: Any) -> torch.Tensor:
         (
             teacher_static(env),
             env.teacher_dynamic_history_state.current,
-            env.rickshaw_state.connection_residual[:, None],
-            env.stability_state.zmp_margin[:, None],
             env.rickshaw_kinematic_state.forward_acceleration[:, None],
+            env.rickshaw_kinematic_state.yaw_angular_acceleration[:, None],
             velocity_mdp.foot_height(env, "foot_height_scan"),
             velocity_mdp.foot_air_time(env, "feet_ground_contact"),
             velocity_mdp.foot_contact(env, "feet_ground_contact"),
