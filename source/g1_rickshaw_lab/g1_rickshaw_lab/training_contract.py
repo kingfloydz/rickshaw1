@@ -166,7 +166,7 @@ def finalize_training_configuration(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def training_mimic_enabled(training_configuration: Mapping[str, Any]) -> bool:
-    return bool(training_configuration["resolved_parameters"].get("mimic", False))
+    return bool(training_configuration["resolved_parameters"]["mimic"])
 
 
 def build_training_configuration(
@@ -720,7 +720,7 @@ def _deployment_contract(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("deployment training configuration must be S2")
     training_configuration = dict(raw_training_configuration)
     latent_dim = int(training_configuration["training_parameters"]["latent_dim"])
-    history_length = int(training_configuration["training_parameters"].get("history_length", HISTORY_LENGTH))
+    history_length = int(training_configuration["training_parameters"]["history_length"])
     feasibility = load_feasibility_envelope(feasibility_config_path())
     calibration = feasibility.calibration
     from .static_equilibrium import load_mujoco_static_equilibrium

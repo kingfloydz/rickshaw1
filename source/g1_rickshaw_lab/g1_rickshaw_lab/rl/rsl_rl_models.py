@@ -30,14 +30,6 @@ from .context_encoder import ContextEncoder
 from .teacher_model import TeacherEncoder
 
 
-def _require_rsl_rl() -> None:
-    try:
-        import rsl_rl  # noqa: F401
-        import tensordict  # noqa: F401
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("RSL-RL adapters require rsl-rl-lib==5.4.0 and tensordict") from exc
-
-
 class _RslModelContract(nn.Module):
     """Non-recurrent model methods required by RSL-RL."""
 
@@ -79,7 +71,6 @@ class RslRickshawActorModel(_RslModelContract):
     ) -> None:
         super().__init__()
         del stochastic, init_noise_std, noise_std_type, state_dependent_std
-        _require_rsl_rl()
         if output_dim != ACTION_DIM:
             raise ValueError(f"rickshaw action dimension is fixed to {ACTION_DIM}, got {output_dim}")
         if tuple(hidden_dims) != (512, 256, 128) or activation.lower() != "elu":
@@ -247,7 +238,6 @@ class RslRickshawCriticModel(_RslModelContract):
     ) -> None:
         super().__init__()
         del stochastic, init_noise_std, noise_std_type, state_dependent_std
-        _require_rsl_rl()
         if output_dim != 1 or distribution_cfg is not None:
             raise ValueError("critic must be deterministic with scalar output")
         if tuple(hidden_dims) != (512, 256, 128) or activation.lower() != "elu":
@@ -307,7 +297,6 @@ class RickshawPPO:
 
     @staticmethod
     def construct_algorithm(obs, env, cfg: dict, device: str):
-        _require_rsl_rl()
         from rsl_rl.algorithms import PPO
         from rsl_rl.extensions import resolve_rnd_config, resolve_symmetry_config
         from rsl_rl.storage import RolloutStorage

@@ -47,7 +47,6 @@ from .mdp.events import (
 from .mdp.observations import ObservationHistoryState
 from .mjlab_commands import rickshaw_velocity
 from .sloped_reset import TERRAIN_SLOPES, build_sloped_reset_templates
-from .task_spec import RickshawPoseTargetCfg
 from .terrain import (
     assign_terrain_types,
     terrain_frame,
@@ -59,9 +58,7 @@ from .terrain import (
 @dataclass(frozen=True)
 class MjlabTaskRuntimeCfg:
     domain: DomainRandomizationCfg
-    rickshaw_pose: RickshawPoseTargetCfg
     history_length: int = HISTORY_LENGTH
-    play: bool = False
     terrain_slope: float | None = None
 
 
@@ -127,7 +124,6 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     env.grasp_site_ids = _ids(robot, "sites", GRASP_SITE_NAMES)
     env.foot_body_ids = _ids(robot, "bodies", ("left_ankle_roll_link", "right_ankle_roll_link"))
     env.torso_body_id = int(_ids(robot, "bodies", ("torso_link",))[0])
-    env.pelvis_body_id = int(_ids(robot, "bodies", ("pelvis",))[0])
     env.cart_base_body_id = int(_ids(cart, "bodies", (BASE_LINK_NAME,))[0])
 
     if tuple(robot.joint_names) != G1_JOINT_ORDER:
@@ -163,7 +159,7 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
         env.static_cart_pose[:, 3:7], env.path_tangent_w, env.path_normal_w
     )
 
-    env.runtime_cfg = cfg
+    env.overspeed_margin = float(cfg.domain.calibration["safety.overspeed_margin"])
     env.rickshaw_state = RickshawRuntimeState.zeros(env.num_envs, device=env.device)
     env.observation_history_state = ObservationHistoryState.zeros(
         env.num_envs, history_length=cfg.history_length, device=env.device
@@ -175,7 +171,6 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
         observation_dim=TEACHER_DYNAMIC_DIM,
         device=env.device,
     )
-    env.rickshaw_pose_cfg = cfg.rickshaw_pose
     env.hitch_height_target = float(solution.hitch_height)
     zeros = torch.zeros(env.num_envs, device=env.device)
     zeros3 = torch.zeros((env.num_envs, 3), device=env.device)
@@ -183,7 +178,6 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     env.cart_previous_com_velocity_w = torch.zeros((env.num_envs, 3), device=env.device)
     env.last_rolling_force_w = torch.zeros((env.num_envs, 2, 3), device=env.device)
     env.rickshaw_speed_s = zeros.clone()
-    env.rickshaw_speed_l = zeros.clone()
     env.rickshaw_ang_vel_z = zeros.clone()
     env._mjlab_physical_state_step = -1
     env._mjlab_observation_state_step = -1
@@ -214,7 +208,6 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
     env._default_robot_masses_cpu = default_robot_mass[None, :].repeat(env.num_envs, 1).cpu()
     torso_mass = default_robot_mass[env.torso_body_id] + sampled["torso.mass_delta"]
     env.sim.model.body_mass[env_grid, torso_global] = torso_mass
-    env.torso_mass_delta = sampled["torso.mass_delta"]
     env.effective_torso_mass = torso_mass
 
     default_mass = env.sim.get_default_field("body_mass")[base_global]
@@ -240,9 +233,6 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
     env.sim.model.body_ipos[env_grid, base_global] = total_com
     env.sim.model.body_inertia[env_grid, base_global] = principal
     env.sim.model.body_iquat[env_grid, base_global] = quat_from_matrix(axes)
-    env._payload_mass = payload_mass
-    env._payload_com = payload_com
-
     friction = sampled["terrain.friction"]
     geom_ids = torch.cat(
         (
@@ -253,7 +243,6 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
     ).to(dtype=torch.long)
     friction_grid, geom_grid = torch.meshgrid(ids, geom_ids, indexing="ij")
     env.sim.model.geom_friction[friction_grid, geom_grid, 0] = friction[:, None]
-    env.terrain_friction = friction
     wheel_dof_ids = cart.indexing.joint_v_adr[env.wheel_joint_ids].to(dtype=torch.long)
     dof_grid, wheel_grid = torch.meshgrid(ids, wheel_dof_ids, indexing="ij")
     wheel_damping = torch.stack((sampled["wheel.left_damping"], sampled["wheel.right_damping"]), dim=-1)
@@ -360,9 +349,7 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     origin = env.scene.env_origins
 
     hitch_position = torch.mean(cart.data.site_pos_w[:, env.hitch_site_ids], dim=1)
-    hitch_velocity = torch.mean(cart.data.site_lin_vel_w[:, env.hitch_site_ids], dim=1)
     env.rickshaw_state.hitch_height[:] = torch.sum((hitch_position - origin) * env.path_normal_w, dim=-1)
-    env.rickshaw_state.hitch_vertical_speed[:] = torch.sum(hitch_velocity * env.path_normal_w, dim=-1)
     pitch = rickshaw_pitch_from_quaternion(cart.data.root_link_quat_w, env.path_tangent_w, env.path_normal_w)
     env.rickshaw_state.pitch[:] = pitch
     env.rickshaw_state.relative_position_b[:] = relative_position_in_yaw_frame(
@@ -392,9 +379,8 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     env.rickshaw_state.wheel_normal_force[:] = wheel_normal
     env.rickshaw_state.two_wheel_contact[:] = torch.all(wheel_normal > 1.0, dim=-1)
     _, cart_velocity, cart_mass = _body_mass_kinematics(env, "rickshaw")
-    lin_vel_x, lin_vel_y, ang_vel_z = rickshaw_velocity(cart, env.path_normal_w)
+    lin_vel_x, _, ang_vel_z = rickshaw_velocity(cart, env.path_normal_w)
     env.rickshaw_speed_s[:] = lin_vel_x
-    env.rickshaw_speed_l[:] = lin_vel_y
     env.rickshaw_ang_vel_z[:] = ang_vel_z
     env.rickshaw_kinematic_state.update(
         lin_vel_x,

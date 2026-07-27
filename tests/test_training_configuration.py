@@ -24,7 +24,7 @@ def _configuration() -> dict:
         "seed": 42,
         "max_iterations": 10,
         "guide_parameters": {},
-        "resolved_parameters": {},
+        "resolved_parameters": {"mimic": False},
         "actor_initialized_from_teacher": None,
         "stage_coverage": None,
         "training_parameters": dict(DEFAULT_TRAINING_PARAMETERS),
@@ -38,7 +38,7 @@ def test_training_configuration_normalizes_defaults() -> None:
     assert normalized["training_parameters"] == DEFAULT_TRAINING_PARAMETERS
 
 
-def test_training_mimic_defaults_off_and_preserves_explicit_enable() -> None:
+def test_training_mimic_uses_recorded_configuration() -> None:
     configuration = _configuration()
     assert not training_mimic_enabled(configuration)
     configuration["resolved_parameters"]["mimic"] = True

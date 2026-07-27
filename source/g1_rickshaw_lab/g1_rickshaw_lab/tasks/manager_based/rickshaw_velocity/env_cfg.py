@@ -73,7 +73,6 @@ def enable_mimic(env_cfg):
 def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None):
     from .mdp.events import DomainRandomizationCfg
     from .mjlab_events import MjlabTaskRuntimeCfg
-    from .task_spec import RickshawPoseTargetCfg
 
     envelope = load_feasibility_envelope(CONFIG_ROOT / "feasibility_envelope.yaml")
     calibration = dict(envelope.calibration)
@@ -108,12 +107,7 @@ def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None
     )
     return MjlabTaskRuntimeCfg(
         domain=domain,
-        rickshaw_pose=RickshawPoseTargetCfg(
-            hitch_height_tolerance=calibration["rickshaw_pose.hitch_height_tolerance"],
-            hitch_vertical_speed_tolerance=calibration["rickshaw_pose.hitch_vertical_speed_tolerance"],
-        ),
         history_length=history_length,
-        play=play,
         terrain_slope=terrain_slope,
     )
 

@@ -275,13 +275,9 @@ def _sample_metrics(base_env: Any, teacher_kl: Any | None) -> dict[str, Any]:  #
     speed_command = command[:, 0]
     lin_vel_x_error = actual_speed - speed_command
     ang_vel_z_error = base_env.rickshaw_ang_vel_z - command[:, 2]
-    overspeed_margin = float(
-        base_env.runtime_cfg.domain.calibration["safety.overspeed_margin"]
-    )
+    overspeed_margin = base_env.overspeed_margin
     overspeed = actual_speed > speed_command + overspeed_margin
-    pitch_error = state.pitch - target_pitch_from_hitch_height(
-        float(base_env.hitch_height_target), base_env.rickshaw_pose_cfg
-    )
+    pitch_error = state.pitch - target_pitch_from_hitch_height(float(base_env.hitch_height_target))
     hitch_error = state.hitch_height - float(base_env.hitch_height_target)
 
     contact_sensor = base_env.scene["feet_ground_contact"]
@@ -591,7 +587,7 @@ def main() -> int:  # noqa: C901
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.rl import RslRlVecEnvWrapper
 
-    import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity  # noqa: F401
+    import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.registration  # noqa: F401
 
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
     raw_env = None

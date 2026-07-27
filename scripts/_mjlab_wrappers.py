@@ -37,7 +37,7 @@ def load_mjlab_configs(
 ) -> tuple[Any, Any]:
     """Load a registered Mjlab environment/runner pair with shared dimensions."""
 
-    import g1_rickshaw_lab.tasks  # noqa: F401
+    import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.registration  # noqa: F401
     from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
     from g1_rickshaw_lab.workflows.rsl_rl import configure_history_length
 

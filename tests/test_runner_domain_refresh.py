@@ -12,7 +12,7 @@ from g1_rickshaw_lab.rl.runner import RunnerContext, create_rickshaw_runner_type
 
 class _FakeAlgorithm:
     def __init__(self, latent_dim: int = 16) -> None:
-        self.actor = SimpleNamespace(latent_dim=latent_dim)
+        self.actor = SimpleNamespace(latent_dim=latent_dim, history_length=61)
         self.update_calls = 0
 
     def update(self) -> int:

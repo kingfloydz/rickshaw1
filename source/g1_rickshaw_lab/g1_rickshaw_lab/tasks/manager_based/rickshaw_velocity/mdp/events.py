@@ -21,7 +21,6 @@ class RickshawRuntimeState:
     wheel_normal_force: torch.Tensor
     wheel_longitudinal_slip: torch.Tensor
     hitch_height: torch.Tensor
-    hitch_vertical_speed: torch.Tensor
     pitch: torch.Tensor
     two_wheel_contact: torch.Tensor
     connection_residual: torch.Tensor
@@ -44,7 +43,6 @@ class RickshawRuntimeState:
             wheel_normal_force=torch.zeros((num_envs, num_wheels), device=device, dtype=dtype),
             wheel_longitudinal_slip=torch.zeros((num_envs, num_wheels), device=device, dtype=dtype),
             hitch_height=scalar.clone(),
-            hitch_vertical_speed=scalar.clone(),
             pitch=scalar.clone(),
             two_wheel_contact=torch.zeros(num_envs, device=device, dtype=torch.bool),
             connection_residual=scalar.clone(),
@@ -196,8 +194,6 @@ def _update_teacher_static_domain(
 
     if raw.shape != (env.num_envs, TEACHER_STATIC_DOMAIN_DIM):
         raise RuntimeError(f"effective teacher static domain must have shape [N,{TEACHER_STATIC_DOMAIN_DIM}]")
-    env.teacher_static_domain_raw = raw
-    env.teacher_static_domain_bounds = (lower, upper)
     env.normalized_teacher_static_domain = normalize_features(raw, lower, upper)
 
 

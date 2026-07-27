@@ -7,7 +7,6 @@ edits do not make an otherwise compatible checkpoint unloadable.
 
 from __future__ import annotations
 
-import importlib
 import importlib.metadata
 import os
 import tempfile
@@ -16,6 +15,9 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import mujoco
+import torch
 
 from .configuration import G1_JOINT_ORDER, validate_joint_order
 
@@ -28,21 +30,6 @@ CUDA_NOT_AVAILABLE = "none"
 
 class ProvenanceError(ValueError):
     """Raised when checkpoint provenance is absent, malformed, or mismatched."""
-
-
-class ProvenanceDependencyError(RuntimeError):
-    """Raised when checkpoint IO dependencies are unavailable."""
-
-
-def _require_torch():
-    try:
-        import torch
-    except ModuleNotFoundError as exc:
-        raise ProvenanceDependencyError(
-            "PyTorch is required for G1 rickshaw checkpoint IO and runtime provenance; "
-            "install the PyTorch build required by Mjlab."
-        ) from exc
-    return torch
 
 
 def _required_text(value: Any, path: str) -> str:
@@ -144,43 +131,13 @@ class CheckpointMetadata:
 def discover_mujoco_version() -> str:
     """Return the active MuJoCo runtime version."""
 
-    environment_value = os.environ.get("MUJOCO_VERSION")
-    if environment_value:
-        return _required_text(environment_value, "MUJOCO_VERSION")
-    try:
-        module = importlib.import_module("mujoco")
-    except (ImportError, ModuleNotFoundError):
-        version = None
-    else:
-        version = getattr(module, "__version__", None)
-    if version is None:
-        raise ProvenanceError("cannot determine the MuJoCo version")
-    return _required_text(version, "MuJoCo version")
-
-
-def _discover_package_version(distribution: str, module_name: str) -> str | None:
-    try:
-        value = importlib.metadata.version(distribution)
-    except importlib.metadata.PackageNotFoundError:
-        value = None
-    if value:
-        return value
-    try:
-        module = importlib.import_module(module_name)
-    except (ImportError, ModuleNotFoundError):
-        return None
-    return getattr(module, "__version__", None)
+    return _required_text(mujoco.__version__, "MuJoCo version")
 
 
 def discover_mjlab_version() -> str:
     """Return the active Mjlab runtime version."""
 
-    environment_value = os.environ.get("MJLAB_VERSION")
-    if environment_value:
-        return _required_text(environment_value, "MJLAB_VERSION")
-    version = _discover_package_version("mjlab", "mjlab")
-    if version is None:
-        raise ProvenanceError("cannot determine the Mjlab version")
+    version = importlib.metadata.version("mjlab")
     normalized = _required_text(version, "Mjlab version").removeprefix("v")
     if normalized != MJLAB_VERSION:
         raise ProvenanceError(
@@ -192,17 +149,7 @@ def discover_mjlab_version() -> str:
 def discover_rsl_rl_version() -> str:
     """Discover and enforce the RSL-RL release used by the policy ABI."""
 
-    environment_value = os.environ.get("RSL_RL_VERSION")
-    version = (
-        _required_text(environment_value, "RSL_RL_VERSION")
-        if environment_value
-        else _discover_package_version("rsl-rl-lib", "rsl_rl")
-    )
-    if version is None:
-        raise ProvenanceError(
-            "cannot determine RSL-RL version; install the required release or set "
-            "RSL_RL_VERSION"
-        )
+    version = importlib.metadata.version("rsl-rl-lib")
     normalized = _required_text(version, "RSL-RL version").removeprefix("v")
     if normalized != RSL_RL_VERSION:
         raise ProvenanceError(
@@ -212,7 +159,6 @@ def discover_rsl_rl_version() -> str:
 
 
 def torch_cuda_versions() -> tuple[str, str]:
-    torch = _require_torch()
     torch_version = _required_text(torch.__version__, "torch.__version__")
     cuda_value = getattr(torch.version, "cuda", None)
     cuda_version = CUDA_NOT_AVAILABLE if cuda_value is None else _required_text(cuda_value, "torch.version.cuda")
@@ -373,7 +319,6 @@ def validate_checkpoint(
 def atomic_torch_save(value: Any, path: str | Path) -> Path:
     """Durably save with a same-directory temporary file and atomic replace."""
 
-    torch = _require_torch()
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -433,7 +378,6 @@ def load_checkpoint_with_validation(
 ) -> Mapping[str, Any]:
     """Load a trusted local checkpoint and validate provenance immediately."""
 
-    torch = _require_torch()
     checkpoint_path = Path(path)
     checkpoint = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
     validate_checkpoint(checkpoint, **validation_kwargs)
@@ -446,7 +390,6 @@ __all__ = [
     "CheckpointMetadata",
     "MJLAB_VERSION",
     "PROVENANCE_SCHEMA_VERSION",
-    "ProvenanceDependencyError",
     "ProvenanceError",
     "RSL_RL_VERSION",
     "atomic_torch_save",

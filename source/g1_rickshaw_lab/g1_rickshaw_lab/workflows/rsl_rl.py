@@ -124,7 +124,7 @@ def _load_configs(args: argparse.Namespace, overrides: list[str], *, play: bool)
 
     if not play:
         os.environ["G1_RICKSHAW_VELOCITY_CURRICULUM"] = "1" if args.velocity_curriculum else "0"
-    import g1_rickshaw_lab.tasks  # noqa: F401
+    import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.registration  # noqa: F401
 
     env_cfg = load_env_cfg(args.task, play=play)
     agent_cfg = load_rl_cfg(args.task)

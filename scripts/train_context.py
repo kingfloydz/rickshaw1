@@ -208,8 +208,6 @@ def train(args: argparse.Namespace) -> Path:  # noqa: C901
         from mjlab.rl import RslRlVecEnvWrapper
         from rsl_rl.utils import check_nan
 
-        import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity  # noqa: F401
-
         env_cfg, _ = load_mjlab_configs(
             args.task,
             play=False,

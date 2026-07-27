@@ -6,13 +6,13 @@ before returning an object that can be used by training or deployment code.
 
 Canonical ``feasibility_envelope.yaml`` layout::
 
-    schema_version: 5
+    schema_version: 6
     joint_order: [29 exact G1 joint names]
     ranges:
       payload.mass: {min: -3.0, max: 3.0}
       # all names in REQUIRED_FEASIBILITY_RANGES are required
     calibration:
-      rickshaw_pose.hitch_height_tolerance: 0.01
+      rolling_resistance.c_rr_nominal: 0.02
       # all names in REQUIRED_CALIBRATION_FIELDS are required
 
 Nested mappings are accepted in ``ranges`` and ``calibration`` and are
@@ -30,7 +30,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-FEASIBILITY_SCHEMA_VERSION = 5
+import yaml
+
+FEASIBILITY_SCHEMA_VERSION = 6
 
 # This is the source-URDF order after applying the guide's one-time grouping
 # rule: lower_names + waist_names + arm_names.  Runtime regex ordering is never
@@ -83,8 +85,6 @@ REQUIRED_FEASIBILITY_RANGES = (
 # hardware specification, calibration, or feasibility validation has run.
 # Vector lengths are validated below; scalar fields must be finite.
 REQUIRED_CALIBRATION_FIELDS = (
-    "rickshaw_pose.hitch_height_tolerance",
-    "rickshaw_pose.hitch_vertical_speed_tolerance",
     "rolling_resistance.c_rr_nominal",
     "terrain.friction_nominal",
     "safety.overspeed_margin",
@@ -92,8 +92,6 @@ REQUIRED_CALIBRATION_FIELDS = (
 
 _CALIBRATION_STRICTLY_POSITIVE = frozenset(
     {
-        "rickshaw_pose.hitch_height_tolerance",
-        "rickshaw_pose.hitch_vertical_speed_tolerance",
         "rolling_resistance.c_rr_nominal",
         "terrain.friction_nominal",
         "safety.overspeed_margin",
@@ -121,10 +119,6 @@ _NOMINAL_CALIBRATION_BY_RANGE = {
 
 class ConfigurationContractError(ValueError):
     """Raised when a generated configuration violates the runtime contract."""
-
-
-class ConfigurationDependencyError(RuntimeError):
-    """Raised when an optional parser dependency is unavailable."""
 
 
 def _finite_float(value: Any, path: str) -> float:
@@ -410,20 +404,7 @@ class FeasibilityEnvelope:
             self.ranges[name].assert_contains(candidate, name=f"training_ranges.{name}", tolerance=tolerance)
 
 
-def _require_yaml():
-    try:
-        import yaml
-    except ModuleNotFoundError as exc:
-        raise ConfigurationDependencyError(
-            "PyYAML is required to load G1 rickshaw configuration files; install it with "
-            "`python -m pip install PyYAML`."
-        ) from exc
-    return yaml
-
-
 def _load_yaml_mapping(path: str | Path) -> Mapping[str, Any]:
-    yaml = _require_yaml()
-
     class UniqueKeySafeLoader(yaml.SafeLoader):
         pass
 
@@ -457,7 +438,6 @@ def load_feasibility_envelope(path: str | Path) -> FeasibilityEnvelope:
 
 __all__ = [
     "ConfigurationContractError",
-    "ConfigurationDependencyError",
     "FEASIBILITY_SCHEMA_VERSION",
     "FeasibilityEnvelope",
     "G1_JOINT_ORDER",

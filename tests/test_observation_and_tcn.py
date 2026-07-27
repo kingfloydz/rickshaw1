@@ -8,10 +8,7 @@ import pytest
 import torch
 from torch import nn
 
-from g1_rickshaw_lab.policy_schema import (
-    TEACHER_STATIC_DIM,
-    TEACHER_TERRAIN_SLOPE_BOUNDS,
-)
+from g1_rickshaw_lab.policy_schema import TEACHER_STATIC_DIM
 from g1_rickshaw_lab.rl import DYNAMIC_PRIVILEGE_DIM, STATIC_PRIVILEGE_DIM
 from g1_rickshaw_lab.rl.actor_critic import G1RickshawStudentActor
 from g1_rickshaw_lab.rl.teacher_model import G1RickshawTeacherActor
@@ -144,12 +141,7 @@ def test_teacher_static_and_critic_privilege_include_normalized_terrain_slope() 
     _update_teacher_static_domain(env, cfg, sampled)
 
     assert TEACHER_STATIC_FEATURE_NAMES[-1] == "terrain.slope"
-    assert env.teacher_static_domain_raw.shape == (slopes.numel(), TEACHER_STATIC_DIM)
-    torch.testing.assert_close(env.teacher_static_domain_raw[:, -1], slopes)
-    assert (
-        tuple(bound[-1].item() for bound in env.teacher_static_domain_bounds)
-        == TEACHER_TERRAIN_SLOPE_BOUNDS
-    )
+    assert env.normalized_teacher_static_domain.shape == (slopes.numel(), TEACHER_STATIC_DIM)
     torch.testing.assert_close(
         env.normalized_teacher_static_domain[:, -1],
         torch.tensor((-1.0, 0.0, 1.0), dtype=dtype),

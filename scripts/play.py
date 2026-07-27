@@ -6,7 +6,6 @@ import argparse
 import os
 import sys
 
-
 PLAY_SLOPE_ENV = "G1_RICKSHAW_PLAY_SLOPE"
 
 
@@ -24,6 +23,9 @@ def _parse_rickshaw_options(argv: list[str]) -> tuple[argparse.Namespace, list[s
 
 
 def main() -> None:
+    from _mjlab_wrappers import add_project_source_to_path
+
+    add_project_source_to_path()
     options, remaining = _parse_rickshaw_options(sys.argv[1:])
     if options.slope is not None:
         os.environ[PLAY_SLOPE_ENV] = str(options.slope)
@@ -31,7 +33,7 @@ def main() -> None:
 
     # Task configs are materialized during registration, after the play options
     # above have been made available to their factories.
-    import g1_rickshaw_lab.tasks  # noqa: F401
+    import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.registration  # noqa: F401
     from mjlab.scripts.play import main as mjlab_main
 
     mjlab_main()
