@@ -45,7 +45,7 @@ def _matrix(tensor: torch.Tensor, width: int, name: str) -> None:
 
 
 class PolicyObservationNormalizer(nn.Module):
-    """Frozen-compatible copy of RSL-RL's empirical normalizer state."""
+    """State-compatible copy of RSL-RL's empirical normalizer."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -57,6 +57,24 @@ class PolicyObservationNormalizer(nn.Module):
 
     def forward(self, observation: torch.Tensor) -> torch.Tensor:
         return (observation - self._mean) / (self._std + 1.0e-2)
+
+    @torch.jit.unused
+    def update(self, observation: torch.Tensor) -> None:
+        if not self.training:
+            return
+        batch_count = observation.shape[0]
+        self.count += batch_count
+        rate = batch_count / self.count
+        batch_variance = torch.var(
+            observation, dim=0, unbiased=False, keepdim=True
+        )
+        batch_mean = torch.mean(observation, dim=0, keepdim=True)
+        delta = batch_mean - self._mean
+        self._mean += rate * delta
+        self._var += rate * (
+            batch_variance - self._var + delta * (batch_mean - self._mean)
+        )
+        self._std = torch.sqrt(self._var)
 
 
 class GaussianActor(nn.Module):

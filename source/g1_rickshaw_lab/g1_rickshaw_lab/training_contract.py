@@ -55,11 +55,6 @@ GUIDE_TRAINING_NUM_ENVS = 8192
 TRAINING_ARTIFACT_INTERVAL = 50
 S1_DETERMINISTIC_ALGORITHMS = False
 
-ROLLOUT_MANIFEST_SCHEMA_VERSION = 5
-ROLLOUT_SAMPLE_AUDIT_SCHEMA_VERSION = 5
-ROLLOUT_DEFAULT_NUM_ENVS = GUIDE_TRAINING_NUM_ENVS
-DISTILLATION_ROLLOUT_STEPS = 64
-ROLLOUT_STAGE_SEQUENCE = ("TRAINING",)
 TRAINING_PARAMETER_KEYS = (
     "rollout_steps",
     "latent_dim",
@@ -91,14 +86,15 @@ GUIDE_TRAINING_PARAMETERS = {
         "observation_noise": "unitree_g1_uniform",
     },
     "s1_context_distillation": {
-        "context_learning_rate": 3.0e-4,
-        "batch_size": 65536,
-        "mini_batch_size": 8192,
+        "implementation": "rsl_rl_v5.4.0_online_distillation",
+        "learning_rate": 1.0e-3,
+        "loss_type": "mse",
+        "num_learning_epochs": 1,
         "gradient_clip": 1.0,
         "actor_initialized_from_teacher": True,
-        "teacher_actor_initialization": True,
-        "rollout_stage_sequence": list(ROLLOUT_STAGE_SEQUENCE),
-        "validation_interval": TRAINING_ARTIFACT_INTERVAL,
+        "student_actions_drive_environment": True,
+        "teacher_target": "deterministic_action_mean",
+        "save_interval": TRAINING_ARTIFACT_INTERVAL,
         "deterministic_algorithms": S1_DETERMINISTIC_ALGORITHMS,
     },
     "s2_student_ppo": {
@@ -402,47 +398,6 @@ def validate_teacher_checkpoint_architecture(
         or policy_weight.shape[1] != ACTOR_OBSERVATION_DIM + latent_dim
     ):
         raise ValueError("teacher actor input differs from its recorded latent width")
-
-
-def validate_rollout_stage_coverage(manifest: Mapping[str, Any]) -> dict[str, int]:
-    """Validate the single reset-separated TRAINING rollout segment."""
-
-    if manifest.get("schema_version") != ROLLOUT_MANIFEST_SCHEMA_VERSION:
-        raise ValueError(f"rollout manifest requires schema_version {ROLLOUT_MANIFEST_SCHEMA_VERSION}")
-    segments = manifest.get("stage_segments")
-    if not isinstance(segments, list) or len(segments) != 1:
-        raise ValueError("rollout manifest requires exactly one TRAINING segment")
-    segment = segments[0]
-    if not isinstance(segment, Mapping) or segment.get("global_stage") != "TRAINING":
-        raise ValueError("rollout stage sequence must be exactly ('TRAINING',)")
-    num_envs = manifest.get("num_envs")
-    num_steps = manifest.get("num_steps_per_stage")
-    if num_envs != ROLLOUT_DEFAULT_NUM_ENVS or num_steps != DISTILLATION_ROLLOUT_STEPS:
-        raise ValueError(
-            "S1 rollout budget must be exactly "
-            f"{ROLLOUT_DEFAULT_NUM_ENVS} environments x "
-            f"{DISTILLATION_ROLLOUT_STEPS} steps"
-        )
-    expected_samples = num_envs * num_steps
-    if (
-        segment.get("valid_samples") != expected_samples
-        or segment.get("target_valid_samples") != expected_samples
-        or segment.get("full_environment_reset") is not True
-        or segment.get("reset_policy_steps") != 0
-    ):
-        raise ValueError("TRAINING rollout segment did not meet its reset/sample quota")
-
-    environment_stages = segment.get("per_environment_stage_distribution")
-    sample_stages = segment.get("valid_sample_stage_distribution")
-    if environment_stages != {"TRAINING": num_envs}:
-        raise ValueError("rollout environments must all use TRAINING")
-    if sample_stages != {"TRAINING": expected_samples}:
-        raise ValueError("rollout samples must all use TRAINING")
-    if manifest.get("stage_sample_distribution") != sample_stages:
-        raise ValueError("rollout aggregate stage distribution differs from its segment")
-    if manifest.get("num_samples") != expected_samples:
-        raise ValueError("rollout manifest num_samples differs from its segment")
-    return {"TRAINING": expected_samples}
 
 
 def feasibility_config_path() -> Path:
@@ -846,12 +801,7 @@ def write_deployment_manifest(export_dir: str | Path, checkpoint_path: str | Pat
 __all__ = [
     "BASELINE_ROLLOUT_STEPS",
     "DEFAULT_TRAINING_PARAMETERS",
-    "DISTILLATION_ROLLOUT_STEPS",
-    "ROLLOUT_DEFAULT_NUM_ENVS",
-    "ROLLOUT_MANIFEST_SCHEMA_VERSION",
-    "ROLLOUT_SAMPLE_AUDIT_SCHEMA_VERSION",
     "S1_DETERMINISTIC_ALGORITHMS",
-    "ROLLOUT_STAGE_SEQUENCE",
     "TRAINING_CONFIGURATION_KEY",
     "TRAINING_CONFIGURATION_SCHEMA_VERSION",
     "TRAINING_ARTIFACT_INTERVAL",
@@ -887,7 +837,6 @@ __all__ = [
     "s2_remaining_learning_iterations",
     "training_artifact_interval",
     "training_mimic_enabled",
-    "validate_rollout_stage_coverage",
     "validate_guide_training_configuration",
     "validate_training_configuration",
     "validate_student_checkpoint_architecture",

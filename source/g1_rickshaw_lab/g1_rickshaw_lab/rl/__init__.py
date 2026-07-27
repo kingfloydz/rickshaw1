@@ -7,10 +7,7 @@ from .actor_critic import (
     PrivilegedCritic,
 )
 from .context_encoder import CausalBlock, ContextEncoder, temporal_receptive_field
-from .distillation import (
-    StudentDistillationLoss,
-    gaussian_kl,
-)
+from .distillation import OnlineDistillationStorage, OnlineStudentDistillation
 from .teacher_model import (
     DYNAMIC_PRIVILEGE_DIM,
     STATIC_PRIVILEGE_DIM,
@@ -26,10 +23,10 @@ __all__ = [
     "G1RickshawStudentActor",
     "G1RickshawTeacherActor",
     "GaussianActor",
+    "OnlineDistillationStorage",
+    "OnlineStudentDistillation",
     "PrivilegedCritic",
     "STATIC_PRIVILEGE_DIM",
-    "StudentDistillationLoss",
     "TeacherEncoder",
-    "gaussian_kl",
     "temporal_receptive_field",
 ]

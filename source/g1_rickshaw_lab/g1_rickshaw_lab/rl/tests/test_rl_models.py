@@ -17,8 +17,6 @@ from g1_rickshaw_lab.rl import (
     G1RickshawTeacherActor,
     GaussianActor,
     PrivilegedCritic,
-    StudentDistillationLoss,
-    gaussian_kl,
     temporal_receptive_field,
 )
 
@@ -122,31 +120,6 @@ class TestRickshawRLModels(unittest.TestCase):
                     teacher_distribution.mean.shape,
                     student_distribution.mean.shape,
                 )
-
-    def test_minimal_distillation_is_student_only(self) -> None:
-        batch = 4
-        current = torch.randn(batch, ACTOR_OBSERVATION_DIM)
-        history = torch.randn(batch, 61, ACTOR_OBSERVATION_DIM)
-        teacher = G1RickshawTeacherActor()
-        student = G1RickshawStudentActor()
-        teacher_distribution, z_star = teacher.forward_with_context(
-            current,
-            history,
-            torch.randn(batch, 61, DYNAMIC_PRIVILEGE_DIM),
-            torch.randn(batch, STATIC_PRIVILEGE_DIM),
-        )
-        student_distribution, z_hat = student.forward_with_context(current, history)
-
-        loss, metrics = StudentDistillationLoss()(teacher_distribution, student_distribution, z_hat, z_star)
-        self.assertEqual(set(metrics), {"loss", "action_kl", "latent_smooth_l1"})
-        loss.backward()
-        self.assertIsNotNone(student.context_encoder.input.weight.grad)
-        self.assertTrue(all(parameter.grad is None for parameter in teacher.parameters()))
-        self.assertLess(
-            gaussian_kl(teacher_distribution, teacher_distribution).abs().max().item(),
-            1.0e-6,
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,12 +5,8 @@ import torch
 
 from g1_rickshaw_lab.policy_schema import ACTOR_OBSERVATION_DIM
 from g1_rickshaw_lab.training_contract import (
-    DISTILLATION_ROLLOUT_STEPS,
     GUIDE_MAX_ITERATIONS,
     GUIDE_TRAINING_PARAMETERS,
-    ROLLOUT_DEFAULT_NUM_ENVS,
-    ROLLOUT_MANIFEST_SCHEMA_VERSION,
-    ROLLOUT_STAGE_SEQUENCE,
     extract_policy_observation_normalizer_state,
     extract_student_rsl_actor_state,
     guide_max_iterations,
@@ -18,7 +14,6 @@ from g1_rickshaw_lab.training_contract import (
     s0_remaining_learning_iterations,
     s2_remaining_learning_iterations,
     training_artifact_interval,
-    validate_rollout_stage_coverage,
     validate_student_checkpoint_architecture,
     validate_teacher_checkpoint_architecture,
 )
@@ -57,7 +52,6 @@ def test_mainline_has_fixed_stage_budgets_and_sloped_terrain() -> None:
         "s1_context_distillation": 2000,
         "s2_student_ppo": 30000,
     }
-    assert ROLLOUT_STAGE_SEQUENCE == ("TRAINING",)
     assert guide_max_iterations("s0_teacher") == 30000
     assert GUIDE_TRAINING_PARAMETERS["s0_teacher"] == {
         "domain_randomization": "startup_fixed",
@@ -66,6 +60,21 @@ def test_mainline_has_fixed_stage_budgets_and_sloped_terrain() -> None:
     }
     with pytest.raises(ValueError, match="unknown training stage"):
         guide_max_iterations("legacy")
+
+
+def test_s1_uses_online_rsl_distillation() -> None:
+    assert GUIDE_TRAINING_PARAMETERS["s1_context_distillation"] == {
+        "implementation": "rsl_rl_v5.4.0_online_distillation",
+        "learning_rate": 1.0e-3,
+        "loss_type": "mse",
+        "num_learning_epochs": 1,
+        "gradient_clip": 1.0,
+        "actor_initialized_from_teacher": True,
+        "student_actions_drive_environment": True,
+        "teacher_target": "deterministic_action_mean",
+        "save_interval": 50,
+        "deterministic_algorithms": False,
+    }
 
 
 @pytest.mark.parametrize(
@@ -105,40 +114,6 @@ def test_ppo_resume_uses_only_the_remaining_iteration_budget(
     assert function(requested_iterations=2000, completed_iterations=1600) == remaining
     with pytest.raises(ValueError, match="exceeds"):
         function(requested_iterations=2000, completed_iterations=2001)
-
-
-def test_single_training_rollout_manifest_is_accepted() -> None:
-    num_envs = ROLLOUT_DEFAULT_NUM_ENVS
-    num_steps = DISTILLATION_ROLLOUT_STEPS
-    total = num_envs * num_steps
-    segment = {
-        "global_stage": "TRAINING",
-        "valid_samples": total,
-        "target_valid_samples": total,
-        "full_environment_reset": True,
-        "reset_policy_steps": 0,
-        "per_environment_stage_distribution": {"TRAINING": num_envs},
-        "valid_sample_stage_distribution": {"TRAINING": total},
-    }
-    manifest = {
-        "schema_version": ROLLOUT_MANIFEST_SCHEMA_VERSION,
-        "num_envs": num_envs,
-        "num_steps_per_stage": num_steps,
-        "stage_segments": [segment],
-        "stage_sample_distribution": {"TRAINING": total},
-        "num_samples": total,
-    }
-    assert validate_rollout_stage_coverage(manifest) == {"TRAINING": total}
-
-
-def test_rollout_manifest_rejects_non_training_segments() -> None:
-    with pytest.raises(ValueError, match="exactly one TRAINING segment"):
-        validate_rollout_stage_coverage(
-            {
-                "schema_version": ROLLOUT_MANIFEST_SCHEMA_VERSION,
-                "stage_segments": [],
-            }
-        )
 
 
 @pytest.mark.parametrize("latent_dim", (8, 16, 24, 32))

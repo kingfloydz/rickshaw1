@@ -48,3 +48,18 @@ python scripts/play.py \
   --num-envs 19 \
   --device cuda:0 \
   --viewer viser
+
+python scripts/train_context.py \
+  --task Mjlab-G1-Rickshaw-Slopes-Teacher \
+  --teacher "$TEACHER" \
+  --output "$CONTEXT" \
+  --num-envs 8192 \
+  --device cuda:0 \
+  --max-iterations 2000
+
+python scripts/finetune_student.py \
+  --task Mjlab-G1-Rickshaw-Slopes-Student \
+  --teacher "$TEACHER" \
+  --context "$CONTEXT" \
+  --num-envs 8192 \
+  --device cuda:0
