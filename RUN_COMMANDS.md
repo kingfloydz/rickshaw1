@@ -39,3 +39,12 @@ python scripts/render_initialization.py --output outputs/initialization.png
 Initialization loads the model-bound reset pose from
 `config/static_rest_poses.json`. There is no asset conversion, gain ramp, or
 settling controller.
+
+
+
+python scripts/play.py \
+  Mjlab-G1-Rickshaw-Slopes-Teacher \
+  --checkpoint-file logs/rsl_rl/g1_rickshaw_teacher/2026-07-26_16-23-24_s0/model_4950.pt \
+  --num-envs 19 \
+  --device cuda:0 \
+  --viewer viser

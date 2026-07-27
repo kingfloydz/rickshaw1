@@ -319,7 +319,7 @@ def g1_rickshaw_env_cfg(
         "action_rate_l2": RewardTermCfg(func=velocity_mdp.action_rate_l2, weight=-0.1),
         "arm_joint_velocity_l2": RewardTermCfg(
             func=velocity_mdp.joint_vel_l2,
-            weight=-0.01,
+            weight=-0.0015,
             params={
                 "asset_cfg": SceneEntityCfg(
                     "robot",
