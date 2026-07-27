@@ -80,7 +80,6 @@ class MujocoStaticSolverCfg:
     torque_barrier_fraction: float = 0.6
     posture_scale: float = 1.0
     root_orientation_scale: float = 0.5
-    center_of_pressure_scale: float = 0.1
     position_tolerance: float = 0.003
     support_tolerance: float = 0.003
     hitch_height_range: tuple[float, float] = HITCH_HEIGHT_RANGE
@@ -777,16 +776,6 @@ def solve_mujoco_static_equilibrium(
         joint_torque = required_force[robot_joint_v]
         torque_ratio = np.abs(joint_torque) / effort_limits
         torque_barrier = np.logaddexp(0.0, 20.0 * (torque_ratio - cfg.torque_barrier_fraction)) / 2.0
-        foot_points = np.asarray(
-            [
-                data.geom_xpos[geom_id] - np.array((0.0, 0.0, model.geom_size[geom_id, 0]))
-                for geom_id in foot_geoms
-            ]
-        )
-        normal_force = foot_forces[:, 2]
-        center_of_pressure = np.sum(foot_points[:, :2] * normal_force[:, None], axis=0) / np.sum(normal_force)
-        support_center = 0.5 * (np.min(foot_points[:, :2], axis=0) + np.max(foot_points[:, :2], axis=0))
-
         return np.concatenate(
             (
                 position_error / cfg.position_scale,
@@ -801,7 +790,6 @@ def solve_mujoco_static_equilibrium(
                     0.0,
                 )
                 / cfg.unactuated_force_scale,
-                (center_of_pressure - support_center) / cfg.center_of_pressure_scale,
                 (x[joint_start:joint_end] - q_seed[arm_joint_q]) / cfg.posture_scale,
                 np.array(
                     (
