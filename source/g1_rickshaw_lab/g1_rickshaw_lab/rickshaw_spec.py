@@ -7,20 +7,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class RickshawUrdfSpec:
-    """Mechanical source of truth in the MuJoCo assembly frame."""
+    """Mechanical parameters shared by runtime and static-equilibrium code."""
 
-    base_mass: float = 31.0
-    base_com_x_before_shift: float = 0.7427393855133334
-    center_of_mass_rearward_shift: float = 0.6427393855133334
-    base_com_x: float = 0.1
-    base_inertia_diagonal: tuple[float, float, float] = (
-        6.366687,
-        19.183151333333335,
-        15.353142666666665,
-    )
-    wheel_mass: float = 2.0
-    wheel_inertia_diagonal: tuple[float, float, float] = (0.04587720205066667, 0.09, 0.04587720205066667)
-    hitch_link_mass: float = 0.02
     total_mass: float = 35.04
     center_of_mass: tuple[float, float, float] = (
         0.09037092351598175,
@@ -28,18 +16,7 @@ class RickshawUrdfSpec:
         0.5896865105424277,
     )
     wheel_radius: float = 0.3
-    wheel_width: float = 0.072548
     wheel_track: float = 0.756462
-    wheel_joint_damping: float = 0.02
-    wheel_joint_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)
-    # Given body.stl points are (lateral, longitudinal, vertical).  The mesh is
-    # rotated into the +X-forward/+Y-left assembly frame, and the complete body
-    # is lowered with the smaller wheels so that its axle stays concentric.
-    body_stl_hitch_points: tuple[tuple[float, float, float], ...] = (
-        (0.276, -1.664929, 0.180746),
-        (-0.276, -1.664929, 0.180746),
-    )
-    body_vertical_offset: float = -0.074999
     hitch_x: float = 1.664929
     hitch_z: float = 0.105747
     hitch_half_width: float = 0.276

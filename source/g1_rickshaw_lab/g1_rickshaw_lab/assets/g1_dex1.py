@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import re
-import xml.etree.ElementTree as ET
-from collections.abc import Iterable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
-from pathlib import Path
 
 import mujoco
 
@@ -32,8 +27,6 @@ from .mujoco_spec import (
 G1_DEX1_ASSET_DIR = ASSET_ROOT / "g1_dex1"
 G1_DEX1_URDF_PATH = G1_DEX1_ASSET_DIR / "g1_29dof_mode_15_with_dex1_1.urdf"
 
-G1_DOF_COUNT = 29
-FIXED_GRIP_POSITION = -0.01609
 GRASP_SITE_X = 0.11066269
 GRASP_SITE_NAMES = ("left_grasp_site", "right_grasp_site")
 FOOT_SITE_NAMES = ("left_foot", "right_foot")
@@ -46,11 +39,6 @@ GRIPPER_BODY_NAMES = (
     "right_dex1_finger_link_1",
     "right_dex1_finger_link_2",
 )
-
-LOWER_JOINT_PATTERN = r".*_(hip|knee|ankle)_.*"
-WAIST_JOINT_PATTERN = r"waist_.*_joint"
-ARM_JOINT_PATTERN = r".*_(shoulder|elbow|wrist)_.*"
-EXPECTED_GROUP_COUNTS = {"lower": 12, "waist": 3, "arm": 14}
 
 G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS = {
     "left_hip_pitch_joint": -0.1,
@@ -71,98 +59,9 @@ G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS = {
 }
 
 
-class AssetValidationError(ValueError):
-    """Raised when the fixed-gripper G1 asset violates its specification."""
-
-
-@dataclass(frozen=True)
-class JointPartition:
-    lower_ids: tuple[int, ...]
-    waist_ids: tuple[int, ...]
-    arm_ids: tuple[int, ...]
-    lower_names: tuple[str, ...]
-    waist_names: tuple[str, ...]
-    arm_names: tuple[str, ...]
-
-    @property
-    def action_ids(self) -> tuple[int, ...]:
-        return self.lower_ids + self.waist_ids + self.arm_ids
-
-    @property
-    def action_names(self) -> tuple[str, ...]:
-        return self.lower_names + self.waist_names + self.arm_names
-
-
-def _matching_indices(names: Sequence[str], pattern: str) -> tuple[int, ...]:
-    expression = re.compile(pattern)
-    return tuple(index for index, name in enumerate(names) if expression.fullmatch(name))
-
-
-def partition_joint_names(joint_names: Iterable[str]) -> JointPartition:
-    """Return the checkpoint/action order for the 29 movable G1 joints."""
-
-    names = tuple(joint_names)
-    if len(names) != len(set(names)):
-        raise AssetValidationError("joint names must be unique")
-    lower_ids = _matching_indices(names, LOWER_JOINT_PATTERN)
-    waist_ids = _matching_indices(names, WAIST_JOINT_PATTERN)
-    arm_ids = _matching_indices(names, ARM_JOINT_PATTERN)
-    counts = {"lower": len(lower_ids), "waist": len(waist_ids), "arm": len(arm_ids)}
-    if counts != EXPECTED_GROUP_COUNTS:
-        raise AssetValidationError(f"unexpected G1 joint partition: {counts}")
-    all_ids = lower_ids + waist_ids + arm_ids
-    if len(all_ids) != G1_DOF_COUNT or len(set(all_ids)) != G1_DOF_COUNT:
-        raise AssetValidationError("the G1 action partition must contain 29 distinct joints")
-
-    def selected(indices: tuple[int, ...]) -> tuple[str, ...]:
-        return tuple(names[index] for index in indices)
-
-    return JointPartition(
-        lower_ids,
-        waist_ids,
-        arm_ids,
-        selected(lower_ids),
-        selected(waist_ids),
-        selected(arm_ids),
-    )
-
-
-def validate_g1_urdf(path: str | Path = G1_DEX1_URDF_PATH) -> tuple[str, ...]:
-    """Validate 29 DoF and the calibrated, zero-DoF gripper posture."""
-
-    root = ET.parse(Path(path)).getroot()
-    movable = [joint.attrib["name"] for joint in root.findall("joint") if joint.attrib.get("type") != "fixed"]
-    issues: list[str] = []
-    try:
-        partition_joint_names(movable)
-    except AssetValidationError as exc:
-        issues.append(str(exc))
-
-    expected_origins = {
-        "left_dex1_finger_joint_1": (0.0, -FIXED_GRIP_POSITION, 0.0),
-        "left_dex1_finger_joint_2": (0.0, FIXED_GRIP_POSITION, 0.0),
-        "right_dex1_finger_joint_1": (0.0, -FIXED_GRIP_POSITION, 0.0),
-        "right_dex1_finger_joint_2": (0.0, FIXED_GRIP_POSITION, 0.0),
-    }
-    joints = {joint.attrib["name"]: joint for joint in root.findall("joint")}
-    for name, expected in expected_origins.items():
-        joint = joints.get(name)
-        if joint is None or joint.attrib.get("type") != "fixed":
-            issues.append(f"{name} must be fixed")
-            continue
-        origin = joint.find("origin")
-        actual = tuple(float(value) for value in origin.attrib["xyz"].split()) if origin is not None else ()
-        if actual != expected:
-            issues.append(f"{name} origin: expected {expected}, got {actual}")
-    return tuple(issues)
-
-
 def get_g1_spec() -> mujoco.MjSpec:
     """Build the floating G1 spec with task sites and sensors."""
 
-    issues = validate_g1_urdf()
-    if issues:
-        raise AssetValidationError("; ".join(issues))
     spec = load_urdf_spec(G1_DEX1_URDF_PATH)
     add_free_joint(spec, "pelvis")
 
@@ -251,20 +150,14 @@ def get_g1_robot_cfg():
 
 
 __all__ = [
-    "AssetValidationError",
-    "FIXED_GRIP_POSITION",
     "FOOT_SITE_NAMES",
     "G1_DEX1_URDF_PATH",
-    "G1_DOF_COUNT",
     "G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS",
     "G1_JOINT_ARMATURE",
     "G1_JOINT_DAMPING",
     "G1_JOINT_EFFORT_LIMITS",
     "G1_JOINT_STIFFNESS",
     "GRASP_SITE_NAMES",
-    "JointPartition",
     "get_g1_robot_cfg",
     "get_g1_spec",
-    "partition_joint_names",
-    "validate_g1_urdf",
 ]

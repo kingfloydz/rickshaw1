@@ -21,7 +21,7 @@ setup(
         "tensorboard",
     ],
     extras_require={
-        "test": ["pytest", "trimesh"],
+        "test": ["pytest"],
     },
     zip_safe=False,
 )

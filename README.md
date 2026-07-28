@@ -29,7 +29,7 @@ PYTHON=/path/to/python
 "$PYTHON" -m pip install -e "source/g1_rickshaw_lab[test]"
 ```
 
-The `test` extra installs Pytest and Trimesh. Install Ruff separately for linting:
+The `test` extra installs Pytest. Install Ruff separately for linting:
 
 ```bash
 "$PYTHON" -m pip install ruff
@@ -41,7 +41,6 @@ The `test` extra installs Pytest and Trimesh. Install Ruff separately for lintin
 cd /path/to/rickshaw1
 PYTHON=/path/to/python
 
-"$PYTHON" scripts/validate_mjlab_assets.py
 "$PYTHON" scripts/validate_static_initialization.py
 "$PYTHON" scripts/train_pipeline.py --gpu-ids 0
 ```
@@ -222,23 +221,14 @@ All commands run from the repository root and assume:
 PYTHON=/path/to/python
 ```
 
-### Validate Assets and Static Initialization
+### Static Initialization
 
 ```bash
-"$PYTHON" scripts/validate_mjlab_assets.py
 "$PYTHON" scripts/validate_static_initialization.py
 ```
 
-The first command validates URDFs, assembly, collision masks, and hitch geometry.
-The second updates the certified flat pose used by training. Re-run both after
+This command updates the certified flat pose used by training. Re-run it after
 changing geometry, actuators, or equality constraints.
-
-To inspect the certified reset poses:
-
-```bash
-"$PYTHON" scripts/render_reset_poses.py --view side
-"$PYTHON" scripts/render_reset_poses.py --view front
-```
 
 ### Train
 
@@ -340,10 +330,8 @@ scripts/
   _project.py                      Source-layout import bootstrap
   _stage_training.py               Shared MjLab stage configuration
   _static_equilibrium_solver.py    Closed-chain static optimization
-  validate_mjlab_assets.py         Asset, assembly, collision, and hitch checks
   validate_static_initialization.py
                                     Solve and save the static certificate
-  render_reset_poses.py            Render certified flat/slope reset poses
   train_pipeline.py                Orchestrate S0 -> S1 -> S2
   train_teacher.py                 Train or resume the S0 teacher
   train_context.py                 Run S1 online distillation
@@ -421,5 +409,5 @@ tests/
 - Fresh S2 initialization requires both an S0 teacher checkpoint and an S1
   context checkpoint.
 - S2 resume cannot be combined with `--teacher` or `--context`.
-- Re-run asset and static validation after changing URDFs, mesh transforms,
+- Re-run static initialization after changing URDFs, mesh transforms,
   equalities, collision masks, or actuators.

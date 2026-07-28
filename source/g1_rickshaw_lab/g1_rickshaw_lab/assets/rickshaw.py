@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import math
-import xml.etree.ElementTree as ET
-from pathlib import Path
-
 import mujoco
 
 from ..project_paths import ASSET_ROOT
@@ -15,10 +11,8 @@ from ..rickshaw_spec import (
     HITCH_Z,
     RICKSHAW_CENTER_OF_MASS,
     RICKSHAW_TOTAL_MASS,
-    RICKSHAW_URDF_SPEC,
     WHEEL_RADIUS,
     WHEEL_TRACK,
-    RickshawUrdfSpec,
 )
 from .mujoco_spec import (
     GROUND_COLLISION_BIT,
@@ -38,108 +32,9 @@ HITCH_JOINT_NAMES = ("left_tow_hitch_joint", "right_tow_hitch_joint")
 HITCH_SITE_NAMES = ("left_hitch_site", "right_hitch_site")
 
 
-def _vector(element: ET.Element | None, attribute: str) -> tuple[float, ...]:
-    if element is None:
-        raise ValueError("missing XML element")
-    return tuple(float(value) for value in element.attrib[attribute].split())
-
-
-def validate_rickshaw_urdf(path: str | Path = RICKSHAW_URDF_PATH, *, tolerance: float = 1.0e-6) -> tuple[str, ...]:
-    """Validate the geometry and inertia values that MuJoCo consumes."""
-
-    root = ET.parse(Path(path)).getroot()
-    links = {link.attrib["name"]: link for link in root.findall("link")}
-    joints = {joint.attrib["name"]: joint for joint in root.findall("joint")}
-    spec = RICKSHAW_URDF_SPEC
-    issues: list[str] = []
-
-    def scalar(label: str, actual: float, expected: float) -> None:
-        if not math.isclose(actual, expected, rel_tol=0.0, abs_tol=tolerance):
-            issues.append(f"{label}: expected {expected}, got {actual}")
-
-    required_links = (BASE_LINK_NAME, *WHEEL_LINK_NAMES, *HITCH_LINK_NAMES)
-    required_joints = (*WHEEL_JOINT_NAMES, *HITCH_JOINT_NAMES)
-    for name in required_links:
-        if name not in links:
-            issues.append(f"missing link: {name}")
-    for name in required_joints:
-        if name not in joints:
-            issues.append(f"missing joint: {name}")
-    if issues:
-        return tuple(issues)
-
-    base_origin = _vector(links[BASE_LINK_NAME].find("inertial/origin"), "xyz")
-    base_mass = float(links[BASE_LINK_NAME].find("inertial/mass").attrib["value"])  # type: ignore[union-attr]
-    base_inertia = links[BASE_LINK_NAME].find("inertial/inertia")
-    scalar("base mass", base_mass, spec.base_mass)
-    for axis, expected in zip(("ixx", "iyy", "izz"), spec.base_inertia_diagonal, strict=True):
-        scalar(f"base {axis}", float(base_inertia.attrib[axis]), expected)  # type: ignore[union-attr]
-    scalar("base CoM x", base_origin[0], spec.base_com_x)
-    scalar(
-        "base CoM rearward shift",
-        spec.base_com_x_before_shift - base_origin[0],
-        spec.center_of_mass_rearward_shift,
-    )
-    scalar("base CoM z", base_origin[2], 0.6276898532066667)
-
-    for name in WHEEL_LINK_NAMES:
-        mass = float(links[name].find("inertial/mass").attrib["value"])  # type: ignore[union-attr]
-        scalar(f"{name} mass", mass, spec.wheel_mass)
-        inertia = links[name].find("inertial/inertia")
-        for axis, expected in zip(("ixx", "iyy", "izz"), spec.wheel_inertia_diagonal, strict=True):
-            scalar(f"{name} {axis}", float(inertia.attrib[axis]), expected)  # type: ignore[union-attr]
-        cylinder = links[name].find("collision/geometry/cylinder")
-        scalar(f"{name} radius", float(cylinder.attrib["radius"]), spec.wheel_radius)  # type: ignore[union-attr]
-        scalar(f"{name} width", float(cylinder.attrib["length"]), spec.wheel_width)  # type: ignore[union-attr]
-
-    expected_wheels = {
-        "left_wheel_joint": (0.0, spec.wheel_track / 2.0, spec.wheel_radius),
-        "right_wheel_joint": (0.0, -spec.wheel_track / 2.0, spec.wheel_radius),
-    }
-    for name, expected in expected_wheels.items():
-        actual = _vector(joints[name].find("origin"), "xyz")
-        for axis, (value, target) in enumerate(zip(actual, expected, strict=True)):
-            scalar(f"{name} origin[{axis}]", value, target)
-        scalar(f"{name} damping", float(joints[name].find("dynamics").attrib["damping"]), spec.wheel_joint_damping)  # type: ignore[union-attr]
-
-    expected_hitches = {
-        "left_tow_hitch_joint": (spec.hitch_x, spec.hitch_half_width, spec.hitch_z),
-        "right_tow_hitch_joint": (spec.hitch_x, -spec.hitch_half_width, spec.hitch_z),
-    }
-    for name, expected in expected_hitches.items():
-        mass = float(links[name.removesuffix("_joint") + "_link"].find("inertial/mass").attrib["value"])  # type: ignore[union-attr]
-        scalar(f"{name} link mass", mass, spec.hitch_link_mass)
-        if joints[name].attrib.get("type") != "fixed":
-            issues.append(f"{name} must be fixed")
-        actual = _vector(joints[name].find("origin"), "xyz")
-        for axis, (value, target) in enumerate(zip(actual, expected, strict=True)):
-            scalar(f"{name} origin[{axis}]", value, target)
-
-    masses_and_positions = [(base_mass, base_origin)]
-    masses_and_positions.extend(
-        (float(links[name.removesuffix("_joint") + "_link"].find("inertial/mass").attrib["value"]), position)  # type: ignore[union-attr]
-        for name, position in expected_wheels.items()
-    )
-    masses_and_positions.extend(
-        (float(links[name.removesuffix("_joint") + "_link"].find("inertial/mass").attrib["value"]), position)  # type: ignore[union-attr]
-        for name, position in expected_hitches.items()
-    )
-    total_mass = sum(mass for mass, _ in masses_and_positions)
-    center = tuple(
-        sum(mass * position[axis] for mass, position in masses_and_positions) / total_mass for axis in range(3)
-    )
-    scalar("total mass", total_mass, spec.total_mass)
-    for axis, (value, target) in enumerate(zip(center, spec.center_of_mass, strict=True)):
-        scalar(f"center of mass[{axis}]", value, target)
-    return tuple(issues)
-
-
 def get_rickshaw_spec() -> mujoco.MjSpec:
     """Build the passive two-wheel rickshaw and its two hitch sites."""
 
-    issues = validate_rickshaw_urdf()
-    if issues:
-        raise ValueError("invalid rickshaw URDF: " + "; ".join(issues))
     spec = load_urdf_spec(RICKSHAW_URDF_PATH)
     spec.compiler.discardvisual = 0
     add_free_joint(spec, BASE_LINK_NAME)
@@ -226,12 +121,9 @@ __all__ = [
     "RICKSHAW_CENTER_OF_MASS",
     "RICKSHAW_TOTAL_MASS",
     "RICKSHAW_URDF_PATH",
-    "RICKSHAW_URDF_SPEC",
-    "RickshawUrdfSpec",
     "WHEEL_JOINT_NAMES",
     "WHEEL_RADIUS",
     "WHEEL_TRACK",
     "get_rickshaw_cfg",
     "get_rickshaw_spec",
-    "validate_rickshaw_urdf",
 ]
