@@ -57,6 +57,9 @@ python scripts/validate_static_initialization.py
 ## Training And Playback
 
 ```bash
+python scripts/train_pipeline.py --latent-dim 8
+
+# Or run each stage separately:
 python scripts/train_teacher.py --latent-dim 8
 python scripts/train_context.py --teacher <teacher.pt> --latent-dim 8
 python scripts/finetune_student.py --teacher <teacher.pt> --context <distillation.pt> --latent-dim 8
@@ -70,7 +73,9 @@ drive the environment and deterministic teacher actions are the targets. Fresh
 student PPO training loads the distilled `student_state_dict` and the teacher
 `critic_state_dict` directly, with a new optimizer. Checkpoints are written to
 timestamped run directories as `model_<iteration>.pt`. Non-default context and
-history dimensions must be passed explicitly to every stage.
+history dimensions must be passed explicitly to every separately launched stage.
+The pipeline command passes both dimensions and the generated checkpoints through
+all three stages automatically.
 
 S0 reward-weight curriculum stages are 0/300/600/900/1200 iterations; S2 stages
 are 0/100/200/300/400. S1 has no reward curriculum. Wheel slip always uses its
