@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import torch
+from rsl_rl.modules import MLP, EmpiricalNormalization
 from torch import nn
 from torch.distributions import Independent, Normal
 
@@ -25,56 +24,16 @@ ACTOR_HIDDEN_DIMS = (512, 256, 128)
 CRITIC_HIDDEN_DIMS = (512, 256, 128)
 
 
-def _build_mlp(
-    input_dim: int, hidden_dims: Sequence[int], output_dim: int
-) -> nn.Sequential:
-    dimensions = (input_dim, *hidden_dims, output_dim)
-    layers: list[nn.Module] = []
-    for index, (source, target) in enumerate(
-        zip(dimensions[:-1], dimensions[1:], strict=True)
-    ):
-        layers.append(nn.Linear(source, target))
-        if index < len(dimensions) - 2:
-            layers.append(nn.ELU())
-    return nn.Sequential(*layers)
-
-
 def _matrix(tensor: torch.Tensor, width: int, name: str) -> None:
     if tensor.ndim != 2 or tensor.shape[1] != width:
         raise ValueError(f"{name} must have shape [N, {width}]")
 
 
-class PolicyObservationNormalizer(nn.Module):
-    """State-compatible copy of RSL-RL's empirical normalizer."""
+class PolicyObservationNormalizer(EmpiricalNormalization):
+    """RSL-RL empirical normalizer specialized to policy observations."""
 
     def __init__(self) -> None:
-        super().__init__()
-        shape = (1, ACTOR_OBSERVATION_DIM)
-        self.register_buffer("_mean", torch.zeros(shape))
-        self.register_buffer("_var", torch.ones(shape))
-        self.register_buffer("_std", torch.ones(shape))
-        self.register_buffer("count", torch.tensor(0, dtype=torch.long))
-
-    def forward(self, observation: torch.Tensor) -> torch.Tensor:
-        return (observation - self._mean) / (self._std + 1.0e-2)
-
-    @torch.jit.unused
-    def update(self, observation: torch.Tensor) -> None:
-        if not self.training:
-            return
-        batch_count = observation.shape[0]
-        self.count += batch_count
-        rate = batch_count / self.count
-        batch_variance = torch.var(
-            observation, dim=0, unbiased=False, keepdim=True
-        )
-        batch_mean = torch.mean(observation, dim=0, keepdim=True)
-        delta = batch_mean - self._mean
-        self._mean += rate * delta
-        self._var += rate * (
-            batch_variance - self._var + delta * (batch_mean - self._mean)
-        )
-        self._std = torch.sqrt(self._var)
+        super().__init__(ACTOR_OBSERVATION_DIM)
 
 
 class GaussianActor(nn.Module):
@@ -86,10 +45,11 @@ class GaussianActor(nn.Module):
     def __init__(self, latent_dim: int = DEFAULT_CONTEXT_DIM) -> None:
         super().__init__()
         self.latent_dim = validate_context_dim(latent_dim)
-        self.network = _build_mlp(
+        self.network = MLP(
             CURRENT_OBSERVATION_DIM + self.latent_dim,
-            ACTOR_HIDDEN_DIMS,
             ACTION_DIM,
+            ACTOR_HIDDEN_DIMS,
+            "elu",
         )
         self.std_param = nn.Parameter(torch.ones(ACTION_DIM))
 
@@ -130,10 +90,11 @@ class PrivilegedCritic(nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
-        self.network = _build_mlp(
+        self.network = MLP(
             CURRENT_OBSERVATION_DIM + CRITIC_PRIVILEGE_DIM,
-            CRITIC_HIDDEN_DIMS,
             1,
+            CRITIC_HIDDEN_DIMS,
+            "elu",
         )
 
     def forward(

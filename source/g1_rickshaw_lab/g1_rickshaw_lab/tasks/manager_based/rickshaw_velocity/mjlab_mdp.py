@@ -28,37 +28,9 @@ from .mdp.rewards import (
     mimic_joint_error_exp_value,
     peak_force_value,
     relative_position_l2_value,
-    stepped_ramp_progress,
     wheel_slip_l2_value,
 )
 from .mjlab_events import ensure_mjlab_physical_state
-
-
-class SteppedRewardWeightCurriculum:
-    """Ramp selected reward weights at fixed training-step intervals."""
-
-    def __init__(self, cfg: Any, env: Any) -> None:
-        reward_names = tuple(cfg.params["reward_names"])
-        self._term_cfgs = tuple(env.reward_manager.get_term_cfg(name) for name in reward_names)
-        self._target_weights = tuple(term.weight for term in self._term_cfgs)
-
-    def __call__(
-        self,
-        env: Any,
-        env_ids: torch.Tensor,
-        reward_names: tuple[str, ...],
-        interval_steps: int,
-        duration_steps: int,
-    ) -> dict[str, torch.Tensor]:
-        del env_ids, reward_names
-        progress = stepped_ramp_progress(
-            env.common_step_counter,
-            interval_steps,
-            duration_steps,
-        )
-        for term_cfg, target_weight in zip(self._term_cfgs, self._target_weights, strict=True):
-            term_cfg.weight = progress * target_weight
-        return {"progress": torch.tensor(progress)}
 
 
 def _shape_probe(env: Any, *shape: int) -> torch.Tensor:
@@ -289,7 +261,6 @@ def hitch_height_recovery_l2(
 
 
 __all__ = [
-    "SteppedRewardWeightCurriculum",
     "actor_observation_history",
     "critic_actor_observation",
     "critic_privileged_state",

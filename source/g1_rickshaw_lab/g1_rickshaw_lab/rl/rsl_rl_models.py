@@ -6,6 +6,7 @@ import copy
 from typing import Any
 
 import torch
+from rsl_rl.algorithms import PPO
 from torch import nn
 from torch.distributions import Independent, Normal
 
@@ -279,57 +280,24 @@ class RslRickshawCriticModel(_RslModelContract):
 
 
 class _RelativeLearningRateAdam(torch.optim.Adam):
-    """Keep context/base LR ratios when RSL-RL's adaptive schedule updates LR."""
+    """Apply the encoder learning-rate ratio after PPO updates its base rate."""
 
     def step(self, closure=None):
-        original = [group["lr"] for group in self.param_groups]
+        base_rates = [group["lr"] for group in self.param_groups]
         try:
-            for group, learning_rate in zip(self.param_groups, original, strict=True):
-                group["lr"] = learning_rate * group["lr_multiplier"]
+            for group, base_rate in zip(self.param_groups, base_rates, strict=True):
+                group["lr"] = base_rate * group["lr_multiplier"]
             return super().step(closure)
         finally:
-            for group, learning_rate in zip(self.param_groups, original, strict=True):
-                group["lr"] = learning_rate
+            for group, base_rate in zip(self.param_groups, base_rates, strict=True):
+                group["lr"] = base_rate
 
 
-class RickshawPPO:
-    """Factory facade returning RSL-RL PPO with a separate encoder LR."""
+class RickshawPPO(PPO):
+    """Official PPO with the existing context-encoder parameter group."""
 
-    @staticmethod
-    def construct_algorithm(obs, env, cfg: dict, device: str):
-        from rsl_rl.algorithms import PPO
-        from rsl_rl.extensions import resolve_rnd_config, resolve_symmetry_config
-        from rsl_rl.storage import RolloutStorage
-        from rsl_rl.utils import resolve_callable, resolve_obs_groups
-
-        algorithm_cfg = cfg["algorithm"]
-        alg_class = resolve_callable(algorithm_cfg.pop("class_name"))
-        actor_class = resolve_callable(cfg["actor"].pop("class_name"))
-        critic_class = resolve_callable(cfg["critic"].pop("class_name"))
-        cfg["obs_groups"] = resolve_obs_groups(obs, cfg["obs_groups"], ["actor", "critic"])
-        algorithm_cfg = resolve_rnd_config(algorithm_cfg, obs, cfg["obs_groups"], env)
-        algorithm_cfg = resolve_symmetry_config(algorithm_cfg, env)
-        algorithm_cfg.pop("share_cnn_encoders", None)
-
-        actor = actor_class(obs, cfg["obs_groups"], "actor", env.num_actions, **cfg["actor"]).to(device)
-        critic = critic_class(obs, cfg["obs_groups"], "critic", 1, **cfg["critic"]).to(device)
-        if not isinstance(actor, RslRickshawActorModel) or not isinstance(critic, RslRickshawCriticModel):
-            raise TypeError("RickshawPPO requires the rickshaw actor and critic adapters")
-        storage = RolloutStorage("rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device)
-        algorithm = alg_class(
-            actor,
-            critic,
-            storage,
-            device=device,
-            multi_gpu_cfg=cfg["multi_gpu"],
-            **algorithm_cfg,
-        )
-        if not isinstance(algorithm, PPO):
-            raise TypeError("configured algorithm must derive from rsl_rl.algorithms.PPO")
-        return algorithm
-
-    def __new__(
-        cls,
+    def __init__(
+        self,
         actor,
         critic,
         storage,
@@ -337,14 +305,10 @@ class RickshawPPO:
         learning_rate: float = 1.0e-3,
         optimizer: str = "adam",
         **kwargs,
-    ):
-        from rsl_rl.algorithms import PPO
-
+    ) -> None:
         if optimizer.lower() != "adam":
-            raise ValueError("the fixed rickshaw optimizer is Adam")
-        if not isinstance(actor, RslRickshawActorModel) or not isinstance(critic, RslRickshawCriticModel):
-            raise TypeError("RickshawPPO requires rickshaw model adapters")
-        algorithm = PPO(
+            raise ValueError("RickshawPPO requires Adam")
+        super().__init__(
             actor,
             critic,
             storage,
@@ -352,23 +316,22 @@ class RickshawPPO:
             optimizer=optimizer,
             **kwargs,
         )
-        context_lr = learning_rate if context_learning_rate is None else context_learning_rate
-        if context_lr <= 0.0 or learning_rate <= 0.0:
-            raise ValueError("learning rates must be positive")
+        context_rate = learning_rate if context_learning_rate is None else context_learning_rate
         context_parameters = list(actor.encoder.parameters())
         context_ids = {id(parameter) for parameter in context_parameters}
         actor_head = [parameter for parameter in actor.parameters() if id(parameter) not in context_ids]
-        groups = [
-            {
-                "params": context_parameters,
-                "lr": learning_rate,
-                "lr_multiplier": context_lr / learning_rate,
-            },
-            {"params": actor_head, "lr": learning_rate, "lr_multiplier": 1.0},
-            {"params": list(critic.parameters()), "lr": learning_rate, "lr_multiplier": 1.0},
-        ]
-        algorithm.optimizer = _RelativeLearningRateAdam(groups, lr=learning_rate)
-        return algorithm
+        self.optimizer = _RelativeLearningRateAdam(
+            [
+                {
+                    "params": context_parameters,
+                    "lr": learning_rate,
+                    "lr_multiplier": context_rate / learning_rate,
+                },
+                {"params": actor_head, "lr": learning_rate, "lr_multiplier": 1.0},
+                {"params": critic.parameters(), "lr": learning_rate, "lr_multiplier": 1.0},
+            ],
+            lr=learning_rate,
+        )
 
 
 class _StudentExport(nn.Module):

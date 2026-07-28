@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 import torch
+from rsl_rl.modules import MLP, EmpiricalNormalization
 from torch import nn
 
 from g1_rickshaw_lab.policy_schema import ACTOR_OBSERVATION_DIM
@@ -46,6 +47,7 @@ class TestRickshawRLModels(unittest.TestCase):
 
     def test_actor_and_critic_architectures(self) -> None:
         actor = GaussianActor()
+        self.assertIsInstance(actor.network, MLP)
         actor_shapes = [
             (layer.in_features, layer.out_features) for layer in actor.network if isinstance(layer, nn.Linear)
         ]
@@ -101,6 +103,7 @@ class TestRickshawRLModels(unittest.TestCase):
         ]
         self.assertEqual(context_shapes, [(64, 48), (48, 16)])
         student = G1RickshawStudentActor()
+        self.assertIsInstance(student.obs_normalizer, EmpiricalNormalization)
         self.assertEqual(student.context_encoder.context.in_features, 48)
         student_distribution, z_hat = student.forward_with_context(current, history)
 

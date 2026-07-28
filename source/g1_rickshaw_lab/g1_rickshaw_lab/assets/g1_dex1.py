@@ -5,29 +5,19 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
 import mujoco
 
 from g1_rickshaw_lab.g1_motor_defaults import (
-    ARMATURE_4010,
-    ARMATURE_5020,
-    ARMATURE_7520_14,
-    ARMATURE_7520_22,
-    DAMPING_4010,
-    DAMPING_5020,
-    DAMPING_7520_14,
-    DAMPING_7520_22,
+    G1_ARTICULATION,
     G1_JOINT_ARMATURE,
     G1_JOINT_DAMPING,
     G1_JOINT_EFFORT_LIMITS,
     G1_JOINT_STIFFNESS,
     G1_MOTOR_PARAMETERS_BY_JOINT,
-    STIFFNESS_4010,
-    STIFFNESS_5020,
-    STIFFNESS_7520_14,
-    STIFFNESS_7520_22,
 )
 from g1_rickshaw_lab.project_paths import ASSET_ROOT
 
@@ -264,59 +254,7 @@ def add_g1_position_actuators(spec: mujoco.MjSpec, *, prefix: str = "") -> None:
 def get_g1_robot_cfg():
     """Return a fresh mjlab EntityCfg; imports mjlab only when requested."""
 
-    from mjlab.actuator import BuiltinPositionActuatorCfg
-    from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
-
-    actuator_groups = (
-        BuiltinPositionActuatorCfg(
-            target_names_expr=(
-                r".*_elbow_joint",
-                r".*_shoulder_pitch_joint",
-                r".*_shoulder_roll_joint",
-                r".*_shoulder_yaw_joint",
-                r".*_wrist_roll_joint",
-            ),
-            stiffness=STIFFNESS_5020,
-            damping=DAMPING_5020,
-            effort_limit=25.0,
-            armature=ARMATURE_5020,
-        ),
-        BuiltinPositionActuatorCfg(
-            target_names_expr=(r".*_hip_pitch_joint", r".*_hip_yaw_joint", r"waist_yaw_joint"),
-            stiffness=STIFFNESS_7520_14,
-            damping=DAMPING_7520_14,
-            effort_limit=88.0,
-            armature=ARMATURE_7520_14,
-        ),
-        BuiltinPositionActuatorCfg(
-            target_names_expr=(r".*_hip_roll_joint", r".*_knee_joint"),
-            stiffness=STIFFNESS_7520_22,
-            damping=DAMPING_7520_22,
-            effort_limit=139.0,
-            armature=ARMATURE_7520_22,
-        ),
-        BuiltinPositionActuatorCfg(
-            target_names_expr=(r".*_wrist_pitch_joint", r".*_wrist_yaw_joint"),
-            stiffness=STIFFNESS_4010,
-            damping=DAMPING_4010,
-            effort_limit=5.0,
-            armature=ARMATURE_4010,
-        ),
-        BuiltinPositionActuatorCfg(
-            target_names_expr=(r"waist_(roll|pitch)_joint",),
-            stiffness=2.0 * STIFFNESS_5020,
-            damping=2.0 * DAMPING_5020,
-            effort_limit=50.0,
-            armature=2.0 * ARMATURE_5020,
-        ),
-        BuiltinPositionActuatorCfg(
-            target_names_expr=(r".*_ankle_(pitch|roll)_joint",),
-            stiffness=2.0 * STIFFNESS_5020,
-            damping=2.0 * DAMPING_5020,
-            effort_limit=50.0,
-            armature=2.0 * ARMATURE_5020,
-        ),
-    )
+    from mjlab.entity import EntityCfg
     return EntityCfg(
         spec_fn=get_g1_spec,
         sort_actuators=True,
@@ -333,7 +271,7 @@ def get_g1_robot_cfg():
             },
             joint_vel={r".*": 0.0},
         ),
-        articulation=EntityArticulationInfoCfg(actuators=actuator_groups, soft_joint_pos_limit_factor=0.9),
+        articulation=deepcopy(G1_ARTICULATION),
     )
 
 

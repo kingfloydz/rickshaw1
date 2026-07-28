@@ -18,15 +18,6 @@ def mimic_joint_error_exp_value(
     return torch.exp(-error / std**2) * active.to(joint_state.dtype)
 
 
-def stepped_ramp_progress(
-    step: int,
-    interval_steps: int,
-    duration_steps: int,
-) -> float:
-    completed_steps = (step // interval_steps) * interval_steps
-    return min(float(completed_steps) / duration_steps, 1.0)
-
-
 def hitch_height_recovery_l2_value(
     hitch_height: torch.Tensor,
     target_height: float,
@@ -92,6 +83,5 @@ __all__ = [
     "mimic_joint_error_exp_value",
     "peak_force_value",
     "relative_position_l2_value",
-    "stepped_ramp_progress",
     "wheel_slip_l2_value",
 ]

@@ -447,6 +447,22 @@ def g1_rickshaw_env_cfg(
         "rickshaw_absolute_pitch_deviation_l2",
         "peak_force",
     )
+    reward_weight_curricula = {
+        f"{name}_weight": CurriculumTermCfg(
+            func=velocity_mdp.reward_curriculum,
+            params={
+                "reward_name": name,
+                "stages": [
+                    {
+                        "step": index * 200 * 24,
+                        "weight": rewards[name].weight * index / 6,
+                    }
+                    for index in range(7)
+                ],
+            },
+        )
+        for name in ramped_rickshaw_penalties
+    }
     commands = {
         "twist": RickshawVelocityCommandCfg(
             entity_name="rickshaw",
@@ -542,14 +558,7 @@ def g1_rickshaw_env_cfg(
                     ],
                 },
             ),
-            "rickshaw_penalty_weights": CurriculumTermCfg(
-                func=mjlab_mdp.SteppedRewardWeightCurriculum,
-                params={
-                    "reward_names": ramped_rickshaw_penalties,
-                    "interval_steps": 200 * 24,
-                    "duration_steps": 1200 * 24,
-                },
-            ),
+            **({} if play else reward_weight_curricula),
         },
         metrics={"mean_action_acc": MetricsTermCfg(func=velocity_mdp.mean_action_acc)},
         viewer=ViewerConfig(
@@ -590,7 +599,6 @@ def g1_rickshaw_env_cfg(
         enable_mimic(cfg)
     if play:
         cfg.episode_length_s = int(1e9)
-        del cfg.curriculum["rickshaw_penalty_weights"]
     if not velocity_curriculum:
         del cfg.curriculum["command_vel"]
         twist_cmd = cfg.commands["twist"]

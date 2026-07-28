@@ -166,6 +166,33 @@ def test_training_enables_mjlab_nan_guard() -> None:
     assert training.scene.terrain.terrain_type == "plane"
 
 
+def test_rickshaw_penalties_use_official_reward_curriculum() -> None:
+    pytest.importorskip("mjlab")
+    from mjlab.envs.mdp.curriculums import reward_curriculum
+
+    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
+        g1_rickshaw_env_cfg,
+    )
+
+    cfg = g1_rickshaw_env_cfg(play=False)
+    terms = {
+        name: term
+        for name, term in cfg.curriculum.items()
+        if name.endswith("_weight")
+    }
+    assert len(terms) == 9
+    for term in terms.values():
+        assert term.func is reward_curriculum
+        stages = term.params["stages"]
+        target = cfg.rewards[term.params["reward_name"]].weight
+        assert [stage["step"] for stage in stages] == [
+            index * 200 * 24 for index in range(7)
+        ]
+        assert [stage["weight"] for stage in stages] == pytest.approx(
+            [target * index / 6 for index in range(7)]
+        )
+
+
 def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> None:
     model = build_assembled_spec().compile()
     assert validate_assembled_model(model) == ()

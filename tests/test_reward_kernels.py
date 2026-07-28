@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from importlib.metadata import version
 import math
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -16,20 +15,6 @@ def test_rickshaw_height_recovery_reward_kernel() -> None:
         rewards.hitch_height_recovery_l2_value(height, 0.80),
         torch.tensor([0.0, 0.0, 1.0]),
     )
-
-
-def test_reward_ramp_changes_every_200_iterations_and_finishes_at_1200() -> None:
-    interval_steps = 200 * 24
-    duration_steps = 1200 * 24
-    progress = rewards.stepped_ramp_progress
-
-    assert progress(0, interval_steps, duration_steps) == 0.0
-    assert progress(interval_steps - 1, interval_steps, duration_steps) == 0.0
-    assert progress(200 * 24, interval_steps, duration_steps) == pytest.approx(1 / 6)
-    assert progress(400 * 24, interval_steps, duration_steps) == pytest.approx(2 / 6)
-    assert progress(1000 * 24, interval_steps, duration_steps) == pytest.approx(5 / 6)
-    assert progress(1200 * 24, interval_steps, duration_steps) == 1.0
-    assert progress(2000 * 24, interval_steps, duration_steps) == 1.0
 
 
 def test_wheel_slip_reward_only_penalizes_contacting_wheels() -> None:
@@ -217,7 +202,7 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
 
     arm_velocity = cfg.rewards["arm_joint_velocity_l2"]
     assert arm_velocity.func is velocity_mdp.joint_vel_l2
-    assert arm_velocity.weight == -0.01
+    assert arm_velocity.weight == -0.0015
     assert arm_velocity.params["asset_cfg"].joint_names == (
         r".*_(shoulder|elbow|wrist)_.*",
     )
@@ -231,53 +216,16 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     assert cfg.commands["twist"].viz.z_offset == 1.15
     assert cfg.scene.extent == 2.0
     assert cfg.viewer.distance == 3.0
-    assert set(cfg.curriculum) == {"command_vel", "rickshaw_penalty_weights"}
+    penalty_curriculum_names = {
+        f"{name}_weight"
+        for name in (*rickshaw_penalties, *relative_pose_and_force_penalties)
+    }
+    assert set(cfg.curriculum) == {"command_vel", *penalty_curriculum_names}
     assert cfg.curriculum["command_vel"].params["velocity_stages"] == [
         {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
         {"step": 5000 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
         {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
     ]
-    penalty_curriculum = cfg.curriculum["rickshaw_penalty_weights"]
-    assert penalty_curriculum.func is mjlab_mdp.SteppedRewardWeightCurriculum
-    assert penalty_curriculum.params == {
-        "reward_names": (
-            *rickshaw_penalties,
-            *relative_pose_and_force_penalties,
-        ),
-        "interval_steps": 200 * 24,
-        "duration_steps": 1200 * 24,
-    }
-    target_weights = {
-        name: cfg.rewards[name].weight
-        for name in penalty_curriculum.params["reward_names"]
-    }
-    term_cfgs = {
-        name: SimpleNamespace(weight=weight) for name, weight in target_weights.items()
-    }
-    curriculum_env = SimpleNamespace(
-        common_step_counter=0,
-        reward_manager=SimpleNamespace(
-            get_term_cfg=lambda name: term_cfgs[name],
-        ),
-    )
-    weight_curriculum = mjlab_mdp.SteppedRewardWeightCurriculum(
-        penalty_curriculum, curriculum_env
-    )
-    for step, progress in (
-        (0, 0.0),
-        (200 * 24, 1 / 6),
-        (1000 * 24, 5 / 6),
-        (1200 * 24, 1.0),
-    ):
-        curriculum_env.common_step_counter = step
-        state = weight_curriculum(
-            curriculum_env,
-            torch.empty(0, dtype=torch.long),
-            **penalty_curriculum.params,
-        )
-        assert state["progress"].item() == pytest.approx(progress)
-        for name, target_weight in target_weights.items():
-            assert term_cfgs[name].weight == pytest.approx(progress * target_weight)
     assert cfg.commands["twist"].resampling_time_range == (3.0, 8.0)
     assert not cfg.observations["critic_policy"].enable_corruption
 
@@ -293,7 +241,7 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     assert slope_play_cfg.events["initialize_task"].params["cfg"].terrain_slope == 0.05
 
     fixed_training_cfg = g1_rickshaw_env_cfg(play=False)
-    assert set(fixed_training_cfg.curriculum) == {"rickshaw_penalty_weights"}
+    assert set(fixed_training_cfg.curriculum) == penalty_curriculum_names
     assert fixed_training_cfg.commands["twist"].ranges.lin_vel_x == (-1.5, 2.0)
     assert fixed_training_cfg.commands["twist"].ranges.ang_vel_z == (-0.7, 0.7)
 
