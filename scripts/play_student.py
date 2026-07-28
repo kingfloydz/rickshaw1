@@ -41,7 +41,6 @@ def main() -> int:
         choices=SUPPORTED_HISTORY_LENGTHS,
         default=HISTORY_LENGTH,
     )
-    parser.add_argument("--mimic", action="store_true")
     parser.add_argument("--video-dir", default=None)
     parser.add_argument("--export-only", action="store_true")
     args, remaining = parser.parse_known_args()
@@ -54,7 +53,6 @@ def main() -> int:
             args.task,
             "--checkpoint",
             str(checkpoint),
-            *(["--mimic"] if args.mimic else []),
             f"agent.actor.latent_dim={args.latent_dim}",
             f"agent.actor.history_length={args.history_length}",
             f"env.history_length={args.history_length}",

@@ -55,7 +55,6 @@ def main() -> int:
         "--max-iterations", type=int, default=DEFAULT_DISTILLATION_ITERATIONS
     )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--mimic", action="store_true")
     args, remaining = parser.parse_known_args()
 
     teacher = require_existing_file(args.teacher, "teacher checkpoint").resolve()
@@ -77,7 +76,6 @@ def main() -> int:
             "--resume",
             "--checkpoint",
             os.fspath(teacher),
-            *(["--mimic"] if args.mimic else []),
             *remaining,
             f"agent.num_steps_per_env={args.rollout_steps}",
             f"agent.save_interval={DEFAULT_SAVE_INTERVAL}",

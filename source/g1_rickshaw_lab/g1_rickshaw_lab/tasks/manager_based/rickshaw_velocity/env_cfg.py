@@ -6,22 +6,11 @@ import math
 import os
 
 from g1_rickshaw_lab.assets import get_g1_robot_cfg, get_rickshaw_cfg
-from g1_rickshaw_lab.configuration import G1_JOINT_ORDER, load_feasibility_envelope
+from g1_rickshaw_lab.configuration import load_feasibility_envelope
 from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH
 from g1_rickshaw_lab.project_paths import CONFIG_ROOT, PROJECT_ROOT
 
-from .mdp.mimic import LEG_TORSO_JOINT_COUNT
-
-MIMIC_MOTION_PATH = PROJECT_ROOT / "hmr4d_results_straight_g1.pkl"
 PLAY_SLOPE_ENV = "G1_RICKSHAW_PLAY_SLOPE"
-VELOCITY_CURRICULUM_ENV = "G1_RICKSHAW_VELOCITY_CURRICULUM"
-
-
-def _velocity_curriculum_enabled() -> bool:
-    value = os.environ.get(VELOCITY_CURRICULUM_ENV, "0").lower()
-    if value not in {"0", "1", "false", "true"}:
-        raise ValueError(f"{VELOCITY_CURRICULUM_ENV} must be a boolean")
-    return value in {"1", "true"}
 
 
 def _play_slope() -> float | None:
@@ -32,42 +21,6 @@ def _play_slope() -> float | None:
         return float(value)
     except ValueError as exc:
         raise ValueError(f"{PLAY_SLOPE_ENV} must be a slope in radians") from exc
-
-
-def enable_mimic(env_cfg):
-    from mjlab.managers.reward_manager import RewardTermCfg
-    from mjlab.managers.scene_entity_config import SceneEntityCfg
-
-    from . import mjlab_mdp
-
-    command = env_cfg.commands["twist"]
-    command.mimic = True
-    command.mimic_motion_path = str(MIMIC_MOTION_PATH)
-    mimic_joints = SceneEntityCfg(
-        "robot",
-        joint_names=G1_JOINT_ORDER[:LEG_TORSO_JOINT_COUNT],
-        preserve_order=True,
-    )
-    env_cfg.rewards["mimic_joint_position"] = RewardTermCfg(
-        func=mjlab_mdp.mimic_joint_position_exp,
-        weight=2.0,
-        params={
-            "command_name": "twist",
-            "std": 0.3,
-            "asset_cfg": mimic_joints,
-        },
-    )
-    env_cfg.rewards["mimic_joint_velocity"] = RewardTermCfg(
-        func=mjlab_mdp.mimic_joint_velocity_exp,
-        weight=30.0,
-        params={
-            "command_name": "twist",
-            "std": 1.0,
-            "asset_cfg": mimic_joints,
-        },
-    )
-    env_cfg.mimic = True
-    return env_cfg
 
 
 def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None):
@@ -116,14 +69,11 @@ def g1_rickshaw_env_cfg(
     *,
     play: bool = False,
     history_length: int = HISTORY_LENGTH,
-    mimic: bool = False,
-    velocity_curriculum: bool | None = None,
+    rickshaw_penalty_weight_curriculum: bool = True,
     terrain_slope: float | None = None,
 ):
     """Create the nineteen-slope rickshaw velocity task using mjlab 1.5.3 APIs."""
 
-    if velocity_curriculum is None:
-        velocity_curriculum = _velocity_curriculum_enabled()
     if terrain_slope is None and play:
         terrain_slope = _play_slope()
 
@@ -473,9 +423,9 @@ def g1_rickshaw_env_cfg(
             heading_command=False,
             debug_vis=True,
             ranges=RickshawVelocityCommandCfg.Ranges(
-                lin_vel_x=(-1.0, 1.0),
+                lin_vel_x=(-1.5, 2.0),
                 lin_vel_y=(0.0, 0.0),
-                ang_vel_z=(-0.5, 0.5),
+                ang_vel_z=(-0.7, 0.7),
             ),
         )
     }
@@ -546,20 +496,7 @@ def g1_rickshaw_env_cfg(
         events=events,
         rewards=rewards,
         terminations=terminations,
-        curriculum={
-            "command_vel": CurriculumTermCfg(
-                func=velocity_mdp.commands_vel,
-                params={
-                    "command_name": "twist",
-                    "velocity_stages": [
-                        {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
-                        {"step": 5000 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
-                        {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
-                    ],
-                },
-            ),
-            **({} if play else reward_weight_curricula),
-        },
+        curriculum=({} if play or not rickshaw_penalty_weight_curriculum else reward_weight_curricula),
         metrics={"mean_action_acc": MetricsTermCfg(func=velocity_mdp.mean_action_acc)},
         viewer=ViewerConfig(
             origin_type=ViewerConfig.OriginType.ASSET_BODY,
@@ -591,26 +528,15 @@ def g1_rickshaw_env_cfg(
         episode_length_s=20.0,
     )
     cfg.history_length = history_length
-    cfg.mimic = False
     cfg.observation_noise_enabled = not play
     cfg.domain_randomization = runtime.domain
     cfg.policy_update = runtime
-    if mimic:
-        enable_mimic(cfg)
     if play:
         cfg.episode_length_s = int(1e9)
-    if not velocity_curriculum:
-        del cfg.curriculum["command_vel"]
-        twist_cmd = cfg.commands["twist"]
-        twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
-        twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
-    cfg.velocity_curriculum_enabled = velocity_curriculum
     cfg.terrain_slope = terrain_slope
     return cfg
 
 
 __all__ = [
-    "MIMIC_MOTION_PATH",
-    "enable_mimic",
     "g1_rickshaw_env_cfg",
 ]

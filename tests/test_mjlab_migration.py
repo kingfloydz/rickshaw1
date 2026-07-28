@@ -166,7 +166,7 @@ def test_training_enables_mjlab_nan_guard() -> None:
     assert training.scene.terrain.terrain_type == "plane"
 
 
-def test_rickshaw_penalties_use_official_reward_curriculum() -> None:
+def test_rickshaw_penalty_curriculum_is_disabled_for_student_training() -> None:
     pytest.importorskip("mjlab")
     from mjlab.envs.mdp.curriculums import reward_curriculum
 
@@ -175,10 +175,12 @@ def test_rickshaw_penalties_use_official_reward_curriculum() -> None:
     )
 
     cfg = g1_rickshaw_env_cfg(play=False)
+    student_cfg = g1_rickshaw_env_cfg(
+        play=False,
+        rickshaw_penalty_weight_curriculum=False,
+    )
     terms = {
-        name: term
-        for name, term in cfg.curriculum.items()
-        if name.endswith("_weight")
+        name: term for name, term in cfg.curriculum.items() if name.endswith("_weight")
     }
     assert len(terms) == 9
     for term in terms.values():
@@ -191,6 +193,7 @@ def test_rickshaw_penalties_use_official_reward_curriculum() -> None:
         assert [stage["weight"] for stage in stages] == pytest.approx(
             [target * index / 6 for index in range(7)]
         )
+    assert student_cfg.curriculum == {}
 
 
 def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> None:

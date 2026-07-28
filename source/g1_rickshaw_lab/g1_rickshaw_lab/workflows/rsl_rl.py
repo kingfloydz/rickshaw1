@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
@@ -40,13 +39,11 @@ def _parser(mode: Literal["train", "play"]) -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--enable_cameras", action="store_true")
-    parser.add_argument("--mimic", action="store_true")
     parser.add_argument("--logger", choices=("tensorboard", "wandb"), default=None)
     parser.add_argument("--log_project_name", default=None)
     if mode == "train":
         parser.add_argument("--video_interval", type=int, default=2000)
         parser.add_argument("--max_iterations", type=int, default=None)
-        parser.add_argument("--velocity-curriculum", action="store_true")
     else:
         parser.add_argument("--real-time", action="store_true", default=False)
     return parser
@@ -123,18 +120,10 @@ def run_rsl_rl(
 def _load_configs(args: argparse.Namespace, overrides: list[str], *, play: bool):
     from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
 
-    if not play:
-        os.environ["G1_RICKSHAW_VELOCITY_CURRICULUM"] = "1" if args.velocity_curriculum else "0"
     import g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.registration  # noqa: F401
 
     env_cfg = load_env_cfg(args.task, play=play)
     agent_cfg = load_rl_cfg(args.task)
-    if args.mimic:
-        from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
-            enable_mimic,
-        )
-
-        enable_mimic(env_cfg)
     _apply_overrides(env_cfg, agent_cfg, overrides)
     if args.num_envs is not None:
         env_cfg.scene.num_envs = args.num_envs

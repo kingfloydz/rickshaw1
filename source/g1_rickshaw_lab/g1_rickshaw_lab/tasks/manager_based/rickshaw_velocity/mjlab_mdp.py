@@ -25,7 +25,6 @@ from .mdp.rewards import (
     HITCH_HEIGHT_RECOVERY_SCALE_M,
     angle_deviation_l2_value,
     hitch_height_recovery_l2_value,
-    mimic_joint_error_exp_value,
     peak_force_value,
     relative_position_l2_value,
     wheel_slip_l2_value,
@@ -156,40 +155,6 @@ def track_rickshaw_ang_vel_z(env: Any, command_name: str, std: float) -> torch.T
     return torch.exp(-torch.square(env.rickshaw_ang_vel_z - command[:, 2]) / std**2)
 
 
-def mimic_joint_position_exp(
-    env: Any,
-    command_name: str,
-    std: float,
-    asset_cfg: Any,
-) -> torch.Tensor:
-    command = env.command_manager.get_term(command_name)
-    reference_pos, _ = command.sample_mimic_reference()
-    asset = env.scene[asset_cfg.name]
-    return mimic_joint_error_exp_value(
-        asset.data.joint_pos[:, asset_cfg.joint_ids],
-        reference_pos,
-        command.is_mimic_env,
-        std,
-    )
-
-
-def mimic_joint_velocity_exp(
-    env: Any,
-    command_name: str,
-    std: float,
-    asset_cfg: Any,
-) -> torch.Tensor:
-    command = env.command_manager.get_term(command_name)
-    _, reference_vel = command.sample_mimic_reference()
-    asset = env.scene[asset_cfg.name]
-    return mimic_joint_error_exp_value(
-        asset.data.joint_vel[:, asset_cfg.joint_ids],
-        reference_vel,
-        command.is_mimic_env,
-        std,
-    )
-
-
 def rickshaw_forward_acceleration_l2(env: Any) -> torch.Tensor:
     ensure_mjlab_physical_state(env)
     return torch.square(env.rickshaw_kinematic_state.forward_acceleration)
@@ -266,8 +231,6 @@ __all__ = [
     "critic_privileged_state",
     "current_actor_observation",
     "hitch_height_recovery_l2",
-    "mimic_joint_position_exp",
-    "mimic_joint_velocity_exp",
     "peak_force",
     "rickshaw_absolute_pitch_deviation_l2",
     "rickshaw_forward_acceleration_l2",

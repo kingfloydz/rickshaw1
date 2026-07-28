@@ -37,8 +37,16 @@ for task_id, kind, history_length in (
         runner_cls = None
     register_mjlab_task(
         task_id=task_id,
-        env_cfg=g1_rickshaw_env_cfg(play=False, history_length=history_length),
-        play_env_cfg=g1_rickshaw_env_cfg(play=True, history_length=history_length),
+        env_cfg=g1_rickshaw_env_cfg(
+            play=False,
+            history_length=history_length,
+            rickshaw_penalty_weight_curriculum=kind != "student",
+        ),
+        play_env_cfg=g1_rickshaw_env_cfg(
+            play=True,
+            history_length=history_length,
+            rickshaw_penalty_weight_curriculum=False,
+        ),
         rl_cfg=runner_cfg,
         runner_cls=runner_cls,
     )

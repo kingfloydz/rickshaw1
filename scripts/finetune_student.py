@@ -57,7 +57,6 @@ def main() -> int:
     )
     parser.add_argument("--max-iterations", type=int, default=DEFAULT_MAX_ITERATIONS)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--mimic", action="store_true")
     args, remaining = parser.parse_known_args()
 
     initialize_runner = None
@@ -98,7 +97,6 @@ def main() -> int:
             "tensorboard",
             "--experiment_name",
             experiment_name,
-            *(["--mimic"] if args.mimic else []),
             *resume_arguments,
             *remaining,
             f"agent.num_steps_per_env={args.rollout_steps}",

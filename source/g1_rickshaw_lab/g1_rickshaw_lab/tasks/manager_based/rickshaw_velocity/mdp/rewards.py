@@ -8,16 +8,6 @@ HITCH_HEIGHT_RECOVERY_DEADBAND_M = 0.05
 HITCH_HEIGHT_RECOVERY_SCALE_M = 0.05
 
 
-def mimic_joint_error_exp_value(
-    joint_state: torch.Tensor,
-    reference_state: torch.Tensor,
-    active: torch.Tensor,
-    std: float,
-) -> torch.Tensor:
-    error = torch.mean(torch.square(joint_state - reference_state), dim=-1)
-    return torch.exp(-error / std**2) * active.to(joint_state.dtype)
-
-
 def hitch_height_recovery_l2_value(
     hitch_height: torch.Tensor,
     target_height: float,
@@ -80,7 +70,6 @@ __all__ = [
     "HITCH_HEIGHT_RECOVERY_SCALE_M",
     "angle_deviation_l2_value",
     "hitch_height_recovery_l2_value",
-    "mimic_joint_error_exp_value",
     "peak_force_value",
     "relative_position_l2_value",
     "wheel_slip_l2_value",

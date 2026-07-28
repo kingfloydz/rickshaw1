@@ -62,9 +62,7 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     from mjlab.tasks.velocity import mdp as velocity_mdp
     from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
 
-    from g1_rickshaw_lab.configuration import G1_JOINT_ORDER
     from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
-        MIMIC_MOTION_PATH,
         g1_rickshaw_env_cfg,
     )
     from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.agents.rsl_rl_cfg import (
@@ -72,7 +70,7 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     )
     from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity import mjlab_mdp
 
-    cfg = g1_rickshaw_env_cfg(velocity_curriculum=True)
+    cfg = g1_rickshaw_env_cfg()
     mjlab_cfg = unitree_g1_flat_env_cfg()
     official = {
         "track_linear_velocity": (mjlab_mdp.track_rickshaw_lin_vel_x, 2.0),
@@ -220,19 +218,13 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         f"{name}_weight"
         for name in (*rickshaw_penalties, *relative_pose_and_force_penalties)
     }
-    assert set(cfg.curriculum) == {"command_vel", *penalty_curriculum_names}
-    assert cfg.curriculum["command_vel"].params["velocity_stages"] == [
-        {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
-        {"step": 5000 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
-        {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
-    ]
+    assert set(cfg.curriculum) == penalty_curriculum_names
     assert cfg.commands["twist"].resampling_time_range == (3.0, 8.0)
     assert not cfg.observations["critic_policy"].enable_corruption
 
     play_cfg = g1_rickshaw_env_cfg(play=True)
     assert play_cfg.episode_length_s == int(1e9)
     assert play_cfg.curriculum == {}
-    assert not play_cfg.velocity_curriculum_enabled
     assert play_cfg.commands["twist"].ranges.lin_vel_x == (-1.5, 2.0)
     assert play_cfg.commands["twist"].ranges.ang_vel_z == (-0.7, 0.7)
 
@@ -240,31 +232,13 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     assert slope_play_cfg.terrain_slope == 0.05
     assert slope_play_cfg.events["initialize_task"].params["cfg"].terrain_slope == 0.05
 
-    fixed_training_cfg = g1_rickshaw_env_cfg(play=False)
-    assert set(fixed_training_cfg.curriculum) == penalty_curriculum_names
-    assert fixed_training_cfg.commands["twist"].ranges.lin_vel_x == (-1.5, 2.0)
-    assert fixed_training_cfg.commands["twist"].ranges.ang_vel_z == (-0.7, 0.7)
-
-    mimic_cfg = g1_rickshaw_env_cfg(mimic=True)
-    mimic_command = mimic_cfg.commands["twist"]
-    assert mimic_cfg.mimic
-    assert mimic_command.mimic
-    assert mimic_command.rel_forward_envs == 0.2
-    assert mimic_command.mimic_forward_speed == 0.8
-    assert mimic_command.mimic_motion_path == str(MIMIC_MOTION_PATH)
-    assert set(mimic_cfg.rewards) == {
-        *cfg.rewards,
-        "mimic_joint_position",
-        "mimic_joint_velocity",
-    }
-    assert mimic_cfg.rewards["mimic_joint_position"].weight == 2.0
-    assert mimic_cfg.rewards["mimic_joint_position"].params["std"] == 0.3
-    assert mimic_cfg.rewards["mimic_joint_velocity"].weight == 30.0
-    assert mimic_cfg.rewards["mimic_joint_velocity"].params["std"] == 1.0
-    for name in ("mimic_joint_position", "mimic_joint_velocity"):
-        asset_cfg = mimic_cfg.rewards[name].params["asset_cfg"]
-        assert tuple(asset_cfg.joint_names) == G1_JOINT_ORDER[:15]
-        assert asset_cfg.preserve_order
+    student_training_cfg = g1_rickshaw_env_cfg(
+        play=False,
+        rickshaw_penalty_weight_curriculum=False,
+    )
+    assert student_training_cfg.curriculum == {}
+    assert student_training_cfg.commands["twist"].ranges.lin_vel_x == (-1.5, 2.0)
+    assert student_training_cfg.commands["twist"].ranges.ang_vel_z == (-0.7, 0.7)
 
     agent = g1_rickshaw_teacher_ppo_runner_cfg()
     assert agent.num_steps_per_env == 24

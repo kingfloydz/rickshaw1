@@ -83,7 +83,7 @@ and signed-log contact force terms. Rewards otherwise use the Mjlab 1.5.3 G1
 flat definitions, with upright weight 0.2, lower-body/waist-only pose tracking,
 foot swing target 0.08 m, and the two rickshaw hitch-height terms.
 
-The command curriculum, play episode/ranges, 24-step rollout, 50-iteration
+The fixed rickshaw velocity command ranges, play episode/ranges, 24-step rollout, 50-iteration
 checkpoint interval, 30,000 iterations, actor/critic MLPs, empirical
 normalization, Gaussian standard deviation, and PPO hyperparameters match Mjlab
 1.5.3 G1 Flat. There is no secondary simulator runtime path or runtime reward
