@@ -6,6 +6,8 @@ import argparse
 import os
 import sys
 
+from _project import add_project_source
+
 PLAY_SLOPE_ENV = "G1_RICKSHAW_PLAY_SLOPE"
 
 
@@ -23,9 +25,7 @@ def _parse_rickshaw_options(argv: list[str]) -> tuple[argparse.Namespace, list[s
 
 
 def main() -> None:
-    from _mjlab_wrappers import add_project_source_to_path
-
-    add_project_source_to_path()
+    add_project_source()
     options, remaining = _parse_rickshaw_options(sys.argv[1:])
     if options.slope is not None:
         os.environ[PLAY_SLOPE_ENV] = str(options.slope)

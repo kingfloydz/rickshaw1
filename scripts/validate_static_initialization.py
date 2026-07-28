@@ -7,15 +7,15 @@ import argparse
 import json
 from pathlib import Path
 
-from _mjlab_wrappers import add_project_source_to_path
+from _project import add_project_source
 
-add_project_source_to_path()
+add_project_source()
 
 from g1_rickshaw_lab.static_equilibrium import (  # noqa: E402
     STATIC_REST_POSE_PATH,
     save_mujoco_static_equilibrium,
-    solve_mujoco_static_equilibrium,
 )
+from _static_equilibrium_solver import solve_mujoco_static_equilibrium  # noqa: E402
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.closed_chain import (  # noqa: E402
     build_assembled_spec,
 )

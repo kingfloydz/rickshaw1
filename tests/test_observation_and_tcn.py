@@ -10,8 +10,7 @@ from torch import nn
 
 from g1_rickshaw_lab.policy_schema import TEACHER_STATIC_DIM
 from g1_rickshaw_lab.rl import DYNAMIC_PRIVILEGE_DIM, STATIC_PRIVILEGE_DIM
-from g1_rickshaw_lab.rl.actor_critic import G1RickshawStudentActor
-from g1_rickshaw_lab.rl.teacher_model import G1RickshawTeacherActor
+from g1_rickshaw_lab.rl.actor_critic import GaussianActor
 from g1_rickshaw_lab.rl.context_encoder import (
     DILATIONS,
     FEATURE_DIM,
@@ -20,6 +19,7 @@ from g1_rickshaw_lab.rl.context_encoder import (
     ContextEncoder,
     temporal_receptive_field,
 )
+from g1_rickshaw_lab.rl.teacher_model import TeacherEncoder
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.observations import (
     ACTOR_OBSERVATION_DIM,
     BASE_ANGULAR_VELOCITY_SLICE,
@@ -141,7 +141,10 @@ def test_teacher_static_and_critic_privilege_include_normalized_terrain_slope() 
     _update_teacher_static_domain(env, cfg, sampled)
 
     assert TEACHER_STATIC_FEATURE_NAMES[-1] == "terrain.slope"
-    assert env.normalized_teacher_static_domain.shape == (slopes.numel(), TEACHER_STATIC_DIM)
+    assert env.normalized_teacher_static_domain.shape == (
+        slopes.numel(),
+        TEACHER_STATIC_DIM,
+    )
     torch.testing.assert_close(
         env.normalized_teacher_static_domain[:, -1],
         torch.tensor((-1.0, 0.0, 1.0), dtype=dtype),
@@ -217,48 +220,41 @@ def test_tcn_schema_receptive_field_and_single_history_path() -> None:
     with pytest.raises(ValueError, match=expected_shape):
         encoder(torch.zeros(2, 61, ACTOR_OBSERVATION_DIM - 1))
 
-    student = G1RickshawStudentActor()
-    history_encoders = [
-        module for module in student.modules() if isinstance(module, ContextEncoder)
-    ]
     recurrent_modules = [
         module
-        for module in student.modules()
+        for module in encoder.modules()
         if isinstance(module, (nn.RNNBase, nn.RNNCellBase))
     ]
-    assert len(history_encoders) == 1
     assert recurrent_modules == []
 
 
 def test_fixed_teacher_and_student_context_interfaces() -> None:
-    teacher = G1RickshawTeacherActor().eval()
-    student = G1RickshawStudentActor().eval()
+    teacher = TeacherEncoder().eval()
+    student = ContextEncoder().eval()
+    actor = GaussianActor().eval()
     current = torch.zeros(2, ACTOR_OBSERVATION_DIM)
     observation_history = torch.zeros(2, 61, ACTOR_OBSERVATION_DIM)
     dynamic_history = torch.zeros(2, 61, DYNAMIC_PRIVILEGE_DIM)
     static_privilege = torch.zeros(2, STATIC_PRIVILEGE_DIM)
     with torch.no_grad():
-        teacher_distribution, teacher_context = teacher.forward_with_context(
-            current,
+        teacher_context = teacher(
             observation_history,
             dynamic_history,
             static_privilege,
         )
-        student_distribution, student_context = student.forward_with_context(
-            current, observation_history
-        )
-    assert teacher.encoder.latent_dim == 16
-    assert student.context_encoder.latent_dim == 16
-    assert teacher.encoder.temporal_input.in_channels == (
+        student_context = student(observation_history)
+        teacher_distribution = actor(current, teacher_context)
+        student_distribution = actor(current, student_context)
+    assert teacher.latent_dim == 16
+    assert student.latent_dim == 16
+    assert teacher.temporal_input.in_channels == (
         ACTOR_OBSERVATION_DIM + DYNAMIC_PRIVILEGE_DIM
     )
-    assert teacher.encoder.temporal_input.out_channels == 48
-    assert student.context_encoder.context.in_features == 48
-    assert teacher.encoder.static[0].in_features == STATIC_PRIVILEGE_DIM
-    assert teacher.encoder.static[0].out_features == 16
-    assert not hasattr(teacher.encoder, "observation_input")
-    assert not hasattr(teacher.encoder, "privilege_input")
-    teacher_context_layers = list(teacher.encoder.context)
+    assert teacher.temporal_input.out_channels == 48
+    assert student.context.in_features == 48
+    assert teacher.static[0].in_features == STATIC_PRIVILEGE_DIM
+    assert teacher.static[0].out_features == 16
+    teacher_context_layers = list(teacher.context)
     assert isinstance(teacher_context_layers[0], nn.Linear)
     assert teacher_context_layers[0].in_features == 64
     assert teacher_context_layers[0].out_features == 48
@@ -270,35 +266,28 @@ def test_fixed_teacher_and_student_context_interfaces() -> None:
     assert student_context.shape == (2, 16)
     assert teacher_distribution.mean.shape == (2, 29)
     assert student_distribution.mean.shape == (2, 29)
-    assert teacher.actor.network[0].in_features == ACTOR_OBSERVATION_DIM + 16
-    assert student.actor.network[0].in_features == ACTOR_OBSERVATION_DIM + 16
-    assert not hasattr(teacher, "context_projection")
-    assert not hasattr(student, "context_projection")
-    assert not any("aux" in name for name, _ in teacher.named_modules())
-    assert not any("aux" in name for name, _ in student.named_modules())
+    assert actor.network[0].in_features == ACTOR_OBSERVATION_DIM + 16
 
 
 @pytest.mark.parametrize("latent_dim", (8, 16, 24, 32))
 def test_teacher_and_student_use_the_selected_latent_width(latent_dim: int) -> None:
-    teacher = G1RickshawTeacherActor(latent_dim).eval()
-    student = G1RickshawStudentActor(latent_dim).eval()
+    teacher = TeacherEncoder(latent_dim).eval()
+    student = ContextEncoder(latent_dim).eval()
+    actor = GaussianActor(latent_dim).eval()
     current = torch.zeros(2, ACTOR_OBSERVATION_DIM)
     history = torch.zeros(2, 61, ACTOR_OBSERVATION_DIM)
     with torch.no_grad():
-        teacher_distribution, teacher_context = teacher.forward_with_context(
-            current,
+        teacher_context = teacher(
             history,
             torch.zeros(2, 61, DYNAMIC_PRIVILEGE_DIM),
             torch.zeros(2, STATIC_PRIVILEGE_DIM),
         )
-        student_distribution, student_context = student.forward_with_context(
-            current, history
-        )
+        student_context = student(history)
+        teacher_distribution = actor(current, teacher_context)
+        student_distribution = actor(current, student_context)
 
     assert teacher_context.shape == student_context.shape == (2, latent_dim)
-    assert teacher.actor.network[0].in_features == ACTOR_OBSERVATION_DIM + latent_dim
-    assert student.actor.network[0].in_features == ACTOR_OBSERVATION_DIM + latent_dim
-    assert set(teacher.actor.state_dict()) == set(student.actor.state_dict())
+    assert actor.network[0].in_features == ACTOR_OBSERVATION_DIM + latent_dim
     assert teacher_distribution.mean.shape == student_distribution.mean.shape == (2, 29)
 
 

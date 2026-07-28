@@ -7,9 +7,9 @@ import argparse
 import json
 from pathlib import Path
 
-from _mjlab_wrappers import add_project_source_to_path
+from _project import add_project_source
 
-add_project_source_to_path()
+add_project_source()
 
 
 def main() -> int:
@@ -55,9 +55,7 @@ def main() -> int:
     from mjlab.tasks.registry import load_env_cfg
 
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    cfg = load_env_cfg(
-        "Mjlab-G1-Rickshaw-Slopes-Student", play=True
-    )
+    cfg = load_env_cfg("Mjlab-G1-Rickshaw-Slopes-Student", play=True)
     cfg.scene.num_envs = args.num_envs
     cfg.viewer.env_idx = render_indices[0]
     env = ManagerBasedRlEnv(
@@ -91,9 +89,10 @@ def main() -> int:
                 robot.data.joint_pos_target[:, env.policy_joint_ids] - actuator_target
             )
             effort_limit = torch.tensor(G1_JOINT_EFFORT_LIMITS, device=device)
-            actuator_torque_ratio = torch.abs(
-                robot.data.actuator_force[:, env.policy_actuator_ids]
-            ) / effort_limit
+            actuator_torque_ratio = (
+                torch.abs(robot.data.actuator_force[:, env.policy_actuator_ids])
+                / effort_limit
+            )
             reset_worst = joint_reset_error.argmax(dim=-1).cpu().tolist()
             current_worst = torch.gather(
                 robot.data.joint_pos[:, env.policy_joint_ids],
@@ -119,9 +118,15 @@ def main() -> int:
                 ),
                 "wheel_contact_counts": contact_counts("wheel_contacts"),
                 "foot_contact_counts": contact_counts("feet_ground_contact"),
-                "connection_position_error_m": connection_error.max(dim=-1).values.cpu().tolist(),
-                "connection_position_error_max_m": float(torch.max(connection_error).item()),
-                "joint_reset_error_max_rad": joint_reset_error.max(dim=-1).values.cpu().tolist(),
+                "connection_position_error_m": connection_error.max(dim=-1)
+                .values.cpu()
+                .tolist(),
+                "connection_position_error_max_m": float(
+                    torch.max(connection_error).item()
+                ),
+                "joint_reset_error_max_rad": joint_reset_error.max(dim=-1)
+                .values.cpu()
+                .tolist(),
                 "joint_reset_error_worst_joint": [
                     G1_JOINT_ORDER[index] for index in reset_worst
                 ],
@@ -129,9 +134,16 @@ def main() -> int:
                 "joint_reset_position_worst_rad": reset_position_worst.cpu().tolist(),
                 "joint_velocity_max_rad_s": torch.abs(
                     robot.data.joint_vel[:, env.policy_joint_ids]
-                ).max(dim=-1).values.cpu().tolist(),
-                "joint_target_error_max_rad": joint_target_error.max(dim=-1).values.cpu().tolist(),
-                "actuator_torque_ratio_max": actuator_torque_ratio.max(dim=-1).values.cpu().tolist(),
+                )
+                .max(dim=-1)
+                .values.cpu()
+                .tolist(),
+                "joint_target_error_max_rad": joint_target_error.max(dim=-1)
+                .values.cpu()
+                .tolist(),
+                "actuator_torque_ratio_max": actuator_torque_ratio.max(dim=-1)
+                .values.cpu()
+                .tolist(),
             }
 
         metrics_before_step = physical_metrics()
@@ -166,8 +178,7 @@ def main() -> int:
                     "num_envs": args.num_envs,
                     "device": device,
                     "observation_shapes": {
-                        name: list(value.shape)
-                        for name, value in observations.items()
+                        name: list(value.shape) for name, value in observations.items()
                     },
                     "action_dim": env.action_manager.total_action_dim,
                     "zero_action_steps": args.steps,

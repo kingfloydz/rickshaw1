@@ -9,9 +9,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from _mjlab_wrappers import add_project_source_to_path
+from _project import add_project_source
 
-add_project_source_to_path()
+add_project_source()
 
 from g1_rickshaw_lab.static_equilibrium import load_mujoco_static_equilibrium  # noqa: E402
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.closed_chain import (  # noqa: E402
@@ -70,7 +70,9 @@ def main() -> int:
         )
         draw.rectangle((16, 14, 530, 48), fill=(255, 255, 255, 220))
         draw.text((25, 23), label, fill=(20, 20, 20))
-        output_name = "reset_pose_front.png" if args.view == "front" else "reset_pose_flat.png"
+        output_name = (
+            "reset_pose_front.png" if args.view == "front" else "reset_pose_flat.png"
+        )
         output = output_dir / output_name
         image.save(output)
 

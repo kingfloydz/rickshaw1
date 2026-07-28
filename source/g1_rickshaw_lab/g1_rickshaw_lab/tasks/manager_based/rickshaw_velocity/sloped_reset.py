@@ -90,9 +90,7 @@ def build_sloped_reset_templates(
 
     robot_root = int(model.joint("robot/floating_base_joint").qposadr[0])
     cart_root = int(model.joint("rickshaw/floating_base_joint").qposadr[0])
-    ankle_qpos = tuple(
-        int(model.joint(f"robot/{side}_ankle_pitch_joint").qposadr[0]) for side in ("left", "right")
-    )
+    ankle_qpos = tuple(int(model.joint(f"robot/{side}_ankle_pitch_joint").qposadr[0]) for side in ("left", "right"))
     robot_joint_qpos = tuple(int(model.joint(f"robot/{name}").qposadr[0]) for name in G1_JOINT_ORDER)
     foot_geoms = _foot_contact_geoms(model)
     wheel_body_ids = tuple(model.body(f"rickshaw/{side}_wheel_link").id for side in ("left", "right"))
@@ -104,9 +102,7 @@ def build_sloped_reset_templates(
     flat_foot_clearance = float(
         np.mean([flat_data.geom_xpos[geom_id, 2] - model.geom_size[geom_id, 0] for geom_id in foot_geoms])
     )
-    flat_wheel_clearance = float(
-        np.mean([flat_data.xpos[body_id, 2] - WHEEL_RADIUS for body_id in wheel_body_ids])
-    )
+    flat_wheel_clearance = float(np.mean([flat_data.xpos[body_id, 2] - WHEEL_RADIUS for body_id in wheel_body_ids]))
     flat_hitch_positions = flat_data.site_xpos[list(hitch_site_ids)].copy()
     flat_hitch_center = np.mean(flat_hitch_positions, axis=0)
     hitch_axis = flat_hitch_positions[1] - flat_hitch_positions[0]
@@ -125,18 +121,14 @@ def build_sloped_reset_templates(
         mujoco.mj_forward(model, data)
         normal = np.array((-np.sin(slope), 0.0, np.cos(slope)))
         foot_clearance = float(
-            np.mean(
-                [normal @ data.geom_xpos[geom_id] - model.geom_size[geom_id, 0] for geom_id in foot_geoms]
-            )
+            np.mean([normal @ data.geom_xpos[geom_id] - model.geom_size[geom_id, 0] for geom_id in foot_geoms])
         )
         root_height_offset = (flat_foot_clearance - foot_clearance) / normal[2]
 
         robot_pose = flat_robot_pose.copy()
         robot_pose[2] += root_height_offset
         target_hitch_center = flat_hitch_center + np.array((0.0, 0.0, root_height_offset))
-        target_wheel_offset_height = (
-            WHEEL_RADIUS + flat_wheel_clearance - normal @ target_hitch_center
-        )
+        target_wheel_offset_height = WHEEL_RADIUS + flat_wheel_clearance - normal @ target_hitch_center
         cart_pitch = _bisect_cart_pitch(
             normal,
             hitch_axis,

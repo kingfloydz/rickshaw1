@@ -4,47 +4,49 @@ from mjlab.tasks.registry import register_mjlab_task
 
 from . import (
     DISTILLATION_TASK_ID,
-    HISTORY_91_DISTILLATION_TASK_ID,
-    HISTORY_91_STUDENT_TASK_ID,
-    HISTORY_91_TEACHER_TASK_ID,
     STUDENT_TASK_ID,
     TRAIN_TASK_ID,
     g1_rickshaw_env_cfg,
 )
-from .agents.distillation_runner import MjlabDistillationRunner
 from .agents.rsl_rl_cfg import (
     g1_rickshaw_distillation_runner_cfg,
     g1_rickshaw_student_ppo_runner_cfg,
     g1_rickshaw_teacher_ppo_runner_cfg,
 )
+from .agents.runners import (
+    RickshawDistillationRunner,
+    RickshawStudentRunner,
+    RickshawTeacherRunner,
+)
 
-for task_id, kind, history_length in (
-    (TRAIN_TASK_ID, "teacher", 61),
-    (DISTILLATION_TASK_ID, "distillation", 61),
-    (STUDENT_TASK_ID, "student", 61),
-    (HISTORY_91_TEACHER_TASK_ID, "teacher", 91),
-    (HISTORY_91_DISTILLATION_TASK_ID, "distillation", 91),
-    (HISTORY_91_STUDENT_TASK_ID, "student", 91),
+for task_id, kind, runner_cfg, runner_cls in (
+    (
+        TRAIN_TASK_ID,
+        "teacher",
+        g1_rickshaw_teacher_ppo_runner_cfg(),
+        RickshawTeacherRunner,
+    ),
+    (
+        DISTILLATION_TASK_ID,
+        "distillation",
+        g1_rickshaw_distillation_runner_cfg(),
+        RickshawDistillationRunner,
+    ),
+    (
+        STUDENT_TASK_ID,
+        "student",
+        g1_rickshaw_student_ppo_runner_cfg(),
+        RickshawStudentRunner,
+    ),
 ):
-    if kind == "distillation":
-        runner_cfg = g1_rickshaw_distillation_runner_cfg(history_length=history_length)
-        runner_cls = MjlabDistillationRunner
-    elif kind == "student":
-        runner_cfg = g1_rickshaw_student_ppo_runner_cfg(history_length=history_length)
-        runner_cls = None
-    else:
-        runner_cfg = g1_rickshaw_teacher_ppo_runner_cfg(history_length=history_length)
-        runner_cls = None
     register_mjlab_task(
         task_id=task_id,
         env_cfg=g1_rickshaw_env_cfg(
             play=False,
-            history_length=history_length,
             rickshaw_penalty_weight_curriculum=kind != "student",
         ),
         play_env_cfg=g1_rickshaw_env_cfg(
             play=True,
-            history_length=history_length,
             rickshaw_penalty_weight_curriculum=False,
         ),
         rl_cfg=runner_cfg,

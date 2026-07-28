@@ -70,8 +70,9 @@ G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS = {
     "waist_pitch_joint": 0.0,
 }
 
+
 class AssetValidationError(ValueError):
-    """Raised when the fixed-gripper G1 asset violates its contract."""
+    """Raised when the fixed-gripper G1 asset violates its specification."""
 
 
 @dataclass(frozen=True)
@@ -255,6 +256,7 @@ def get_g1_robot_cfg():
     """Return a fresh mjlab EntityCfg; imports mjlab only when requested."""
 
     from mjlab.entity import EntityCfg
+
     return EntityCfg(
         spec_fn=get_g1_spec,
         sort_actuators=True,

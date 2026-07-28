@@ -1,4 +1,4 @@
-"""Compile the assembled MuJoCo model and validate its geometry contracts."""
+"""Compile the assembled MuJoCo model and validate its geometry."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pathlib import Path
 import numpy as np
 import trimesh
 
-from _mjlab_wrappers import add_project_source_to_path
+from _project import add_project_source
 
-add_project_source_to_path()
+add_project_source()
 
 from g1_rickshaw_lab.assets import (  # noqa: E402
     RICKSHAW_URDF_SPEC,
@@ -48,7 +48,9 @@ def hitch_mesh_evidence() -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=Path("outputs/validation/mjlab_assets.json"))
+    parser.add_argument(
+        "--output", type=Path, default=Path("outputs/validation/mjlab_assets.json")
+    )
     args = parser.parse_args()
     issues = [*validate_g1_urdf(), *validate_rickshaw_urdf()]
     model = build_assembled_spec().compile()

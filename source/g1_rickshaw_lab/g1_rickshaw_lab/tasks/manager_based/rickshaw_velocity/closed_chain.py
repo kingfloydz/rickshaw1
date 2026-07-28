@@ -95,14 +95,10 @@ def validate_assembled_model(model: mujoco.MjModel) -> tuple[str, ...]:
     if not robot_geoms or not rickshaw_geoms:
         issues.append("missing robot or rickshaw collision class")
     if not gripper_geoms or any(
-        model.geom_contype[index] != 0 or model.geom_conaffinity[index] != 0
-        for index in gripper_geoms
+        model.geom_contype[index] != 0 or model.geom_conaffinity[index] != 0 for index in gripper_geoms
     ):
         issues.append("equality-connected gripper geoms must not generate contacts")
-    if any(
-        model.geom_contype[index] != 0 or model.geom_conaffinity[index] != 0
-        for index in visual_geoms
-    ):
+    if any(model.geom_contype[index] != 0 or model.geom_conaffinity[index] != 0 for index in visual_geoms):
         issues.append("G1 visual geoms must not generate contacts")
     if any(
         model.geom_contype[index] != ROBOT_COLLISION_BIT

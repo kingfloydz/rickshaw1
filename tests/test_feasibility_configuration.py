@@ -1,4 +1,4 @@
-"""Configuration artifact contracts retained by the Mjlab runtime."""
+"""Feasibility configuration validation used by the Mjlab runtime."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from g1_rickshaw_lab.configuration import (
     G1_JOINT_ORDER,
     REQUIRED_CALIBRATION_FIELDS,
     REQUIRED_FEASIBILITY_RANGES,
-    ConfigurationContractError,
+    FeasibilityConfigError,
     FeasibilityEnvelope,
 )
 
@@ -29,9 +29,7 @@ def _valid_mapping() -> dict:
         "schema_version": FEASIBILITY_SCHEMA_VERSION,
         "joint_order": list(G1_JOINT_ORDER),
         "ranges": {name: _range_for(name) for name in REQUIRED_FEASIBILITY_RANGES},
-        "calibration": {
-            name: 1.0 for name in REQUIRED_CALIBRATION_FIELDS
-        },
+        "calibration": {name: 1.0 for name in REQUIRED_CALIBRATION_FIELDS},
     }
 
 
@@ -43,12 +41,12 @@ def test_feasibility_envelope_requires_exact_schema_fields() -> None:
 
     missing = _valid_mapping()
     del missing["ranges"]["torso.mass_delta"]
-    with pytest.raises(ConfigurationContractError, match="missing"):
+    with pytest.raises(FeasibilityConfigError, match="missing"):
         FeasibilityEnvelope.from_mapping(missing)
 
     unknown = _valid_mapping()
     unknown["calibration"]["unvalidated.default"] = 1.0
-    with pytest.raises(ConfigurationContractError, match="unknown"):
+    with pytest.raises(FeasibilityConfigError, match="unknown"):
         FeasibilityEnvelope.from_mapping(unknown)
 
 
@@ -58,10 +56,12 @@ def test_feasibility_envelope_rejects_joint_order_drift() -> None:
         mapping["joint_order"][1],
         mapping["joint_order"][0],
     )
-    with pytest.raises(ConfigurationContractError, match="fixed checkpoint order"):
+    with pytest.raises(FeasibilityConfigError, match="fixed policy joint order"):
         FeasibilityEnvelope.from_mapping(mapping)
+
+
 def test_legacy_actuator_fields_are_rejected() -> None:
     mapping = _valid_mapping()
     mapping["calibration"]["control.linear_stiffness_nominal"] = 5.0
-    with pytest.raises(ConfigurationContractError, match="unknown"):
+    with pytest.raises(FeasibilityConfigError, match="unknown"):
         FeasibilityEnvelope.from_mapping(mapping)

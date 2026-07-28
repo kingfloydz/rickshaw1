@@ -142,7 +142,9 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         assert term.func is func
         if name not in {"track_linear_velocity", "track_angular_velocity"}:
             assert term.func is mjlab_term.func
-        expected_weight = 0.1 if name == "upright" else 0.5 if name == "pose" else weight
+        expected_weight = (
+            0.1 if name == "upright" else 0.5 if name == "pose" else weight
+        )
         assert term.weight == pytest.approx(expected_weight)
         local_params = dict(term.params)
         mjlab_params = dict(mjlab_term.params)
@@ -255,6 +257,7 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         "std_type": "scalar",
     }
     assert agent.algorithm.entropy_coef == 0.01
+    assert agent.algorithm.class_name == "PPO"
     assert agent.algorithm.num_mini_batches == 4
     assert agent.algorithm.learning_rate == 1.0e-3
     assert agent.algorithm.lam == 0.95

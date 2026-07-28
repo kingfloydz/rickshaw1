@@ -1,2 +1,1 @@
 """Manager-based task implementations."""
-

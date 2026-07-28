@@ -1,8 +1,8 @@
-"""Versioned runtime configuration contracts for the G1 rickshaw task.
+"""Validated feasibility configuration for the G1 rickshaw task.
 
 The feasibility file is a generated artifact, not a place for fallback
 values. Loading it therefore performs complete validation
-before returning an object that can be used by training or deployment code.
+before returning an object that can be used by training or export code.
 
 Canonical ``feasibility_envelope.yaml`` layout::
 
@@ -36,7 +36,7 @@ FEASIBILITY_SCHEMA_VERSION = 6
 
 # This is the source-URDF order after applying the guide's one-time grouping
 # rule: lower_names + waist_names + arm_names.  Runtime regex ordering is never
-# used as a policy/deployment contract.
+# used as a fixed policy interface.
 G1_JOINT_ORDER = (
     "left_hip_pitch_joint",
     "left_hip_roll_joint",
@@ -117,24 +117,24 @@ _NOMINAL_CALIBRATION_BY_RANGE = {
 }
 
 
-class ConfigurationContractError(ValueError):
-    """Raised when a generated configuration violates the runtime contract."""
+class FeasibilityConfigError(ValueError):
+    """Raised when a generated configuration violates the feasibility schema."""
 
 
 def _finite_float(value: Any, path: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigurationContractError(f"{path} must be a number, got {type(value).__name__}")
+        raise FeasibilityConfigError(f"{path} must be a number, got {type(value).__name__}")
     result = float(value)
     if not math.isfinite(result):
-        raise ConfigurationContractError(f"{path} must be finite, got {value!r}")
+        raise FeasibilityConfigError(f"{path} must be finite, got {value!r}")
     return result
 
 
 def _expect_mapping(value: Any, path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise ConfigurationContractError(f"{path} must be a mapping")
+        raise FeasibilityConfigError(f"{path} must be a mapping")
     if not all(isinstance(key, str) and key for key in value):
-        raise ConfigurationContractError(f"{path} keys must be non-empty strings")
+        raise FeasibilityConfigError(f"{path} keys must be non-empty strings")
     return value
 
 
@@ -148,22 +148,22 @@ def _expect_exact_keys(mapping: Mapping[str, Any], expected: set[str], path: str
             details.append(f"missing={missing}")
         if extra:
             details.append(f"unknown={extra}")
-        raise ConfigurationContractError(f"invalid {path} fields: " + ", ".join(details))
+        raise FeasibilityConfigError(f"invalid {path} fields: " + ", ".join(details))
 
 
 def validate_joint_order(joint_order: Iterable[str], *, path: str = "joint_order") -> tuple[str, ...]:
     if isinstance(joint_order, (str, bytes)):
-        raise ConfigurationContractError(f"{path} must be a sequence of joint names")
+        raise FeasibilityConfigError(f"{path} must be a sequence of joint names")
     try:
         names = tuple(joint_order)
     except TypeError as exc:
-        raise ConfigurationContractError(f"{path} must be iterable") from exc
+        raise FeasibilityConfigError(f"{path} must be iterable") from exc
     if not all(isinstance(name, str) and name for name in names):
-        raise ConfigurationContractError(f"{path} must contain non-empty strings")
+        raise FeasibilityConfigError(f"{path} must contain non-empty strings")
     if len(names) != 29:
-        raise ConfigurationContractError(f"{path} must contain exactly 29 joints, got {len(names)}")
+        raise FeasibilityConfigError(f"{path} must contain exactly 29 joints, got {len(names)}")
     if len(set(names)) != len(names):
-        raise ConfigurationContractError(f"{path} contains duplicate joint names")
+        raise FeasibilityConfigError(f"{path} contains duplicate joint names")
     if names != G1_JOINT_ORDER:
         mismatch = next(
             (
@@ -175,7 +175,7 @@ def validate_joint_order(joint_order: Iterable[str], *, path: str = "joint_order
             if expected != actual
         )
         index, expected, actual = mismatch
-        raise ConfigurationContractError(f"{path}[{index}] is {actual!r}; fixed checkpoint order requires {expected!r}")
+        raise FeasibilityConfigError(f"{path}[{index}] is {actual!r}; fixed policy joint order requires {expected!r}")
     return names
 
 
@@ -190,7 +190,7 @@ class NumericRange:
         minimum = _finite_float(self.minimum, "range.min")
         maximum = _finite_float(self.maximum, "range.max")
         if minimum > maximum:
-            raise ConfigurationContractError(f"range min {minimum} exceeds max {maximum}")
+            raise FeasibilityConfigError(f"range min {minimum} exceeds max {maximum}")
         object.__setattr__(self, "minimum", minimum)
         object.__setattr__(self, "maximum", maximum)
 
@@ -204,7 +204,7 @@ class NumericRange:
             return cls(interval["min"], interval["max"])
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
             if len(value) != 2:
-                raise ConfigurationContractError(f"{path} interval sequence must have length 2")
+                raise FeasibilityConfigError(f"{path} interval sequence must have length 2")
             return cls(value[0], value[1])
         return cls(value, value)
 
@@ -223,7 +223,7 @@ class NumericRange:
     ) -> None:
         candidate = value if isinstance(value, NumericRange) else NumericRange.from_value(value, path=name)
         if not self.contains(candidate, tolerance=tolerance):
-            raise ConfigurationContractError(
+            raise FeasibilityConfigError(
                 f"{name}=[{candidate.minimum}, {candidate.maximum}] is outside feasibility "
                 f"envelope [{self.minimum}, {self.maximum}]"
             )
@@ -246,15 +246,13 @@ def _flatten_interval_mapping(
     result: dict[str, NumericRange] = {}
     for key, child in value.items():
         if not isinstance(key, str) or not key or key.startswith(".") or key.endswith("."):
-            raise ConfigurationContractError("range keys must be non-empty dotted identifiers")
+            raise FeasibilityConfigError("range keys must be non-empty dotted identifiers")
         name = f"{path}.{key}" if path else key
         if _looks_like_interval(child):
             result[name] = NumericRange.from_value(child, path=f"ranges.{name}")
         elif not isinstance(child, Mapping):
             if not allow_scalars:
-                raise ConfigurationContractError(
-                    f"ranges.{name} must be an explicit {{min, max}} or [min, max] interval"
-                )
+                raise FeasibilityConfigError(f"ranges.{name} must be an explicit {{min, max}} or [min, max] interval")
             result[name] = NumericRange.from_value(child, path=f"ranges.{name}")
         else:
             result.update(_flatten_interval_mapping(child, path=name, allow_scalars=allow_scalars))
@@ -265,7 +263,7 @@ def _flatten_values(value: Mapping[str, Any], *, path: str = "") -> dict[str, An
     result: dict[str, Any] = {}
     for key, child in value.items():
         if not isinstance(key, str) or not key or key.startswith(".") or key.endswith("."):
-            raise ConfigurationContractError("calibration keys must be non-empty dotted identifiers")
+            raise FeasibilityConfigError("calibration keys must be non-empty dotted identifiers")
         name = f"{path}.{key}" if path else key
         if isinstance(child, Mapping):
             result.update(_flatten_values(child, path=name))
@@ -281,7 +279,7 @@ def _validate_calibration(calibration: Mapping[str, Any]) -> Mapping[str, Any]:
     for name in REQUIRED_CALIBRATION_FIELDS:
         scalar = _finite_float(flattened[name], f"calibration.{name}")
         if name in _CALIBRATION_STRICTLY_POSITIVE and scalar <= 0.0:
-            raise ConfigurationContractError(f"calibration.{name} must be positive")
+            raise FeasibilityConfigError(f"calibration.{name} must be positive")
         validated[name] = scalar
     return MappingProxyType(validated)
 
@@ -302,7 +300,7 @@ class FeasibilityEnvelope:
             or not isinstance(self.schema_version, int)
             or self.schema_version != FEASIBILITY_SCHEMA_VERSION
         ):
-            raise ConfigurationContractError(
+            raise FeasibilityConfigError(
                 f"unsupported feasibility schema_version={self.schema_version!r}; expected {FEASIBILITY_SCHEMA_VERSION}"
             )
         joint_order = validate_joint_order(self.joint_order)
@@ -312,7 +310,7 @@ class FeasibilityEnvelope:
         _expect_exact_keys(parsed_ranges, set(REQUIRED_FEASIBILITY_RANGES), "ranges")
         for name in _NONNEGATIVE_RANGE_NAMES:
             if parsed_ranges[name].minimum < 0.0:
-                raise ConfigurationContractError(f"ranges.{name}.min must be non-negative")
+                raise FeasibilityConfigError(f"ranges.{name}.min must be non-negative")
         # The limiter is undefined at zero and all force/drive magnitudes must
         # be strictly usable, not merely non-negative placeholders.
         for name in (
@@ -321,13 +319,13 @@ class FeasibilityEnvelope:
             "wheel.right_damping",
         ):
             if parsed_ranges[name].minimum <= 0.0:
-                raise ConfigurationContractError(f"ranges.{name}.min must be positive")
+                raise FeasibilityConfigError(f"ranges.{name}.min must be positive")
         calibration = _validate_calibration(self.calibration)
         for range_name, calibration_name in _NOMINAL_CALIBRATION_BY_RANGE.items():
             nominal = float(calibration[calibration_name])
             interval = parsed_ranges[range_name]
             if not interval.minimum <= nominal <= interval.maximum:
-                raise ConfigurationContractError(
+                raise FeasibilityConfigError(
                     f"calibration.{calibration_name}={nominal} lies outside ranges.{range_name}"
                 )
         object.__setattr__(self, "joint_order", joint_order)
@@ -337,9 +335,7 @@ class FeasibilityEnvelope:
             object.__setattr__(self, "source_path", Path(self.source_path))
 
     @classmethod
-    def from_mapping(
-        cls, mapping: Mapping[str, Any], *, source_path: str | Path | None = None
-    ) -> FeasibilityEnvelope:
+    def from_mapping(cls, mapping: Mapping[str, Any], *, source_path: str | Path | None = None) -> FeasibilityEnvelope:
         data = _expect_mapping(mapping, "feasibility envelope")
         _expect_exact_keys(
             data,
@@ -376,7 +372,7 @@ class FeasibilityEnvelope:
         try:
             allowed = self.ranges[name]
         except KeyError as exc:
-            raise ConfigurationContractError(f"unknown feasibility range {name!r}") from exc
+            raise FeasibilityConfigError(f"unknown feasibility range {name!r}") from exc
         allowed.assert_contains(
             NumericRange.from_value(value, path=f"training_ranges.{name}"),
             name=f"training_ranges.{name}",
@@ -399,7 +395,7 @@ class FeasibilityEnvelope:
                 details.append(f"missing={missing}")
             if unknown:
                 details.append(f"unknown={unknown}")
-            raise ConfigurationContractError("invalid training range fields: " + ", ".join(details))
+            raise FeasibilityConfigError("invalid training range fields: " + ", ".join(details))
         for name, candidate in parsed.items():
             self.ranges[name].assert_contains(candidate, name=f"training_ranges.{name}", tolerance=tolerance)
 
@@ -413,7 +409,7 @@ def _load_yaml_mapping(path: str | Path) -> Mapping[str, Any]:
         for key_node, value_node in node.value:
             key = loader.construct_object(key_node, deep=deep)
             if key in result:
-                raise ConfigurationContractError(f"duplicate YAML key {key!r} in {path}")
+                raise FeasibilityConfigError(f"duplicate YAML key {key!r} in {path}")
             result[key] = loader.construct_object(value_node, deep=deep)
         return result
 
@@ -423,9 +419,9 @@ def _load_yaml_mapping(path: str | Path) -> Mapping[str, Any]:
         with file_path.open("r", encoding="utf-8") as stream:
             value = yaml.load(stream, Loader=UniqueKeySafeLoader)
     except yaml.YAMLError as exc:
-        raise ConfigurationContractError(f"invalid YAML in {file_path}: {exc}") from exc
+        raise FeasibilityConfigError(f"invalid YAML in {file_path}: {exc}") from exc
     if value is None:
-        raise ConfigurationContractError(f"configuration file is empty: {file_path}")
+        raise FeasibilityConfigError(f"configuration file is empty: {file_path}")
     return _expect_mapping(value, str(file_path))
 
 
@@ -437,7 +433,7 @@ def load_feasibility_envelope(path: str | Path) -> FeasibilityEnvelope:
 
 
 __all__ = [
-    "ConfigurationContractError",
+    "FeasibilityConfigError",
     "FEASIBILITY_SCHEMA_VERSION",
     "FeasibilityEnvelope",
     "G1_JOINT_ORDER",

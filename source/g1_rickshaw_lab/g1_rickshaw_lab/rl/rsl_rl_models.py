@@ -6,7 +6,6 @@ import copy
 from typing import Any
 
 import torch
-from rsl_rl.algorithms import PPO
 from torch import nn
 from torch.distributions import Independent, Normal
 
@@ -30,7 +29,7 @@ from .context_encoder import ContextEncoder
 from .teacher_model import TeacherEncoder
 
 
-class _RslModelContract(nn.Module):
+class _RslModelAdapter(nn.Module):
     """Non-recurrent model methods required by RSL-RL."""
 
     is_recurrent = False
@@ -49,7 +48,7 @@ class _RslModelContract(nn.Module):
         del obs
 
 
-class RslRickshawActorModel(_RslModelContract):
+class RslRickshawActorModel(_RslModelAdapter):
     """Teacher or student actor selected from the configured observation set."""
 
     def __init__(
@@ -61,7 +60,11 @@ class RslRickshawActorModel(_RslModelContract):
         hidden_dims=(512, 256, 128),
         activation: str = "elu",
         obs_normalization: bool = False,
+        cnn_cfg: dict[str, Any] | None = None,
         distribution_cfg: dict | None = None,
+        rnn_type: str | None = None,
+        rnn_hidden_dim: int = 256,
+        rnn_num_layers: int = 1,
         stochastic: Any = None,
         init_noise_std: Any = None,
         noise_std_type: str = "scalar",
@@ -70,6 +73,7 @@ class RslRickshawActorModel(_RslModelContract):
         history_length: int = HISTORY_LENGTH,
     ) -> None:
         super().__init__()
+        del cnn_cfg, rnn_type, rnn_hidden_dim, rnn_num_layers
         del stochastic, init_noise_std, noise_std_type, state_dependent_std
         if output_dim != ACTION_DIM:
             raise ValueError(f"rickshaw action dimension is fixed to {ACTION_DIM}, got {output_dim}")
@@ -81,13 +85,8 @@ class RslRickshawActorModel(_RslModelContract):
         self.history_length = validate_history_length(history_length)
         self.obs_normalization = obs_normalization
         self.obs_groups = list(obs_groups[obs_set])
-        if (
-            "policy" not in self.obs_groups
-            or obs["policy"].shape[-1] != ACTOR_OBSERVATION_DIM
-        ):
-            raise ValueError(
-                f"actor observation set must contain policy[N,{ACTOR_OBSERVATION_DIM}]"
-            )
+        if "policy" not in self.obs_groups or obs["policy"].shape[-1] != ACTOR_OBSERVATION_DIM:
+            raise ValueError(f"actor observation set must contain policy[N,{ACTOR_OBSERVATION_DIM}]")
         groups = set(self.obs_groups)
         teacher_groups = {
             "policy",
@@ -100,17 +99,12 @@ class RslRickshawActorModel(_RslModelContract):
             self.stage = "teacher"
         else:
             if groups != {"policy", "history"}:
-                raise ValueError(
-                    "actor groups must match the fixed teacher or student interface"
-                )
+                raise ValueError("actor groups must match the fixed teacher or student interface")
             if tuple(obs["history"].shape[1:]) != (
                 self.history_length,
                 ACTOR_OBSERVATION_DIM,
             ):
-                raise ValueError(
-                    "history must have shape "
-                    f"[N,{self.history_length},{ACTOR_OBSERVATION_DIM}]"
-                )
+                raise ValueError(f"history must have shape [N,{self.history_length},{ACTOR_OBSERVATION_DIM}]")
             self.encoder = ContextEncoder(self.latent_dim, self.history_length)
             self.stage = "student"
         if obs_normalization:
@@ -195,9 +189,7 @@ class RslRickshawActorModel(_RslModelContract):
     ) -> torch.Tensor:
         old_mean, old_std = old_params
         new_mean, new_std = new_params
-        divergence = torch.distributions.kl_divergence(
-            Normal(old_mean, old_std), Normal(new_mean, new_std)
-        )
+        divergence = torch.distributions.kl_divergence(Normal(old_mean, old_std), Normal(new_mean, new_std))
         return divergence.sum(dim=-1)
 
     def as_jit(self) -> nn.Module:
@@ -210,7 +202,8 @@ class RslRickshawActorModel(_RslModelContract):
             raise RuntimeError("only the student actor is deployable")
         return _StudentOnnxExport(self, verbose)
 
-class RslRickshawCriticModel(_RslModelContract):
+
+class RslRickshawCriticModel(_RslModelAdapter):
     """Independent value trunk using only current and raw privileged state."""
 
     def __init__(
@@ -247,9 +240,7 @@ class RslRickshawCriticModel(_RslModelContract):
         if set(self.obs_groups) != {"critic_policy", "critic"}:
             raise ValueError("critic observation set requires only critic_policy and critic")
         if obs["critic"].shape[-1] != CRITIC_PRIVILEGE_DIM:
-            raise ValueError(
-                f"critic privilege must have width {CRITIC_PRIVILEGE_DIM}"
-            )
+            raise ValueError(f"critic privilege must have width {CRITIC_PRIVILEGE_DIM}")
         self.value = PrivilegedCritic()
 
     def update_normalization(self, obs) -> None:
@@ -267,61 +258,6 @@ class RslRickshawCriticModel(_RslModelContract):
         return self.value(
             self.policy_obs_normalizer(obs["critic_policy"]),
             self.privileged_obs_normalizer(obs["critic"]),
-        )
-
-
-class _RelativeLearningRateAdam(torch.optim.Adam):
-    """Apply the encoder learning-rate ratio after PPO updates its base rate."""
-
-    def step(self, closure=None):
-        base_rates = [group["lr"] for group in self.param_groups]
-        try:
-            for group, base_rate in zip(self.param_groups, base_rates, strict=True):
-                group["lr"] = base_rate * group["lr_multiplier"]
-            return super().step(closure)
-        finally:
-            for group, base_rate in zip(self.param_groups, base_rates, strict=True):
-                group["lr"] = base_rate
-
-
-class RickshawPPO(PPO):
-    """Official PPO with the existing context-encoder parameter group."""
-
-    def __init__(
-        self,
-        actor,
-        critic,
-        storage,
-        context_learning_rate: float | None = None,
-        learning_rate: float = 1.0e-3,
-        optimizer: str = "adam",
-        **kwargs,
-    ) -> None:
-        if optimizer.lower() != "adam":
-            raise ValueError("RickshawPPO requires Adam")
-        super().__init__(
-            actor,
-            critic,
-            storage,
-            learning_rate=learning_rate,
-            optimizer=optimizer,
-            **kwargs,
-        )
-        context_rate = learning_rate if context_learning_rate is None else context_learning_rate
-        context_parameters = list(actor.encoder.parameters())
-        context_ids = {id(parameter) for parameter in context_parameters}
-        actor_head = [parameter for parameter in actor.parameters() if id(parameter) not in context_ids]
-        self.optimizer = _RelativeLearningRateAdam(
-            [
-                {
-                    "params": context_parameters,
-                    "lr": learning_rate,
-                    "lr_multiplier": context_rate / learning_rate,
-                },
-                {"params": actor_head, "lr": learning_rate, "lr_multiplier": 1.0},
-                {"params": critic.parameters(), "lr": learning_rate, "lr_multiplier": 1.0},
-            ],
-            lr=learning_rate,
         )
 
 
@@ -378,4 +314,4 @@ class _DeploymentContextEncoder(nn.Module):
         return self.context(features)
 
 
-__all__ = ["RickshawPPO", "RslRickshawActorModel", "RslRickshawCriticModel"]
+__all__ = ["RslRickshawActorModel", "RslRickshawCriticModel"]

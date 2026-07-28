@@ -139,9 +139,9 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     env.static_cart_pose = torch.as_tensor(templates.cart_root_pose, device=env.device, dtype=torch.float32)[
         terrain_types
     ]
-    env.static_joint_position = torch.as_tensor(
-        templates.robot_joint_position, device=env.device, dtype=torch.float32
-    )[terrain_types]
+    env.static_joint_position = torch.as_tensor(templates.robot_joint_position, device=env.device, dtype=torch.float32)[
+        terrain_types
+    ]
     robot.data.default_joint_pos[:, env.policy_joint_ids] = env.static_joint_position
     env.static_q_ref = env.static_joint_position.clone()
     env.connection_equality_ids = torch.as_tensor(
@@ -152,9 +152,7 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     env.static_relative_position_b = relative_position_in_yaw_frame(
         env.static_robot_pose[:, :3], env.static_cart_pose[:, :3], env.static_cart_pose[:, 3:7]
     )
-    env.static_relative_yaw = relative_yaw_from_quaternions(
-        env.static_robot_pose[:, 3:7], env.static_cart_pose[:, 3:7]
-    )
+    env.static_relative_yaw = relative_yaw_from_quaternions(env.static_robot_pose[:, 3:7], env.static_cart_pose[:, 3:7])
     env.static_rickshaw_pitch = rickshaw_pitch_from_quaternion(
         env.static_cart_pose[:, 3:7], env.path_tangent_w, env.path_normal_w
     )
@@ -405,9 +403,7 @@ def ensure_mjlab_physical_state(env: Any) -> None:
         - torch.sum(env.last_rolling_force_w, dim=1)
     )
     valid_force = (step > 0) & torch.all(torch.isfinite(force_on_cart), dim=-1)
-    force_on_cart = torch.where(
-        valid_force[:, None], force_on_cart, torch.zeros_like(force_on_cart)
-    )
+    force_on_cart = torch.where(valid_force[:, None], force_on_cart, torch.zeros_like(force_on_cart))
     env.rickshaw_state.hand_force_w[:] = -force_on_cart
     env.cart_previous_com_velocity_w[:] = cart_velocity
 

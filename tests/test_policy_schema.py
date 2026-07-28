@@ -1,4 +1,4 @@
-"""Cross-layer checks for the single policy ABI contract."""
+"""Cross-layer checks for the single policy ABI."""
 
 from __future__ import annotations
 

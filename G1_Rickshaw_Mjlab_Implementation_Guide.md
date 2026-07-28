@@ -6,9 +6,8 @@ and RSL-RL 5.4.0. The registered tasks are:
 - `Mjlab-G1-Rickshaw-Slopes-Teacher`
 - `Mjlab-G1-Rickshaw-Slopes-Distillation`
 - `Mjlab-G1-Rickshaw-Slopes-Student`
-- the corresponding `-H91` history variants
 
-## Physical Contract
+## Physical Specification
 
 The rickshaw wheel diameter is 0.6 m and each wheel center remains 0.3 m along
 the ground normal. The rickshaw center of mass is shifted rearward by
@@ -61,7 +60,8 @@ python scripts/validate_static_initialization.py
 python scripts/train_teacher.py --latent-dim 8
 python scripts/train_context.py --teacher <teacher.pt> --latent-dim 8 --max-iterations 6000
 python scripts/finetune_student.py --teacher <teacher.pt> --context <distillation.pt> --latent-dim 8
-python scripts/play_student.py --checkpoint <student.pt> --latent-dim 8
+python scripts/play.py Mjlab-G1-Rickshaw-Slopes-Student --checkpoint-file <student.pt>
+python scripts/export_student.py --checkpoint <student.pt> --latent-dim 8
 ```
 
 All stages use the checkpoint dictionaries produced by Mjlab and RSL-RL.

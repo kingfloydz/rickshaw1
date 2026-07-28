@@ -24,9 +24,7 @@ DILATIONS: Final[tuple[int, ...]] = (1, 2, 4, 8)
 HISTORY_KERNEL_SIZES: Final[dict[int, int]] = {61: 5, 91: 7}
 
 
-def temporal_receptive_field(
-    kernel_size: int = KERNEL_SIZE, dilations: tuple[int, ...] = DILATIONS
-) -> int:
+def temporal_receptive_field(kernel_size: int = KERNEL_SIZE, dilations: tuple[int, ...] = DILATIONS) -> int:
     if kernel_size < 1 or not dilations or any(value < 1 for value in dilations):
         raise ValueError("kernel size and dilations must be positive")
     return 1 + (kernel_size - 1) * sum(dilations)
@@ -65,10 +63,7 @@ def validate_history(
 ) -> None:
     history_length = validate_history_length(history_length)
     if history.ndim != 3 or history.shape[1:] != (history_length, feature_dim):
-        raise ValueError(
-            f"{name} must have shape [N, {history_length}, {feature_dim}], "
-            f"got {tuple(history.shape)}"
-        )
+        raise ValueError(f"{name} must have shape [N, {history_length}, {feature_dim}], got {tuple(history.shape)}")
     if not history.is_floating_point():
         raise TypeError(f"{name} must be floating point")
 
@@ -94,12 +89,7 @@ class ContextEncoder(nn.Module):
             DILATIONS,
         )
         self.input = nn.Conv1d(OBSERVATION_DIM, FEATURE_DIM, kernel_size=1)
-        self.blocks = nn.Sequential(
-            *(
-                CausalBlock(FEATURE_DIM, dilation, self.kernel_size)
-                for dilation in DILATIONS
-            )
-        )
+        self.blocks = nn.Sequential(*(CausalBlock(FEATURE_DIM, dilation, self.kernel_size) for dilation in DILATIONS))
         self.context = nn.Linear(FEATURE_DIM, self.latent_dim)
 
     def extract_feature(self, history: torch.Tensor) -> torch.Tensor:

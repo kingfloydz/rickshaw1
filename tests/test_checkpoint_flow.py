@@ -9,7 +9,9 @@ import pytest
 import torch
 from torch import nn
 
-from g1_rickshaw_lab.checkpoint_handoff import initialize_student_runner
+from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.agents.runners import (
+    initialize_student_models,
+)
 
 
 def _runner() -> SimpleNamespace:
@@ -50,7 +52,7 @@ def test_fresh_s2_loads_only_upstream_actor_and_critic_states(
     )
     runner = _runner()
 
-    initialize_student_runner(runner, teacher=teacher, context=context)
+    initialize_student_models(runner.alg, str(teacher), str(context))
 
     for actual, expected in zip(
         runner.alg._raw_actor.parameters(), source_actor.parameters(), strict=True
@@ -69,7 +71,7 @@ def test_fresh_s2_uses_strict_state_loading(tmp_path: Path) -> None:
     torch.save({"student_state_dict": nn.Linear(5, 2).state_dict()}, context)
 
     with pytest.raises(RuntimeError):
-        initialize_student_runner(_runner(), teacher=teacher, context=context)
+        initialize_student_models(_runner().alg, str(teacher), str(context))
 
 
 @pytest.mark.parametrize(
@@ -91,4 +93,4 @@ def test_fresh_s2_requires_standard_checkpoint_keys(
     torch.save(context_payload, context)
 
     with pytest.raises(KeyError, match=message):
-        initialize_student_runner(_runner(), teacher=teacher, context=context)
+        initialize_student_models(_runner().alg, str(teacher), str(context))

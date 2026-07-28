@@ -51,6 +51,7 @@ def test_action_scale_matches_unitree_motor_defaults() -> None:
         torch.tensor(expected, dtype=torch.float64),
     )
 
+
 def test_rolling_resistance_opposes_each_wheel() -> None:
     dtype = torch.float64
     tangent = torch.tensor([[1.0, 0.0, 0.0]] * 2, dtype=dtype)

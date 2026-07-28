@@ -45,16 +45,13 @@ def _parameters_for_joint(name: str) -> tuple[float, float, float, float]:
     )
 
 
-G1_MOTOR_PARAMETERS_BY_JOINT = MappingProxyType(
-    {name: _parameters_for_joint(name) for name in G1_JOINT_ORDER}
-)
+G1_MOTOR_PARAMETERS_BY_JOINT = MappingProxyType({name: _parameters_for_joint(name) for name in G1_JOINT_ORDER})
 G1_JOINT_STIFFNESS = tuple(value[0] for value in G1_MOTOR_PARAMETERS_BY_JOINT.values())
 G1_JOINT_DAMPING = tuple(value[1] for value in G1_MOTOR_PARAMETERS_BY_JOINT.values())
 G1_JOINT_EFFORT_LIMITS = tuple(value[2] for value in G1_MOTOR_PARAMETERS_BY_JOINT.values())
 G1_JOINT_ARMATURE = tuple(value[3] for value in G1_MOTOR_PARAMETERS_BY_JOINT.values())
 G1_ACTION_SCALE = tuple(
-    0.25 * effort_limit / stiffness
-    for stiffness, _, effort_limit, _ in G1_MOTOR_PARAMETERS_BY_JOINT.values()
+    0.25 * effort_limit / stiffness for stiffness, _, effort_limit, _ in G1_MOTOR_PARAMETERS_BY_JOINT.values()
 )
 
 

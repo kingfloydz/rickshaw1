@@ -63,11 +63,7 @@ TEACHER_DYNAMIC_FEATURE_NAMES = (
     "cart.pitch",
     "wheel.left_normal_force",
     "wheel.right_normal_force",
-    *(
-        f"hand.{side}.force.{axis}"
-        for side in ("left", "right")
-        for axis in ("s", "l", "n")
-    ),
+    *(f"hand.{side}.force.{axis}" for side in ("left", "right") for axis in ("s", "l", "n")),
 )
 if len(TEACHER_STATIC_FEATURE_NAMES) != TEACHER_STATIC_DIM:
     raise RuntimeError("teacher static feature schema has the wrong dimension")

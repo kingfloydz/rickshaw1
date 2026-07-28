@@ -1,114 +1,63 @@
 #!/usr/bin/env python3
-"""Fine-tune the distilled student with Mjlab's standard PPO runner."""
+"""Fine-tune or resume the distilled student through Mjlab's launcher."""
 
 from __future__ import annotations
 
-import argparse
-from functools import partial
-import os
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
-from _mjlab_wrappers import (
-    add_project_source_to_path,
-    require_existing_file,
-    run_mjlab_rsl_rl,
-)
+import tyro
 
-add_project_source_to_path()
-
-from g1_rickshaw_lab.policy_schema import (  # noqa: E402
-    DEFAULT_CONTEXT_DIM,
-    HISTORY_LENGTH,
-    SUPPORTED_CONTEXT_DIMS,
-    SUPPORTED_HISTORY_LENGTHS,
-)
-from g1_rickshaw_lab.checkpoint_handoff import initialize_student_runner  # noqa: E402
-from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.agents.rsl_rl_cfg import (  # noqa: E402
-    DEFAULT_MAX_ITERATIONS,
-    DEFAULT_ROLLOUT_STEPS,
-    DEFAULT_SAVE_INTERVAL,
-)
-
-DEFAULT_TASK = "Mjlab-G1-Rickshaw-Slopes-Student"
+from _stage_training import prepare_training
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--task", default=DEFAULT_TASK)
-    parser.add_argument("--teacher", default=None)
-    parser.add_argument("--context", default=None)
-    parser.add_argument("--resume-checkpoint", default=None)
-    parser.add_argument("--experiment-dir", default="logs/rsl_rl/g1_rickshaw_student")
-    parser.add_argument(
-        "--latent-dim",
-        type=int,
-        choices=SUPPORTED_CONTEXT_DIMS,
-        default=DEFAULT_CONTEXT_DIM,
+@dataclass
+class StudentArgs:
+    task: str = "Mjlab-G1-Rickshaw-Slopes-Student"
+    teacher: Path | None = None
+    context: Path | None = None
+    resume_checkpoint: Path | None = None
+    experiment_dir: Path = Path("logs/rsl_rl/g1_rickshaw_student")
+    latent_dim: int = 16
+    history_length: int = 61
+    rollout_steps: int = 24
+    num_envs: int = 8192
+    max_iterations: int = 30_000
+    seed: int = 42
+    gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
+
+
+def main() -> None:
+    from mjlab.scripts.train import launch_training
+
+    args = tyro.cli(StudentArgs)
+    cfg = prepare_training(
+        task=args.task,
+        experiment_dir=args.experiment_dir,
+        latent_dim=args.latent_dim,
+        history_length=args.history_length,
+        rollout_steps=args.rollout_steps,
+        num_envs=args.num_envs,
+        max_iterations=args.max_iterations,
+        seed=args.seed,
+        gpu_ids=args.gpu_ids,
     )
-    parser.add_argument(
-        "--history-length",
-        type=int,
-        choices=SUPPORTED_HISTORY_LENGTHS,
-        default=HISTORY_LENGTH,
-    )
-    parser.add_argument("--rollout-steps", type=int, default=DEFAULT_ROLLOUT_STEPS)
-    parser.add_argument(
-        "--num-envs", "--num_envs", dest="num_envs", type=int, default=8192
-    )
-    parser.add_argument("--max-iterations", type=int, default=DEFAULT_MAX_ITERATIONS)
-    parser.add_argument("--seed", type=int, default=42)
-    args, remaining = parser.parse_known_args()
-
-    initialize_runner = None
-    resume_arguments: list[str] = []
-    experiment_name = os.fspath(Path(args.experiment_dir).resolve())
     if args.resume_checkpoint is not None:
-        resume = require_existing_file(
-            args.resume_checkpoint, "student resume checkpoint"
-        ).resolve()
-        if args.experiment_dir == "logs/rsl_rl/g1_rickshaw_student":
-            experiment_name = os.fspath(resume.parent.parent)
-        resume_arguments = ["--resume", "--checkpoint", os.fspath(resume)]
+        if args.teacher is not None or args.context is not None:
+            raise ValueError(
+                "resume_checkpoint cannot be combined with teacher or context"
+            )
+        cfg.agent.checkpoint_file = str(args.resume_checkpoint.resolve(strict=True))
     else:
         if args.teacher is None or args.context is None:
-            parser.error("fresh S2 training requires --teacher and --context")
-        teacher = require_existing_file(args.teacher, "teacher checkpoint").resolve()
-        context = require_existing_file(
-            args.context, "distillation checkpoint"
-        ).resolve()
-        initialize_runner = partial(
-            initialize_student_runner,
-            teacher=teacher,
-            context=context,
-        )
-
-    run_mjlab_rsl_rl(
-        "train",
-        [
-            "--task",
-            args.task,
-            "--num_envs",
-            str(args.num_envs),
-            "--max_iterations",
-            str(args.max_iterations),
-            "--seed",
-            str(args.seed),
-            "--logger",
-            "tensorboard",
-            "--experiment_name",
-            experiment_name,
-            *resume_arguments,
-            *remaining,
-            f"agent.num_steps_per_env={args.rollout_steps}",
-            f"agent.save_interval={DEFAULT_SAVE_INTERVAL}",
-            f"agent.actor.latent_dim={args.latent_dim}",
-            f"agent.actor.history_length={args.history_length}",
-            f"env.history_length={args.history_length}",
-        ],
-        initialize_runner=initialize_runner,
-    )
-    return 0
+            raise ValueError(
+                "fresh S2 training requires teacher and context checkpoints"
+            )
+        cfg.agent.teacher_checkpoint = str(args.teacher.resolve(strict=True))
+        cfg.agent.context_checkpoint = str(args.context.resolve(strict=True))
+    launch_training(args.task, cfg)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

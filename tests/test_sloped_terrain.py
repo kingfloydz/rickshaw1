@@ -88,7 +88,9 @@ def test_terrain_collision_pose_updates_selected_mjwarp_worlds() -> None:
         geom_id=1,
     )
 
-    tangent, lateral, normal = terrain_frame(terrain_types[env_ids], dtype=torch.float64)
+    tangent, lateral, normal = terrain_frame(
+        terrain_types[env_ids], dtype=torch.float64
+    )
     torch.testing.assert_close(geom_xpos[env_ids, 1], env_origins[env_ids])
     torch.testing.assert_close(
         geom_xmat[env_ids, 1],

@@ -21,8 +21,8 @@ from g1_rickshaw_lab.static_equilibrium import (
     MujocoStaticEquilibrium,
     load_mujoco_static_equilibrium,
     save_mujoco_static_equilibrium,
-    solve_fixed_contact_statics,
 )
+from scripts._static_equilibrium_solver import solve_fixed_contact_statics
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.closed_chain import (
     build_assembled_spec,
     validate_assembled_model,
@@ -81,7 +81,9 @@ def test_g1_default_lower_body_matches_unitree_home_keyframe() -> None:
         "right_knee_joint": 0.3,
         "right_ankle_pitch_joint": -0.2,
     }
-    assert {name: G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS[name] for name in expected} == expected
+    assert {
+        name: G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS[name] for name in expected
+    } == expected
     assert all(
         position == 0.0
         for name, position in G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS.items()
@@ -196,7 +198,9 @@ def test_rickshaw_penalty_curriculum_is_disabled_for_student_training() -> None:
     assert student_cfg.curriculum == {}
 
 
-def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> None:
+def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> (
+    None
+):
     model = build_assembled_spec().compile()
     assert validate_assembled_model(model) == ()
     assert model.neq == 2
@@ -206,9 +210,15 @@ def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision()
     assert model.opt.ls_iterations == 20
     assert model.opt.ccd_iterations == 50
     np.testing.assert_allclose(model.eq_solref, np.tile((0.02, 1.0), (model.neq, 1)))
-    body_names = [model.body(model.geom_bodyid[index]).name for index in range(model.ngeom)]
-    robot_geoms = [index for index, name in enumerate(body_names) if name.startswith("robot/")]
-    rickshaw_geoms = [index for index, name in enumerate(body_names) if name.startswith("rickshaw/")]
+    body_names = [
+        model.body(model.geom_bodyid[index]).name for index in range(model.ngeom)
+    ]
+    robot_geoms = [
+        index for index, name in enumerate(body_names) if name.startswith("robot/")
+    ]
+    rickshaw_geoms = [
+        index for index, name in enumerate(body_names) if name.startswith("rickshaw/")
+    ]
     gripper_geoms = [index for index, name in enumerate(body_names) if "_dex1_" in name]
     visual_geoms = [index for index in robot_geoms if model.geom_group[index] != 0]
     assert gripper_geoms
@@ -236,14 +246,20 @@ def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision()
         np.tile((0.02, 1.0), (len(foot_collision_geoms), 1)),
     )
     physical_geoms = [
-        index for index in robot_geoms if index not in gripper_geoms and index not in visual_geoms
+        index
+        for index in robot_geoms
+        if index not in gripper_geoms and index not in visual_geoms
     ]
-    assert all(model.geom_contype[index] == ROBOT_COLLISION_BIT for index in physical_geoms)
+    assert all(
+        model.geom_contype[index] == ROBOT_COLLISION_BIT for index in physical_geoms
+    )
     assert all(
         model.geom_conaffinity[index] == (GROUND_COLLISION_BIT | ROBOT_COLLISION_BIT)
         for index in physical_geoms
     )
-    nonfoot_collision_geoms = [index for index in physical_geoms if index not in foot_collision_geoms]
+    nonfoot_collision_geoms = [
+        index for index in physical_geoms if index not in foot_collision_geoms
+    ]
     np.testing.assert_array_equal(
         model.geom_condim[nonfoot_collision_geoms],
         np.ones(len(nonfoot_collision_geoms), dtype=int),
@@ -295,7 +311,9 @@ def test_static_rest_pose_is_bound_to_the_compiled_model(tmp_path) -> None:
         load_mujoco_static_equilibrium(model, path)
 
     model = build_assembled_spec().compile()
-    path = save_mujoco_static_equilibrium(model, solution, tmp_path / "physics-rest.json")
+    path = save_mujoco_static_equilibrium(
+        model, solution, tmp_path / "physics-rest.json"
+    )
     model.opt.timestep = 0.002
     with pytest.raises(ValueError, match="model signature"):
         load_mujoco_static_equilibrium(model, path)

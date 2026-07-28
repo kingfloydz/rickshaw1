@@ -1,4 +1,4 @@
-"""Pure policy ABI constants shared by training, simulation, and deployment."""
+"""Pure policy ABI constants shared by training, simulation, and export."""
 
 from __future__ import annotations
 
