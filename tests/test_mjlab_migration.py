@@ -168,34 +168,57 @@ def test_training_enables_mjlab_nan_guard() -> None:
     assert training.scene.terrain.terrain_type == "plane"
 
 
-def test_rickshaw_penalty_curriculum_is_disabled_for_student_training() -> None:
+def test_stage_reward_curricula_match_training_iterations() -> None:
+    from importlib import import_module
+
     pytest.importorskip("mjlab")
     from mjlab.envs.mdp.curriculums import reward_curriculum
+    from mjlab.tasks.registry import load_env_cfg
 
-    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.env_cfg import (
-        g1_rickshaw_env_cfg,
+    from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity import (
+        DISTILLATION_TASK_ID,
+        STUDENT_TASK_ID,
+        TRAIN_TASK_ID,
     )
 
-    cfg = g1_rickshaw_env_cfg(play=False)
-    student_cfg = g1_rickshaw_env_cfg(
-        play=False,
-        rickshaw_penalty_weight_curriculum=False,
-    )
-    terms = {
-        name: term for name, term in cfg.curriculum.items() if name.endswith("_weight")
+    import_module("g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.registration")
+    dynamics = {
+        "rickshaw_forward_acceleration_l2",
+        "rickshaw_pitch_angular_acceleration_l2",
+        "rickshaw_yaw_angular_acceleration_l2",
+        "rickshaw_pitch_angular_velocity_l2",
+        "rickshaw_absolute_pitch_deviation_l2",
+        "peak_force",
     }
-    assert len(terms) == 9
-    for term in terms.values():
-        assert term.func is reward_curriculum
-        stages = term.params["stages"]
-        target = cfg.rewards[term.params["reward_name"]].weight
-        assert [stage["step"] for stage in stages] == [
-            index * 200 * 24 for index in range(7)
-        ]
-        assert [stage["weight"] for stage in stages] == pytest.approx(
-            [target * index / 6 for index in range(7)]
-        )
-    assert student_cfg.curriculum == {}
+    relative_pose = {
+        "rickshaw_g1_relative_position_l2",
+        "rickshaw_g1_relative_yaw_l2",
+    }
+
+    def assert_schedule(cfg, iterations: list[int]) -> None:
+        assert set(cfg.curriculum) == {
+            f"{name}_weight" for name in dynamics | relative_pose
+        }
+        for name in dynamics | relative_pose:
+            term = cfg.curriculum[f"{name}_weight"]
+            assert term.func is reward_curriculum
+            stages = term.params["stages"]
+            target = cfg.rewards[name].weight
+            multipliers = (
+                [0.20, 0.25, 0.50, 0.75, 1.00]
+                if name in relative_pose
+                else [0.10, 0.25, 0.50, 0.75, 1.00]
+            )
+            assert [stage["step"] for stage in stages] == [
+                iteration * 24 for iteration in iterations
+            ]
+            assert [stage["weight"] for stage in stages] == pytest.approx(
+                [target * multiplier for multiplier in multipliers]
+            )
+
+    assert_schedule(load_env_cfg(TRAIN_TASK_ID), [0, 300, 600, 900, 1200])
+    assert load_env_cfg(DISTILLATION_TASK_ID).curriculum == {}
+    assert_schedule(load_env_cfg(STUDENT_TASK_ID), [0, 100, 200, 300, 400])
 
 
 def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> (

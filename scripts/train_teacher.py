@@ -21,7 +21,7 @@ class TeacherArgs:
     history_length: int = 61
     rollout_steps: int = 24
     num_envs: int = 8192
-    max_iterations: int = 30_000
+    max_iterations: int = 6_000
     seed: int = 42
     gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
 

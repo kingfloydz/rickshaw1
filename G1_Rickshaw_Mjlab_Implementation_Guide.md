@@ -58,7 +58,7 @@ python scripts/validate_static_initialization.py
 
 ```bash
 python scripts/train_teacher.py --latent-dim 8
-python scripts/train_context.py --teacher <teacher.pt> --latent-dim 8 --max-iterations 6000
+python scripts/train_context.py --teacher <teacher.pt> --latent-dim 8
 python scripts/finetune_student.py --teacher <teacher.pt> --context <distillation.pt> --latent-dim 8
 python scripts/play.py Mjlab-G1-Rickshaw-Slopes-Student --checkpoint-file <student.pt>
 python scripts/export_student.py --checkpoint <student.pt> --latent-dim 8
@@ -72,6 +72,10 @@ student PPO training loads the distilled `student_state_dict` and the teacher
 timestamped run directories as `model_<iteration>.pt`. Non-default context and
 history dimensions must be passed explicitly to every stage.
 
+S0 reward-weight curriculum stages are 0/300/600/900/1200 iterations; S2 stages
+are 0/100/200/300/400. S1 has no reward curriculum. Wheel slip always uses its
+final weight.
+
 The Mjlab runtime owns 19 fixed slopes from -0.08 to 0.10 rad, startup-fixed nine-parameter domain
 randomization, online dynamics diagnostics, observations, rewards, and RSL-RL
 rollout state. The command observation contains only rickshaw `lin_vel_x` and
@@ -84,7 +88,7 @@ flat definitions, with upright weight 0.2, lower-body/waist-only pose tracking,
 foot swing target 0.08 m, and the two rickshaw hitch-height terms.
 
 The fixed rickshaw velocity command ranges, play episode/ranges, 24-step rollout, 50-iteration
-checkpoint interval, 30,000 iterations, actor/critic MLPs, empirical
+checkpoint interval, S0/S1/S2 iteration defaults of 6,000/6,000/800, actor/critic MLPs, empirical
 normalization, Gaussian standard deviation, and PPO hyperparameters match Mjlab
 1.5.3 G1 Flat. There is no secondary simulator runtime path or runtime reward
 override.

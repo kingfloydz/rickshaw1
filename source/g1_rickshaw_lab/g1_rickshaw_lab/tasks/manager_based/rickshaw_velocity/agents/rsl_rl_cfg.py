@@ -15,8 +15,9 @@ from mjlab.rl import (
 from g1_rickshaw_lab.policy_schema import DEFAULT_CONTEXT_DIM, HISTORY_LENGTH
 
 DEFAULT_ROLLOUT_STEPS = 24
-DEFAULT_MAX_ITERATIONS = 30_000
-DEFAULT_DISTILLATION_ITERATIONS = 2_000
+DEFAULT_TEACHER_ITERATIONS = 6_000
+DEFAULT_DISTILLATION_ITERATIONS = 6_000
+DEFAULT_STUDENT_ITERATIONS = 800
 DEFAULT_SAVE_INTERVAL = 50
 
 
@@ -111,7 +112,7 @@ def g1_rickshaw_teacher_ppo_runner_cfg(
     return TeacherRunnerCfg(
         seed=42,
         num_steps_per_env=rollout_steps,
-        max_iterations=DEFAULT_MAX_ITERATIONS,
+        max_iterations=DEFAULT_TEACHER_ITERATIONS,
         save_interval=DEFAULT_SAVE_INTERVAL,
         experiment_name="g1_rickshaw_teacher",
         run_name="s0",
@@ -136,7 +137,7 @@ def g1_rickshaw_student_ppo_runner_cfg(
     return StudentRunnerCfg(
         seed=42,
         num_steps_per_env=rollout_steps,
-        max_iterations=DEFAULT_MAX_ITERATIONS,
+        max_iterations=DEFAULT_STUDENT_ITERATIONS,
         save_interval=DEFAULT_SAVE_INTERVAL,
         experiment_name="g1_rickshaw_student",
         run_name="s2",
@@ -179,9 +180,10 @@ def g1_rickshaw_distillation_runner_cfg(
 
 __all__ = [
     "DEFAULT_DISTILLATION_ITERATIONS",
-    "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_ROLLOUT_STEPS",
     "DEFAULT_SAVE_INTERVAL",
+    "DEFAULT_STUDENT_ITERATIONS",
+    "DEFAULT_TEACHER_ITERATIONS",
     "DistillationRunnerCfg",
     "RickshawActorCfg",
     "StudentRunnerCfg",

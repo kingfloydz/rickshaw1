@@ -66,6 +66,8 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
         g1_rickshaw_env_cfg,
     )
     from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.agents.rsl_rl_cfg import (
+        g1_rickshaw_distillation_runner_cfg,
+        g1_rickshaw_student_ppo_runner_cfg,
         g1_rickshaw_teacher_ppo_runner_cfg,
     )
     from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity import mjlab_mdp
@@ -218,7 +220,16 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     assert cfg.viewer.distance == 3.0
     penalty_curriculum_names = {
         f"{name}_weight"
-        for name in (*rickshaw_penalties, *relative_pose_and_force_penalties)
+        for name in (
+            "rickshaw_forward_acceleration_l2",
+            "rickshaw_pitch_angular_acceleration_l2",
+            "rickshaw_yaw_angular_acceleration_l2",
+            "rickshaw_pitch_angular_velocity_l2",
+            "rickshaw_absolute_pitch_deviation_l2",
+            "peak_force",
+            "rickshaw_g1_relative_position_l2",
+            "rickshaw_g1_relative_yaw_l2",
+        )
     }
     assert set(cfg.curriculum) == penalty_curriculum_names
     assert cfg.commands["twist"].resampling_time_range == (3.0, 8.0)
@@ -236,15 +247,15 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
 
     student_training_cfg = g1_rickshaw_env_cfg(
         play=False,
-        rickshaw_penalty_weight_curriculum=False,
+        reward_curriculum="s2",
     )
-    assert student_training_cfg.curriculum == {}
+    assert set(student_training_cfg.curriculum) == penalty_curriculum_names
     assert student_training_cfg.commands["twist"].ranges.lin_vel_x == (-1.5, 2.0)
     assert student_training_cfg.commands["twist"].ranges.ang_vel_z == (-0.7, 0.7)
 
     agent = g1_rickshaw_teacher_ppo_runner_cfg()
     assert agent.num_steps_per_env == 24
-    assert agent.max_iterations == 30_000
+    assert agent.max_iterations == 6_000
     assert agent.save_interval == 50
     assert agent.clip_actions is None
     assert agent.actor.hidden_dims == (512, 256, 128)
@@ -261,3 +272,5 @@ def test_reward_configuration_matches_mjlab_1_5_3_g1_flat() -> None:
     assert agent.algorithm.num_mini_batches == 4
     assert agent.algorithm.learning_rate == 1.0e-3
     assert agent.algorithm.lam == 0.95
+    assert g1_rickshaw_distillation_runner_cfg().max_iterations == 6_000
+    assert g1_rickshaw_student_ppo_runner_cfg().max_iterations == 800

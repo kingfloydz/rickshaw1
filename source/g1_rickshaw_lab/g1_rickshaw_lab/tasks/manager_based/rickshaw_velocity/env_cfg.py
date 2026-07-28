@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 from g1_rickshaw_lab.assets import get_g1_robot_cfg, get_rickshaw_cfg
 from g1_rickshaw_lab.configuration import load_feasibility_envelope
@@ -13,6 +13,23 @@ from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH
 from g1_rickshaw_lab.project_paths import CONFIG_ROOT, PROJECT_ROOT
 
 PLAY_SLOPE_ENV = "G1_RICKSHAW_PLAY_SLOPE"
+
+_REWARD_CURRICULUM_SCHEDULES = {
+    "s0": (
+        (0, 0.10, 0.20),
+        (300, 0.25, 0.25),
+        (600, 0.50, 0.50),
+        (900, 0.75, 0.75),
+        (1200, 1.00, 1.00),
+    ),
+    "s2": (
+        (0, 0.10, 0.20),
+        (100, 0.25, 0.25),
+        (200, 0.50, 0.50),
+        (300, 0.75, 0.75),
+        (400, 1.00, 1.00),
+    ),
+}
 
 
 def configure_history_length(env_cfg: Any, history_length: int) -> None:
@@ -81,7 +98,7 @@ def g1_rickshaw_env_cfg(
     *,
     play: bool = False,
     history_length: int = HISTORY_LENGTH,
-    rickshaw_penalty_weight_curriculum: bool = True,
+    reward_curriculum: Literal["s0", "s2"] | None = "s0",
     terrain_slope: float | None = None,
 ):
     """Create the nineteen-slope rickshaw velocity task using mjlab 1.5.3 APIs."""
@@ -293,33 +310,39 @@ def g1_rickshaw_env_cfg(
             ),
         }
     )
-    ramped_rickshaw_penalties = (
+    ramped_dynamics_penalties = (
         "rickshaw_forward_acceleration_l2",
         "rickshaw_pitch_angular_acceleration_l2",
         "rickshaw_yaw_angular_acceleration_l2",
         "rickshaw_pitch_angular_velocity_l2",
-        "rickshaw_wheel_slip_l2",
-        "rickshaw_g1_relative_position_l2",
-        "rickshaw_g1_relative_yaw_l2",
         "rickshaw_absolute_pitch_deviation_l2",
         "peak_force",
     )
-    reward_weight_curricula = {
-        f"{name}_weight": CurriculumTermCfg(
-            func=velocity_mdp.reward_curriculum,
-            params={
-                "reward_name": name,
-                "stages": [
-                    {
-                        "step": index * 200 * 24,
-                        "weight": rewards[name].weight * index / 6,
-                    }
-                    for index in range(7)
-                ],
-            },
-        )
-        for name in ramped_rickshaw_penalties
-    }
+    ramped_relative_pose_penalties = (
+        "rickshaw_g1_relative_position_l2",
+        "rickshaw_g1_relative_yaw_l2",
+    )
+    reward_weight_curricula = {}
+    if not play and reward_curriculum is not None:
+        schedule = _REWARD_CURRICULUM_SCHEDULES[reward_curriculum]
+        for names, multiplier_index in (
+            (ramped_dynamics_penalties, 1),
+            (ramped_relative_pose_penalties, 2),
+        ):
+            for name in names:
+                reward_weight_curricula[f"{name}_weight"] = CurriculumTermCfg(
+                    func=velocity_mdp.reward_curriculum,
+                    params={
+                        "reward_name": name,
+                        "stages": [
+                            {
+                                "step": stage[0] * 24,
+                                "weight": rewards[name].weight * stage[multiplier_index],
+                            }
+                            for stage in schedule
+                        ],
+                    },
+                )
     commands = {
         "twist": RickshawVelocityCommandCfg(
             entity_name="rickshaw",
@@ -373,7 +396,7 @@ def g1_rickshaw_env_cfg(
     cfg.events = events
     cfg.rewards = rewards
     cfg.terminations = terminations
-    cfg.curriculum = {} if play or not rickshaw_penalty_weight_curriculum else reward_weight_curricula
+    cfg.curriculum = reward_weight_curricula
     cfg.metrics = {"mean_action_acc": MetricsTermCfg(func=velocity_mdp.mean_action_acc)}
     cfg.sim.nconmax = None
     cfg.sim.njmax = 600
