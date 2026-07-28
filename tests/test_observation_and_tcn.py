@@ -269,7 +269,7 @@ def test_fixed_teacher_and_student_context_interfaces() -> None:
     assert actor.network[0].in_features == ACTOR_OBSERVATION_DIM + 16
 
 
-@pytest.mark.parametrize("latent_dim", (8, 16, 24, 32))
+@pytest.mark.parametrize("latent_dim", (4, 8, 16, 24, 32))
 def test_teacher_and_student_use_the_selected_latent_width(latent_dim: int) -> None:
     teacher = TeacherEncoder(latent_dim).eval()
     student = ContextEncoder(latent_dim).eval()
