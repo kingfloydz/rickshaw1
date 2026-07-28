@@ -21,7 +21,6 @@ from .context_encoder import (
     HISTORY_KERNEL_SIZES,
     OBSERVATION_DIM,
     CausalBlock,
-    validate_history,
 )
 
 DYNAMIC_PRIVILEGE_DIM = TEACHER_DYNAMIC_DIM
@@ -62,32 +61,7 @@ class TeacherEncoder(nn.Module):
         dynamic_privilege_history: torch.Tensor,
         static_privilege: torch.Tensor,
     ) -> torch.Tensor:
-        validate_history(
-            observation_history,
-            feature_dim=OBSERVATION_DIM,
-            name="observation_history",
-            history_length=self.history_length,
-        )
-        validate_history(
-            dynamic_privilege_history,
-            feature_dim=DYNAMIC_PRIVILEGE_DIM,
-            name="dynamic_privilege_history",
-            history_length=self.history_length,
-        )
-        if static_privilege.ndim != 2 or static_privilege.shape[1] != STATIC_PRIVILEGE_DIM:
-            raise ValueError(f"static_privilege must have shape [N, {STATIC_PRIVILEGE_DIM}]")
-        batch = observation_history.shape[0]
-        if dynamic_privilege_history.shape[0] != batch or static_privilege.shape[0] != batch:
-            raise ValueError("teacher encoder batch dimensions differ")
-
         temporal_history = torch.cat((observation_history, dynamic_privilege_history), dim=-1)
         temporal = self.blocks(self.temporal_input(temporal_history.transpose(1, 2)))[:, :, -1]
         static = self.static(static_privilege)
         return self.context(torch.cat((temporal, static), dim=-1))
-
-
-__all__ = [
-    "DYNAMIC_PRIVILEGE_DIM",
-    "STATIC_PRIVILEGE_DIM",
-    "TeacherEncoder",
-]

@@ -44,14 +44,3 @@ def set_body_collision(
         for geom in spec.body(body_name).geoms:
             geom.contype = contype
             geom.conaffinity = conaffinity
-
-
-__all__ = [
-    "ALL_COLLISION_BITS",
-    "GROUND_COLLISION_BIT",
-    "RICKSHAW_COLLISION_BIT",
-    "ROBOT_COLLISION_BIT",
-    "add_free_joint",
-    "load_urdf_spec",
-    "set_body_collision",
-]

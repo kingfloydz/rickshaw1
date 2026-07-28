@@ -6,7 +6,6 @@ from . import (
     DISTILLATION_TASK_ID,
     STUDENT_TASK_ID,
     TRAIN_TASK_ID,
-    g1_rickshaw_env_cfg,
 )
 from .agents.rsl_rl_cfg import (
     g1_rickshaw_distillation_runner_cfg,
@@ -18,6 +17,7 @@ from .agents.runners import (
     RickshawStudentRunner,
     RickshawTeacherRunner,
 )
+from .env_cfg import g1_rickshaw_env_cfg
 
 for task_id, reward_curriculum, runner_cfg, runner_cls in (
     (

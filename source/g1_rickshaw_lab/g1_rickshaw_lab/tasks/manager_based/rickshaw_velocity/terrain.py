@@ -80,13 +80,3 @@ def write_terrain_collision_pose(
     tangent, lateral, normal = terrain_frame(selected_types, dtype=geom_xmat.dtype)
     geom_xpos[env_ids, geom_id] = positions
     geom_xmat[env_ids, geom_id] = torch.stack((tangent, lateral, normal), dim=-1)
-
-
-__all__ = [
-    "TERRAIN_SLOPES",
-    "assign_terrain_types",
-    "terrain_frame",
-    "terrain_plane_poses",
-    "terrain_type_for_slope",
-    "write_terrain_collision_pose",
-]

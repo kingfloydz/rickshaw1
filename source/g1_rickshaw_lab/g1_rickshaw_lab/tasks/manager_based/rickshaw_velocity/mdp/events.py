@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from g1_rickshaw_lab.assets.rickshaw import (
+from g1_rickshaw_lab.rickshaw_spec import (
     RICKSHAW_CENTER_OF_MASS,
     RICKSHAW_TOTAL_MASS,
 )
@@ -193,13 +193,3 @@ def _update_teacher_static_domain(
     if raw.shape != (env.num_envs, TEACHER_STATIC_DOMAIN_DIM):
         raise RuntimeError(f"effective teacher static domain must have shape [N,{TEACHER_STATIC_DOMAIN_DIM}]")
     env.normalized_teacher_static_domain = normalize_features(raw, lower, upper)
-
-
-__all__ = [
-    "DOMAIN_PARAMETER_NAMES",
-    "DOMAIN_RANDOMIZATION_NAMES",
-    "DomainRandomizationCfg",
-    "RickshawRuntimeState",
-    "effective_cart_mass_com_bounds",
-    "sample_domain_parameters",
-]

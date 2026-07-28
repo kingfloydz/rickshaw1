@@ -156,11 +156,3 @@ class RickshawVelocityCommand(UniformVelocityCommand):
                 color=(0.0, 1.0, 0.4, 0.7),
                 width=0.015,
             )
-
-
-__all__ = [
-    "RickshawVelocityCommand",
-    "RickshawVelocityCommandCfg",
-    "rickshaw_frame",
-    "rickshaw_velocity",
-]

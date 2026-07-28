@@ -5,15 +5,6 @@ from __future__ import annotations
 import mujoco
 
 from ..project_paths import ASSET_ROOT
-from ..rickshaw_spec import (
-    HITCH_HALF_WIDTH,
-    HITCH_X,
-    HITCH_Z,
-    RICKSHAW_CENTER_OF_MASS,
-    RICKSHAW_TOTAL_MASS,
-    WHEEL_RADIUS,
-    WHEEL_TRACK,
-)
 from .mujoco_spec import (
     GROUND_COLLISION_BIT,
     RICKSHAW_COLLISION_BIT,
@@ -108,22 +99,3 @@ def get_rickshaw_cfg():
             joint_vel={r".*_wheel_joint": 0.0},
         ),
     )
-
-
-__all__ = [
-    "BASE_LINK_NAME",
-    "HITCH_HALF_WIDTH",
-    "HITCH_LINK_NAMES",
-    "HITCH_SITE_NAMES",
-    "HITCH_X",
-    "HITCH_Z",
-    "RICKSHAW_ASSET_DIR",
-    "RICKSHAW_CENTER_OF_MASS",
-    "RICKSHAW_TOTAL_MASS",
-    "RICKSHAW_URDF_PATH",
-    "WHEEL_JOINT_NAMES",
-    "WHEEL_RADIUS",
-    "WHEEL_TRACK",
-    "get_rickshaw_cfg",
-    "get_rickshaw_spec",
-]

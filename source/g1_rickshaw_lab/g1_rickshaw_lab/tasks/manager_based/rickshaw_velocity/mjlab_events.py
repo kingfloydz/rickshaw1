@@ -17,13 +17,15 @@ from g1_rickshaw_lab.assets.g1_dex1 import GRASP_SITE_NAMES
 from g1_rickshaw_lab.assets.rickshaw import (
     BASE_LINK_NAME,
     HITCH_SITE_NAMES,
-    RICKSHAW_CENTER_OF_MASS,
-    RICKSHAW_TOTAL_MASS,
     WHEEL_JOINT_NAMES,
     WHEEL_LINK_NAMES,
-    WHEEL_RADIUS,
 )
 from g1_rickshaw_lab.configuration import G1_JOINT_ORDER
+from g1_rickshaw_lab.rickshaw_spec import (
+    RICKSHAW_CENTER_OF_MASS,
+    RICKSHAW_TOTAL_MASS,
+    WHEEL_RADIUS,
+)
 from g1_rickshaw_lab.static_equilibrium import MujocoStaticEquilibrium, load_mujoco_static_equilibrium
 
 from .closed_chain import CONNECTION_NAMES, build_assembled_spec
@@ -398,12 +400,3 @@ def apply_mjlab_rolling_resistance(env: Any, env_ids: torch.Tensor | None) -> No
         torch.zeros_like(rolling_force),
         body_ids=env.wheel_body_ids.tolist(),
     )
-__all__ = [
-    "MjlabTaskRuntimeCfg",
-    "apply_mjlab_rolling_resistance",
-    "ensure_mjlab_observation_state",
-    "ensure_mjlab_reward_state",
-    "initialize_mjlab_domain",
-    "initialize_mjlab_task",
-    "reset_from_mujoco_static",
-]

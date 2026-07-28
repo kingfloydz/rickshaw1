@@ -54,20 +54,6 @@ class CausalBlock(nn.Module):
         return F.elu(value + self.mix(F.elu(residual)))
 
 
-def validate_history(
-    history: torch.Tensor,
-    *,
-    feature_dim: int,
-    name: str,
-    history_length: int = HISTORY_LENGTH,
-) -> None:
-    history_length = validate_history_length(history_length)
-    if history.ndim != 3 or history.shape[1:] != (history_length, feature_dim):
-        raise ValueError(f"{name} must have shape [N, {history_length}, {feature_dim}], got {tuple(history.shape)}")
-    if not history.is_floating_point():
-        raise TypeError(f"{name} must be floating point")
-
-
 class ContextEncoder(nn.Module):
     """Encode the preceding 61 actor observations into the selected latent."""
 
@@ -93,12 +79,6 @@ class ContextEncoder(nn.Module):
         self.context = nn.Linear(FEATURE_DIM, self.latent_dim)
 
     def extract_feature(self, history: torch.Tensor) -> torch.Tensor:
-        validate_history(
-            history,
-            feature_dim=OBSERVATION_DIM,
-            name="history",
-            history_length=self.history_length,
-        )
         encoded = self.blocks(self.input(history.transpose(1, 2)))
         return encoded[:, :, -1]
 
@@ -107,18 +87,3 @@ class ContextEncoder(nn.Module):
 
     def forward(self, history: torch.Tensor) -> torch.Tensor:
         return self.encode(history)
-
-
-__all__ = [
-    "DEFAULT_CONTEXT_DIM",
-    "DILATIONS",
-    "FEATURE_DIM",
-    "HISTORY_KERNEL_SIZES",
-    "HISTORY_LENGTH",
-    "KERNEL_SIZE",
-    "OBSERVATION_DIM",
-    "CausalBlock",
-    "ContextEncoder",
-    "temporal_receptive_field",
-    "validate_history",
-]

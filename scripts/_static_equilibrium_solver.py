@@ -8,11 +8,9 @@ from typing import Any
 
 import numpy as np
 
-from g1_rickshaw_lab.assets.g1_dex1 import (
-    G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS,
-    G1_JOINT_EFFORT_LIMITS,
-)
+from g1_rickshaw_lab.assets.g1_dex1 import G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS
 from g1_rickshaw_lab.configuration import G1_JOINT_ORDER
+from g1_rickshaw_lab.g1_motor_defaults import G1_JOINT_EFFORT_LIMITS
 from g1_rickshaw_lab.rickshaw_spec import (
     HITCH_HALF_WIDTH,
     HITCH_HEIGHT_RANGE,
@@ -1022,11 +1020,3 @@ def solve_mujoco_static_equilibrium(
         model.geom_contype[:] = geom_contype_original
         model.geom_conaffinity[:] = geom_conaffinity_original
         data.eq_active[:] = eq_active_original
-
-
-__all__ = [
-    "MujocoStaticSolverCfg",
-    "fixed_contact_static_components",
-    "solve_fixed_contact_statics",
-    "solve_mujoco_static_equilibrium",
-]

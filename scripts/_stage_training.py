@@ -53,6 +53,3 @@ def prepare_training(
         log_root = str(directory.parent)
         cfg.agent.experiment_name = directory.name
     return replace(cfg, log_root=log_root, gpu_ids=gpu_ids)
-
-
-__all__ = ["prepare_training"]

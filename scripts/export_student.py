@@ -35,7 +35,7 @@ def main() -> None:
     )
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
-    from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+    from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
 
     args = tyro.cli(ExportArgs)
     checkpoint = args.checkpoint.resolve(strict=True)
@@ -53,8 +53,7 @@ def main() -> None:
     env = RslRlVecEnvWrapper(
         ManagerBasedRlEnv(env_cfg, device=device), clip_actions=agent_cfg.clip_actions
     )
-    runner_cls = load_runner_cls(args.task) or MjlabOnPolicyRunner
-    runner = runner_cls(env, asdict(agent_cfg), device=device)
+    runner = MjlabOnPolicyRunner(env, asdict(agent_cfg), device=device)
     runner.load(
         str(checkpoint), load_cfg={"actor": True}, strict=True, map_location=device
     )

@@ -152,6 +152,3 @@ def build_sloped_reset_templates(
         cart_root_pose=np.stack(cart_poses),
         robot_joint_position=np.stack(joint_positions),
     )
-
-
-__all__ = ["TERRAIN_SLOPES", "SlopedResetTemplates", "build_sloped_reset_templates"]

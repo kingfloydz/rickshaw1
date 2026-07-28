@@ -61,12 +61,3 @@ def build_assembled_spec(*, with_ground: bool = True) -> mujoco.MjSpec:
     spec.attach(get_rickshaw_spec(), prefix=f"{RICKSHAW_ENTITY_NAME}/", frame=spec.worldbody.add_frame())
     add_closed_chain_constraints(spec)
     return spec
-
-
-__all__ = [
-    "ROBOT_ENTITY_NAME",
-    "RICKSHAW_ENTITY_NAME",
-    "CONNECTION_NAMES",
-    "add_closed_chain_constraints",
-    "build_assembled_spec",
-]

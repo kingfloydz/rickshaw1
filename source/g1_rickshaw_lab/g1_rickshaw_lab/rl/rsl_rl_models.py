@@ -14,9 +14,7 @@ from tensordict import TensorDict
 from torch import nn
 
 from g1_rickshaw_lab.policy_schema import (
-    ACTION_DIM,
     ACTOR_OBSERVATION_DIM,
-    CRITIC_PRIVILEGED_DIM,
     DEFAULT_CONTEXT_DIM,
     HISTORY_LENGTH,
     TEACHER_DYNAMIC_DIM,
@@ -29,8 +27,6 @@ from .context_encoder import ContextEncoder
 from .teacher_model import TeacherEncoder
 
 _ACTOR_HIDDEN_DIMS = (512, 256, 128)
-_TEACHER_GROUPS = {"policy_sequence", "teacher_dynamic_sequence", "teacher_static"}
-_STUDENT_GROUPS = {"policy_sequence"}
 
 
 def _ordered_state_dict(state_dict: Mapping[str, Any]) -> OrderedDict[str, Any]:
@@ -61,15 +57,7 @@ class RslRickshawActorModel(MLPModel):
         latent_dim: int = DEFAULT_CONTEXT_DIM,
         history_length: int = HISTORY_LENGTH,
     ) -> None:
-        del rnn_hidden_dim, rnn_num_layers
-        if cnn_cfg is not None or rnn_type is not None:
-            raise ValueError("rickshaw actor uses its fixed TCN context encoder, not Mjlab CNN/RNN options")
-        if output_dim != ACTION_DIM:
-            raise ValueError(f"rickshaw action dimension is fixed to {ACTION_DIM}, got {output_dim}")
-        if tuple(hidden_dims) != _ACTOR_HIDDEN_DIMS or activation.lower() != "elu":
-            raise ValueError("rickshaw actor architecture is fixed to [512,256,128] with ELU")
-        if distribution_cfg is None:
-            raise ValueError("the PPO actor requires a Gaussian distribution configuration")
+        del cnn_cfg, rnn_type, rnn_hidden_dim, rnn_num_layers
         self.latent_dim = validate_context_dim(latent_dim)
         self.history_length = validate_history_length(history_length)
         self.stage = ""
@@ -103,28 +91,7 @@ class RslRickshawActorModel(MLPModel):
         obs_set: str,
     ) -> tuple[list[str], int]:
         active_groups = list(obs_groups[obs_set])
-        groups = set(active_groups)
-        if groups == _TEACHER_GROUPS:
-            self.stage = "teacher"
-        elif groups == _STUDENT_GROUPS:
-            self.stage = "student"
-        else:
-            raise ValueError("actor groups must match the fixed teacher or student interface")
-
-        expected_policy_shape = (self.history_length + 1, ACTOR_OBSERVATION_DIM)
-        if tuple(obs["policy_sequence"].shape[1:]) != expected_policy_shape:
-            raise ValueError(
-                f"policy_sequence must have shape [N,{expected_policy_shape[0]},{expected_policy_shape[1]}]"
-            )
-        if self.stage == "teacher":
-            expected_dynamic_shape = (self.history_length + 1, TEACHER_DYNAMIC_DIM)
-            if tuple(obs["teacher_dynamic_sequence"].shape[1:]) != expected_dynamic_shape:
-                raise ValueError(
-                    "teacher_dynamic_sequence must have shape "
-                    f"[N,{expected_dynamic_shape[0]},{expected_dynamic_shape[1]}]"
-                )
-            if tuple(obs["teacher_static"].shape[1:]) != (TEACHER_STATIC_DIM,):
-                raise ValueError(f"teacher_static must have shape [N,{TEACHER_STATIC_DIM}]")
+        self.stage = "teacher" if "teacher_static" in active_groups else "student"
         return active_groups, ACTOR_OBSERVATION_DIM
 
     def _get_latent_dim(self) -> int:
@@ -179,56 +146,6 @@ class RslRickshawActorModel(MLPModel):
         return _StudentOnnxExport(self, verbose)
 
 
-class RslRickshawCriticModel(MLPModel):
-    """Standard RSL-RL critic with legacy checkpoint migration."""
-
-    def _get_obs_dim(
-        self,
-        obs: TensorDict,
-        obs_groups: dict[str, list[str]],
-        obs_set: str,
-    ) -> tuple[list[str], int]:
-        active_groups, obs_dim = super()._get_obs_dim(obs, obs_groups, obs_set)
-        if set(active_groups) != {"critic_policy", "critic"}:
-            raise ValueError("critic observation set requires only critic_policy and critic")
-        if obs["critic_policy"].shape[-1] != ACTOR_OBSERVATION_DIM:
-            raise ValueError(f"critic policy observation must have width {ACTOR_OBSERVATION_DIM}")
-        if obs["critic"].shape[-1] != CRITIC_PRIVILEGED_DIM:
-            raise ValueError(f"critic privilege must have width {CRITIC_PRIVILEGED_DIM}")
-        return active_groups, obs_dim
-
-    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False):
-        """Merge the previous split normalizers into RSL-RL's joint normalizer."""
-
-        if not any(
-            key.startswith(("value.network.", "policy_obs_normalizer.", "privileged_obs_normalizer."))
-            for key in state_dict
-        ):
-            return super().load_state_dict(state_dict, strict=strict, assign=assign)
-
-        migrated = _ordered_state_dict(state_dict)
-        for key, value in state_dict.items():
-            if key.startswith("value.network."):
-                migrated["mlp." + key.removeprefix("value.network.")] = value
-            elif not key.startswith(("policy_obs_normalizer.", "privileged_obs_normalizer.")):
-                migrated[key] = value
-
-        for suffix in ("_mean", "_var", "_std"):
-            policy_key = f"policy_obs_normalizer.{suffix}"
-            privileged_key = f"privileged_obs_normalizer.{suffix}"
-            if policy_key in state_dict and privileged_key in state_dict:
-                migrated[f"obs_normalizer.{suffix}"] = torch.cat(
-                    (state_dict[policy_key], state_dict[privileged_key]), dim=-1
-                )
-        policy_count = state_dict.get("policy_obs_normalizer.count")
-        privileged_count = state_dict.get("privileged_obs_normalizer.count")
-        if policy_count is not None and privileged_count is not None:
-            if not torch.equal(policy_count, privileged_count):
-                raise RuntimeError("legacy critic normalizer counts differ")
-            migrated["obs_normalizer.count"] = policy_count
-        return super().load_state_dict(migrated, strict=strict, assign=assign)
-
-
 class _StudentExport(nn.Module):
     def __init__(self, model: RslRickshawActorModel) -> None:
         super().__init__()
@@ -280,6 +197,3 @@ class _DeploymentContextEncoder(nn.Module):
     def forward(self, history: torch.Tensor) -> torch.Tensor:
         features = self.blocks(self.input(history.transpose(1, 2)))[:, :, -1]
         return self.context(features)
-
-
-__all__ = ["RslRickshawActorModel", "RslRickshawCriticModel"]

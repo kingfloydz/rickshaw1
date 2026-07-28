@@ -1,11 +1,7 @@
 # G1 Rickshaw Slopes
 
 A MjLab reinforcement-learning task in which a Unitree G1 pulls a two-wheeled
-rickshaw over 19 fixed slopes. Training follows one main pipeline:
-
-1. S0 trains a privileged PPO teacher.
-2. S1 distills the teacher into a history-only student.
-3. S2 fine-tunes the student with PPO.
+rickshaw over 19 fixed slopes.
 
 ## Requirements
 
@@ -26,10 +22,10 @@ cd /path/to/rickshaw1
 
 PYTHON=/path/to/python
 "$PYTHON" -m pip install --upgrade pip
-"$PYTHON" -m pip install -e "source/g1_rickshaw_lab[test]"
+"$PYTHON" -m pip install -e "source/g1_rickshaw_lab"
 ```
 
-The `test` extra installs Pytest. Install Ruff separately for linting:
+Install Ruff separately for linting:
 
 ```bash
 "$PYTHON" -m pip install ruff
@@ -44,10 +40,6 @@ PYTHON=/path/to/python
 "$PYTHON" scripts/validate_static_initialization.py
 "$PYTHON" scripts/train_pipeline.py --gpu-ids 0
 ```
-
-The pipeline uses 8192 environments by default and runs 6000, 6000, and 800
-iterations for S0, S1, and S2. Each completed checkpoint is passed to the next
-stage automatically.
 
 ## Registered Tasks
 
@@ -65,19 +57,57 @@ stage automatically.
 - Two grasp sites are connected to the rickshaw hitches with MuJoCo `connect`
   equalities.
 - G1 uses the MjLab 1.5.3 Unitree actuator configuration.
-- The simulation timestep is `0.005 s` with decimation 4, giving a 50 Hz policy
-  rate.
 - Robot-rickshaw collisions and visual-mesh collisions are disabled while robot
   self-collision and physical ground contacts remain active.
 
-`scripts/validate_static_initialization.py` solves the complete closed-chain
-model on flat ground and writes the certified state to
-`config/static_rest_poses.json`. The same certificate is used to build reset
-templates for all slopes.
+#### MuJoCo Solver Configuration
 
-Training covers slopes from `-0.08` to `0.10 rad` in `0.01 rad` increments.
-G1 remains upright and adjusts ankle pitch to the plane; the rickshaw is aligned
-to keep both wheels on the slope without breaking the hand constraints.
+Training and playback use batched MjLab/MuJoCo-Warp simulation. Static-pose
+generation uses a standalone CPU MuJoCo model. Parameters not set by this
+project retain the framework defaults shown below:
+
+| Parameter | Training/play | Static model | Meaning |
+| --- | ---: | ---: | --- |
+| `timestep` | `0.005 s` | `0.005 s` | 200 Hz physics step. |
+| Control decimation | `4` | N/A | One action per `0.02 s` (50 Hz). |
+| `integrator` | `implicitfast` | `Euler` | Time integrator; inherited defaults differ. |
+| `solver` | `Newton` | `Newton` | Constraint solver. |
+| `cone` | `pyramidal` | `pyramidal` | Friction-cone representation. |
+| `jacobian` | `auto` | `auto` | Dense/sparse Jacobian selection. |
+| `iterations` | `10` | `10` | Maximum main solver iterations per step. |
+| `tolerance` | `1e-8` | `1e-8` | Main solver early-termination tolerance. |
+| `ls_iterations` | `20` | `20` | Maximum line-search iterations. |
+| `ls_tolerance` | `0.01` | `0.01` | Line-search tolerance. |
+| `ccd_iterations` | `50` | `50` | Maximum convex collision solver iterations. |
+| `impratio` | `1.0` | `1.0` | Friction-to-normal contact impedance ratio. |
+
+The project explicitly sets `timestep`, `iterations`, `ls_iterations`, and
+`ccd_iterations` in both models. Decimation belongs only to the MjLab
+environment. Batched allocation settings are:
+
+| Parameter | Value | Meaning |
+| --- | ---: | --- |
+| `nconmax` | `None` | MjLab selects contact capacity per world heuristically. |
+| `njmax` | `600` | Maximum allocated constraints per world. |
+| `contact_sensor_maxmatch` | `64` | Maximum matching contacts considered per contact sensor. |
+
+The two hand-hitch `connect` equalities inherit
+`solref=(0.02, 1.0)` and `solimp=(0.9, 0.95, 0.001, 0.5, 2.0)`.
+
+MuJoCo friction triples are `(sliding, torsional, rolling)`:
+
+| Geometry or constraint | Asset/static setting | Runtime behavior |
+| --- | --- | --- |
+| Terrain plane | `friction=(1.0, 0.005, 0.0001)` | Sliding friction is replaced by `terrain.friction`. |
+| G1 foot collision spheres | `condim=3`, `priority=1`, `friction=(0.6, 0.005, 0.0001)` | Sliding friction is replaced by `terrain.friction`. |
+| Other physical G1 geoms | `condim=1`; ground and self-collision enabled | Sliding friction is replaced by `terrain.friction`. |
+| Rickshaw wheels | Ground collision enabled; damping `0.02` | Sliding friction follows `terrain.friction`; damping is randomized per wheel during training. |
+| Rickshaw body and visual geoms | Contact disabled | No contact. |
+| Dex1 gripper geoms | Contact disabled | Hands are coupled to the hitches by equalities. |
+
+`scripts/validate_static_initialization.py` writes the certified flat-ground
+state to `config/static_rest_poses.json`; reset code transforms it to each slope.
+Training slopes run from `-0.08` to `0.10 rad` in `0.01 rad` increments.
 
 ### Manager-Based Environment
 
@@ -131,21 +161,63 @@ The deployable actor observation is fixed at 98 dimensions:
 | `40:69` | 29 | Joint velocity | 0.05 |
 | `69:98` | 29 | Previous action | 1.0 |
 
-MjLab's observation manager stores the preceding 61 frames. The current frame
-is kept separate from the history passed to the context encoder.
+#### Teacher Dynamic Privilege
 
-The teacher also receives dynamic rickshaw/contact history and episode-static
-physical parameters. The critic receives the clean current actor observation
-plus raw privileged state. The student uses only actor history.
+The teacher receives a 61-frame history of the following 11-D state:
 
-The default model uses a 16D context:
+| Slice | Width | Feature |
+| --- | ---: | --- |
+| `0:2` | 2 | Rickshaw forward velocity and yaw angular velocity |
+| `2:3` | 1 | Rickshaw pitch |
+| `3:5` | 2 | Left and right wheel normal forces |
+| `5:8` | 3 | Left hand force in path tangent, lateral, and normal axes |
+| `8:11` | 3 | Right hand force in path tangent, lateral, and normal axes |
 
-| Network | Main structure |
-| --- | --- |
-| Student context | Four residual causal Conv1D blocks with dilations `1,2,4,8` |
-| Teacher context | Actor and dynamic histories fused with static privilege |
-| Actor | RSL-RL ELU MLP `512,256,128` and Gaussian distribution |
-| Critic | RSL-RL ELU MLP `512,256,128` |
+The teacher actor applies empirical normalization to this sequence.
+
+#### Teacher Static Privilege
+
+The following 10-D state is fixed for an episode:
+
+| Slice | Width | Feature |
+| --- | ---: | --- |
+| `0:1` | 1 | Effective G1 torso mass |
+| `1:2` | 1 | Effective rickshaw total mass |
+| `2:5` | 3 | Effective rickshaw center of mass `(x, y, z)` |
+| `5:6` | 1 | Rolling-resistance coefficient |
+| `6:7` | 1 | Terrain sliding-friction coefficient |
+| `7:9` | 2 | Left and right wheel damping |
+| `9:10` | 1 | Terrain slope angle |
+
+Configured bounds are mapped to `[-1, 1]` before the teacher's empirical
+normalizer.
+
+#### Critic Privilege
+
+The critic receives the clean 98-D actor observation and this 35-D privileged
+state:
+
+| Slice | Width | Feature |
+| --- | ---: | --- |
+| `0:10` | 10 | Teacher static privilege |
+| `10:21` | 11 | Current teacher dynamic privilege |
+| `21:22` | 1 | Rickshaw forward acceleration |
+| `22:23` | 1 | Rickshaw yaw angular acceleration |
+| `23:25` | 2 | Left and right foot height |
+| `25:27` | 2 | Left and right foot air time |
+| `27:29` | 2 | Left and right foot contact flag |
+| `29:35` | 6 | Left and right foot contact force `(x, y, z)`, signed `log1p` transformed |
+
+The resulting critic input is 133-D. The student actor receives only the
+current actor observation and its preceding 61-frame actor history.
+
+#### Teacher Network
+
+![Teacher network architecture](docs/teacher_network.png)
+
+#### Student Network
+
+![Student network architecture](docs/student_network.png)
 
 ### Domain Randomization
 
@@ -163,13 +235,11 @@ Nine physical parameters are sampled once per environment:
 | `wheel.left_damping` | `[0.015, 0.025]` |
 | `wheel.right_damping` | `[0.015, 0.025]` |
 
-`config/feasibility_envelope.yaml` is the source of these ranges and nominal
-calibration values.
+Ranges and nominal values are defined in `config/feasibility_envelope.yaml`.
 
 ## Rewards and Curricula
 
-The task retains the MjLab G1 Flat reward set and changes only the weights or
-parameters needed for towing. Project-specific terms are:
+Project-specific and reweighted terms are:
 
 | Reward term | Final weight |
 | --- | ---: |
@@ -227,12 +297,7 @@ PYTHON=/path/to/python
 "$PYTHON" scripts/validate_static_initialization.py
 ```
 
-This command updates the certified flat pose used by training. Re-run it after
-changing geometry, actuators, or equality constraints.
-
 ### Train
-
-Run the complete pipeline:
 
 ```bash
 "$PYTHON" scripts/train_pipeline.py --gpu-ids 0
@@ -285,16 +350,12 @@ The exporter writes `exported/policy.pt` and `exported/policy.onnx` beside the
 checkpoint. Both accept `current [N,98]` and `history [N,61,98]`, and return
 `actions [N,29]`.
 
-### Test and Lint
+### Lint
 
 ```bash
-PYTHONPATH=source/g1_rickshaw_lab \
-  "$PYTHON" -m pytest -q
-
 "$PYTHON" -m ruff check \
   scripts \
-  source/g1_rickshaw_lab/g1_rickshaw_lab \
-  tests
+  source/g1_rickshaw_lab/g1_rickshaw_lab
 ```
 
 ## Outputs
@@ -306,102 +367,26 @@ logs/rsl_rl/
   g1_rickshaw_student/<timestamp>_s2/model_<iteration>.pt
 
 outputs/
-  validation/
-  reset_poses/
   nan_dumps/
-```
 
-RSL-RL saves periodically and at the end of each training call. Use the
-checkpoint path printed by the pipeline rather than assuming the final filename.
+config/
+  static_rest_poses.json
+```
 
 ## Repository Layout
 
-```text
-assets/
-  g1_dex1/                         G1 URDF and fixed-Dex1 mesh assets
-    meshes/                        G1 visual and collision meshes
-  rickshaw/                        Rickshaw URDF and mesh assets
-
-config/
-  feasibility_envelope.yaml        Randomization ranges and calibration
-  static_rest_poses.json           Certified flat-ground qpos and diagnostics
-
-scripts/
-  _project.py                      Source-layout import bootstrap
-  _stage_training.py               Shared MjLab stage configuration
-  _static_equilibrium_solver.py    Closed-chain static optimization
-  validate_static_initialization.py
-                                    Solve and save the static certificate
-  train_pipeline.py                Orchestrate S0 -> S1 -> S2
-  train_teacher.py                 Train or resume the S0 teacher
-  train_context.py                 Run S1 online distillation
-  finetune_student.py              Initialize or resume S2 PPO
-  play.py                          Playback, slope selection, and recording
-  export_student.py                Export TorchScript and ONNX students
-
-source/g1_rickshaw_lab/
-  pyproject.toml                   Build, Ruff, and Pytest configuration
-  setup.py                         Package metadata and pinned dependencies
-  g1_rickshaw_lab/
-    __init__.py                    Package marker and public package metadata
-    project_paths.py               Repository asset/config path resolution
-    configuration.py               Feasibility schema parser and validation
-    g1_motor_defaults.py           Ordered G1 actuator and action constants
-    policy_schema.py               Policy observation/action ABI
-    rickshaw_spec.py               Pure rickshaw mechanical specification
-    static_equilibrium.py          Static-certificate schema, signature, and I/O
-
-    assets/
-      __init__.py                  Public asset configuration exports
-      mujoco_spec.py               Shared MjSpec and collision helpers
-      g1_dex1.py                   G1 URDF validation and MjLab robot config
-      rickshaw.py                  Rickshaw URDF validation and entity config
-
-    rl/
-      __init__.py                  Public encoder and model exports
-      context_encoder.py           Student causal temporal encoder
-      teacher_model.py             Privileged teacher context encoder
-      rsl_rl_models.py             RSL-RL actor/critic adapters and export wrappers
-
-    tasks/manager_based/rickshaw_velocity/
-      __init__.py                  Task IDs and public registration surface
-      registration.py              MjLab environment/runner registrations
-      env_cfg.py                   Scene, managers, rewards, and curricula
-      closed_chain.py              G1-rickshaw assembly and hand equalities
-      terrain.py                   Slope assignment, frames, and plane poses
-      sloped_reset.py              Certified reset templates for all slopes
-      mjlab_actions.py             Static-reference joint-position action
-      mjlab_commands.py            Terrain-frame rickshaw velocity command
-      mjlab_events.py              MjLab startup, reset, and step integration
-      mjlab_mdp.py                 MjLab observation and reward term adapters
-
-      mdp/
-        __init__.py                Public task kernel exports
-        dynamics.py                Kinematics, rolling resistance, and forces
-        events.py                  Randomization and runtime-state kernels
-        observations.py            Actor and privileged observation assembly
-        rewards.py                 Rickshaw-specific reward kernels
-
-      agents/
-        __init__.py                Agent configuration and runner exports
-        rsl_rl_cfg.py              S0/S1/S2 RSL-RL configurations
-        runners.py                 Distillation and checkpoint handoff logic
-
-tests/
-  conftest.py                      Source-layout Pytest bootstrap
-  test_checkpoint_flow.py          S1-to-S2 checkpoint handoff
-  test_command_action_dynamics.py  Action ABI and dynamics kernels
-  test_feasibility_configuration.py
-                                    Feasibility schema validation
-  test_mjlab_migration.py          Assets, assembly, curricula, and certificates
-  test_observation_and_tcn.py      Observation order and temporal encoders
-  test_online_distillation.py      RSL-RL integration and legacy checkpoints
-  test_play_cli.py                 Playback-specific argument handling
-  test_reward_kernels.py           Reward kernels and task reward contract
-  test_sloped_reset.py             Slope reset geometry and constraints
-  test_sloped_terrain.py           Terrain frames and wheel contacts
-  test_training_pipeline.py        Three-stage command/checkpoint orchestration
-```
+| Path | Responsibility |
+| --- | --- |
+| `assets/` | G1/Dex1 and rickshaw URDF, STL, and mesh assets. |
+| `config/` | Feasibility ranges and the certified static pose. |
+| `docs/` | Rendered Teacher and Student network diagrams. |
+| `scripts/validate_static_initialization.py` | Solve and save the static certificate. |
+| `scripts/train_pipeline.py` | Run S0, S1, and S2 in sequence. |
+| `scripts/train_teacher.py`, `train_context.py`, `finetune_student.py` | Run individual training stages. |
+| `scripts/play.py`, `export_student.py` | Playback and policy export. |
+| `source/g1_rickshaw_lab/g1_rickshaw_lab/assets/` | Build MuJoCo robot and rickshaw specs. |
+| `source/g1_rickshaw_lab/g1_rickshaw_lab/rl/` | Teacher/student encoders and RSL-RL adapters. |
+| `source/g1_rickshaw_lab/g1_rickshaw_lab/tasks/manager_based/rickshaw_velocity/` | Scene, managers, closed chain, terrain, resets, rewards, and agents. |
 
 ## Compatibility Rules
 

@@ -20,8 +20,5 @@ setup(
         "PyYAML>=6.0",
         "tensorboard",
     ],
-    extras_require={
-        "test": ["pytest"],
-    },
     zip_safe=False,
 )

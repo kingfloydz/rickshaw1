@@ -6,7 +6,8 @@ import math
 import os
 from typing import Any, Literal
 
-from g1_rickshaw_lab.assets import get_g1_robot_cfg, get_rickshaw_cfg
+from g1_rickshaw_lab.assets.g1_dex1 import get_g1_robot_cfg
+from g1_rickshaw_lab.assets.rickshaw import get_rickshaw_cfg
 from g1_rickshaw_lab.configuration import load_feasibility_envelope
 from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH, validate_history_length
 from g1_rickshaw_lab.project_paths import CONFIG_ROOT, PROJECT_ROOT
@@ -414,9 +415,3 @@ def g1_rickshaw_env_cfg(
         cfg.episode_length_s = int(1e9)
     cfg.terrain_slope = terrain_slope
     return cfg
-
-
-__all__ = [
-    "configure_history_length",
-    "g1_rickshaw_env_cfg",
-]

@@ -40,9 +40,3 @@ class StaticReferenceJointPositionAction(JointPositionAction):
         super().reset(env_ids)
         ids = slice(None) if env_ids is None else env_ids
         self._processed_actions[ids] = self.q_ref[ids]
-
-
-__all__ = [
-    "StaticReferenceJointPositionAction",
-    "StaticReferenceJointPositionActionCfg",
-]

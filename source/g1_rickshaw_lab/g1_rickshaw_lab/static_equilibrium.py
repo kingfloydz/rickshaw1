@@ -185,11 +185,3 @@ def load_mujoco_static_equilibrium(
         acceleration_error=float(record["acceleration_error"]),
         actuator_torque_ratio=float(record["actuator_torque_ratio"]),
     )
-
-
-__all__ = [
-    "MujocoStaticEquilibrium",
-    "STATIC_REST_POSE_PATH",
-    "load_mujoco_static_equilibrium",
-    "save_mujoco_static_equilibrium",
-]

@@ -8,10 +8,6 @@ import mujoco
 
 from g1_rickshaw_lab.g1_motor_defaults import (
     G1_ARTICULATION,
-    G1_JOINT_ARMATURE,
-    G1_JOINT_DAMPING,
-    G1_JOINT_EFFORT_LIMITS,
-    G1_JOINT_STIFFNESS,
     G1_MOTOR_PARAMETERS_BY_JOINT,
 )
 from g1_rickshaw_lab.project_paths import ASSET_ROOT
@@ -147,17 +143,3 @@ def get_g1_robot_cfg():
         ),
         articulation=deepcopy(G1_ARTICULATION),
     )
-
-
-__all__ = [
-    "FOOT_SITE_NAMES",
-    "G1_DEX1_URDF_PATH",
-    "G1_DEFAULT_LOWER_WAIST_JOINT_POSITIONS",
-    "G1_JOINT_ARMATURE",
-    "G1_JOINT_DAMPING",
-    "G1_JOINT_EFFORT_LIMITS",
-    "G1_JOINT_STIFFNESS",
-    "GRASP_SITE_NAMES",
-    "get_g1_robot_cfg",
-    "get_g1_spec",
-]

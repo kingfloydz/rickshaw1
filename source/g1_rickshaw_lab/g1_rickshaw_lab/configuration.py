@@ -208,30 +208,6 @@ class NumericRange:
             return cls(value[0], value[1])
         return cls(value, value)
 
-    def contains(self, value: float | NumericRange, *, tolerance: float = 0.0) -> bool:
-        if tolerance < 0.0 or not math.isfinite(tolerance):
-            raise ValueError("tolerance must be finite and non-negative")
-        candidate = value if isinstance(value, NumericRange) else NumericRange.from_value(value)
-        return candidate.minimum >= self.minimum - tolerance and candidate.maximum <= self.maximum + tolerance
-
-    def assert_contains(
-        self,
-        value: float | NumericRange,
-        *,
-        name: str = "value",
-        tolerance: float = 0.0,
-    ) -> None:
-        candidate = value if isinstance(value, NumericRange) else NumericRange.from_value(value, path=name)
-        if not self.contains(candidate, tolerance=tolerance):
-            raise FeasibilityConfigError(
-                f"{name}=[{candidate.minimum}, {candidate.maximum}] is outside feasibility "
-                f"envelope [{self.minimum}, {self.maximum}]"
-            )
-
-    def to_mapping(self) -> dict[str, float]:
-        return {"min": self.minimum, "max": self.maximum}
-
-
 def _looks_like_interval(value: Any) -> bool:
     if isinstance(value, NumericRange):
         return True
@@ -240,9 +216,7 @@ def _looks_like_interval(value: Any) -> bool:
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) == 2
 
 
-def _flatten_interval_mapping(
-    value: Mapping[str, Any], *, path: str = "", allow_scalars: bool = False
-) -> dict[str, NumericRange]:
+def _flatten_interval_mapping(value: Mapping[str, Any], *, path: str = "") -> dict[str, NumericRange]:
     result: dict[str, NumericRange] = {}
     for key, child in value.items():
         if not isinstance(key, str) or not key or key.startswith(".") or key.endswith("."):
@@ -251,11 +225,9 @@ def _flatten_interval_mapping(
         if _looks_like_interval(child):
             result[name] = NumericRange.from_value(child, path=f"ranges.{name}")
         elif not isinstance(child, Mapping):
-            if not allow_scalars:
-                raise FeasibilityConfigError(f"ranges.{name} must be an explicit {{min, max}} or [min, max] interval")
-            result[name] = NumericRange.from_value(child, path=f"ranges.{name}")
+            raise FeasibilityConfigError(f"ranges.{name} must be an explicit {{min, max}} or [min, max] interval")
         else:
-            result.update(_flatten_interval_mapping(child, path=name, allow_scalars=allow_scalars))
+            result.update(_flatten_interval_mapping(child, path=name))
     return result
 
 
@@ -292,7 +264,6 @@ class FeasibilityEnvelope:
     calibration: Mapping[str, Any]
     joint_order: tuple[str, ...] = G1_JOINT_ORDER
     schema_version: int = FEASIBILITY_SCHEMA_VERSION
-    source_path: Path | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -331,11 +302,9 @@ class FeasibilityEnvelope:
         object.__setattr__(self, "joint_order", joint_order)
         object.__setattr__(self, "ranges", MappingProxyType(parsed_ranges))
         object.__setattr__(self, "calibration", calibration)
-        if self.source_path is not None:
-            object.__setattr__(self, "source_path", Path(self.source_path))
 
     @classmethod
-    def from_mapping(cls, mapping: Mapping[str, Any], *, source_path: str | Path | None = None) -> FeasibilityEnvelope:
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> FeasibilityEnvelope:
         data = _expect_mapping(mapping, "feasibility envelope")
         _expect_exact_keys(
             data,
@@ -349,55 +318,7 @@ class FeasibilityEnvelope:
             joint_order=data["joint_order"],
             ranges=ranges,
             calibration=calibration,
-            source_path=None if source_path is None else Path(source_path),
         )
-
-    def to_mapping(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "joint_order": list(self.joint_order),
-            "ranges": {name: self.ranges[name].to_mapping() for name in REQUIRED_FEASIBILITY_RANGES},
-            "calibration": {
-                name: list(value) if isinstance(value, tuple) else value for name, value in self.calibration.items()
-            },
-        }
-
-    def assert_contains(
-        self,
-        name: str,
-        value: float | Sequence[float] | Mapping[str, float] | NumericRange,
-        *,
-        tolerance: float = 1.0e-12,
-    ) -> None:
-        try:
-            allowed = self.ranges[name]
-        except KeyError as exc:
-            raise FeasibilityConfigError(f"unknown feasibility range {name!r}") from exc
-        allowed.assert_contains(
-            NumericRange.from_value(value, path=f"training_ranges.{name}"),
-            name=f"training_ranges.{name}",
-            tolerance=tolerance,
-        )
-
-    def assert_sampling_ranges(
-        self,
-        sampling_ranges: Mapping[str, Any],
-        *,
-        require_all: bool = True,
-        tolerance: float = 1.0e-12,
-    ) -> None:
-        parsed = _flatten_interval_mapping(_expect_mapping(sampling_ranges, "training ranges"), allow_scalars=True)
-        unknown = sorted(set(parsed) - set(self.ranges))
-        missing = sorted(set(self.ranges) - set(parsed)) if require_all else []
-        if unknown or missing:
-            details = []
-            if missing:
-                details.append(f"missing={missing}")
-            if unknown:
-                details.append(f"unknown={unknown}")
-            raise FeasibilityConfigError("invalid training range fields: " + ", ".join(details))
-        for name, candidate in parsed.items():
-            self.ranges[name].assert_contains(candidate, name=f"training_ranges.{name}", tolerance=tolerance)
 
 
 def _load_yaml_mapping(path: str | Path) -> Mapping[str, Any]:
@@ -429,17 +350,4 @@ def load_feasibility_envelope(path: str | Path) -> FeasibilityEnvelope:
     """Load and fully validate a feasibility envelope YAML file."""
 
     file_path = Path(path)
-    return FeasibilityEnvelope.from_mapping(_load_yaml_mapping(file_path), source_path=file_path)
-
-
-__all__ = [
-    "FeasibilityConfigError",
-    "FEASIBILITY_SCHEMA_VERSION",
-    "FeasibilityEnvelope",
-    "G1_JOINT_ORDER",
-    "NumericRange",
-    "REQUIRED_CALIBRATION_FIELDS",
-    "REQUIRED_FEASIBILITY_RANGES",
-    "load_feasibility_envelope",
-    "validate_joint_order",
-]
+    return FeasibilityEnvelope.from_mapping(_load_yaml_mapping(file_path))

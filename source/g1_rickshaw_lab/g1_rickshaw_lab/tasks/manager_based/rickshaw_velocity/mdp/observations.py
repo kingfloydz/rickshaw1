@@ -7,7 +7,6 @@ import torch
 from g1_rickshaw_lab.policy_schema import (
     ACTION_DIM,
     ACTOR_OBSERVATION_DIM,
-    HISTORY_LENGTH,
     TEACHER_DYNAMIC_DIM,
     TEACHER_STATIC_DIM,
 )
@@ -146,19 +145,3 @@ def normalize_features(
     normalized = 2.0 * (values - lower) / safe_width - 1.0
     normalized = torch.where(width > 0.0, normalized, torch.zeros_like(normalized))
     return torch.clamp(normalized, -1.0, 1.0)
-
-
-__all__ = [
-    "ACTOR_OBSERVATION_DIM",
-    "BASE_LINEAR_VELOCITY_SLICE",
-    "COMMAND_SLICE",
-    "HISTORY_LENGTH",
-    "TEACHER_DYNAMIC_FEATURE_NAMES",
-    "TEACHER_STATIC_DIM",
-    "TEACHER_STATIC_DOMAIN_DIM",
-    "TEACHER_STATIC_FEATURE_NAMES",
-    "ACTOR_OBSERVATION_NOISE_SCALE",
-    "assemble_actor_observation",
-    "assemble_teacher_dynamic_privilege",
-    "normalize_features",
-]

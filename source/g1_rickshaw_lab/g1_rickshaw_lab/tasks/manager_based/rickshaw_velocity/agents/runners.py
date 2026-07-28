@@ -59,10 +59,3 @@ class RickshawStudentRunner(MjlabOnPolicyRunner):
             self.load(checkpoint, map_location=device)
         elif teacher_checkpoint is not None and context_checkpoint is not None:
             initialize_student_models(self.alg, teacher_checkpoint, context_checkpoint)
-
-
-__all__ = [
-    "RickshawDistillationRunner",
-    "RickshawStudentRunner",
-    "RickshawTeacherRunner",
-]
