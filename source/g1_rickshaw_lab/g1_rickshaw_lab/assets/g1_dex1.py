@@ -225,33 +225,6 @@ def get_g1_spec() -> mujoco.MjSpec:
     return spec
 
 
-def add_g1_position_actuators(spec: mujoco.MjSpec, *, prefix: str = "") -> None:
-    """Install the official Unitree position actuators on an assembled spec."""
-
-    for joint_name, stiffness, damping, effort_limit, armature in zip(
-        G1_MOTOR_PARAMETERS_BY_JOINT,
-        G1_JOINT_STIFFNESS,
-        G1_JOINT_DAMPING,
-        G1_JOINT_EFFORT_LIMITS,
-        G1_JOINT_ARMATURE,
-        strict=True,
-    ):
-        target = f"{prefix}{joint_name}"
-        actuator = spec.add_actuator(name=target, target=target)
-        actuator.trntype = mujoco.mjtTrn.mjTRN_JOINT
-        actuator.dyntype = mujoco.mjtDyn.mjDYN_NONE
-        actuator.gaintype = mujoco.mjtGain.mjGAIN_FIXED
-        actuator.biastype = mujoco.mjtBias.mjBIAS_AFFINE
-        actuator.gainprm[0] = stiffness
-        actuator.biasprm[1] = -stiffness
-        actuator.biasprm[2] = -damping
-        actuator.inheritrange = 0.0
-        actuator.ctrllimited = False
-        actuator.forcelimited = True
-        actuator.forcerange[:] = (-effort_limit, effort_limit)
-        spec.joint(target).armature = armature
-
-
 def get_g1_robot_cfg():
     """Return a fresh mjlab EntityCfg; imports mjlab only when requested."""
 
@@ -290,7 +263,6 @@ __all__ = [
     "G1_JOINT_STIFFNESS",
     "GRASP_SITE_NAMES",
     "JointPartition",
-    "add_g1_position_actuators",
     "get_g1_robot_cfg",
     "get_g1_spec",
     "partition_joint_names",

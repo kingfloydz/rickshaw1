@@ -21,32 +21,30 @@ class RickshawDistillationRunner(MjlabOnPolicyRunner, DistillationRunner):
         super().__init__(env, train_cfg, log_dir, device)
         if teacher_checkpoint is not None:
             self.load(teacher_checkpoint, map_location=device)
-
-    def load(
-        self,
-        path: str,
-        load_cfg: dict | None = None,
-        strict: bool = True,
-        map_location: str | None = None,
-    ) -> dict:
-        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-        loading_teacher = "actor_state_dict" in checkpoint
-        infos = super().load(path, load_cfg, strict, map_location)
-        if loading_teacher:
             student = self.alg._raw_student
             teacher = self.alg._raw_teacher
-            student.policy.load_state_dict(teacher.policy.state_dict(), strict=True)
-            student.policy_obs_normalizer.load_state_dict(teacher.policy_obs_normalizer.state_dict(), strict=True)
-        return infos
+            student.mlp.load_state_dict(teacher.mlp.state_dict(), strict=True)
+            student.distribution.load_state_dict(teacher.distribution.state_dict(), strict=True)
+            student.obs_normalizer.load_state_dict(teacher.obs_normalizer.state_dict(), strict=True)
 
 
 def initialize_student_models(algorithm, teacher_checkpoint: str, context_checkpoint: str) -> None:
     teacher = torch.load(teacher_checkpoint, map_location="cpu", weights_only=False)
     context = torch.load(context_checkpoint, map_location="cpu", weights_only=False)
-    critic_state = teacher["critic_state_dict"]
-    student_state = context["student_state_dict"]
-    algorithm._raw_actor.load_state_dict(student_state, strict=True)
-    algorithm._raw_critic.load_state_dict(critic_state, strict=True)
+    algorithm.load(
+        {
+            "actor_state_dict": context["student_state_dict"],
+            "critic_state_dict": teacher["critic_state_dict"],
+        },
+        {
+            "actor": True,
+            "critic": True,
+            "optimizer": False,
+            "iteration": False,
+            "rnd": False,
+        },
+        strict=True,
+    )
 
 
 class RickshawStudentRunner(MjlabOnPolicyRunner):
@@ -54,6 +52,8 @@ class RickshawStudentRunner(MjlabOnPolicyRunner):
         checkpoint = train_cfg.pop("checkpoint_file", None)
         teacher_checkpoint = train_cfg.pop("teacher_checkpoint", None)
         context_checkpoint = train_cfg.pop("context_checkpoint", None)
+        if (teacher_checkpoint is None) != (context_checkpoint is None):
+            raise ValueError("teacher_checkpoint and context_checkpoint must be provided together")
         super().__init__(env, train_cfg, log_dir, device)
         if checkpoint is not None:
             self.load(checkpoint, map_location=device)

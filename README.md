@@ -51,21 +51,6 @@ The pipeline defaults to 8192 environments and 6000/6000/800 iterations for S0/S
 | S2 | `Mjlab-G1-Rickshaw-Slopes-Student` | Student PPO fine-tuning | 800 | S2 |
 
 ## Architecture
-
-```mermaid
-flowchart LR
-  A["URDF and STL assets"] --> B["MuJoCo closed-chain assembly"]
-  C["Feasibility envelope"] --> D["Static equilibrium and sloped resets"]
-  B --> D
-  D --> E["Mjlab manager-based environment"]
-  E --> F["98D observation and 29D action"]
-  F --> G["S0 privileged teacher PPO"]
-  G -->|"teacher checkpoint"| H["S1 online distillation"]
-  G -->|"critic state"| I["S2 student PPO"]
-  H -->|"student state"| I
-  I --> J["JIT and ONNX policies"]
-```
-
 ### Physical Model
 
 - G1 exposes 29 controlled joints. Dex1 finger joints are fixed and excluded from the action space.
@@ -214,18 +199,19 @@ S0 curriculum:
 
 | Iteration | Six dynamics terms | Two relative-pose terms |
 | ---: | ---: | ---: |
-| 0 | 0.10 | 0.20 |
-| 300 | 0.25 | 0.25 |
-| 600 | 0.50 | 0.50 |
-| 900 | 0.75 | 0.75 |
-| 1200 | 1.00 | 1.00 |
+| 0 | 0.04 | 0.08 |
+| 300 | 0.12 | 0.20 |
+| 600 | 0.30 | 0.40 |
+| 900 | 0.50 | 0.60 |
+| 1200 | 0.75 | 0.80 |
+| 1500 | 1.00 | 1.00 |
 
 S2 curriculum:
 
 | Iteration | Six dynamics terms | Two relative-pose terms |
 | ---: | ---: | ---: |
-| 0 | 0.10 | 0.20 |
-| 100 | 0.25 | 0.25 |
+| 0 | 0.05 | 0.10 |
+| 100 | 0.20 | 0.25 |
 | 200 | 0.50 | 0.50 |
 | 300 | 0.75 | 0.75 |
 | 400 | 1.00 | 1.00 |

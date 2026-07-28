@@ -1,10 +1,7 @@
-"""Pure-PyTorch policy models for the G1 rickshaw task."""
+"""Pure-PyTorch context models for the G1 rickshaw task."""
 
-from .actor_critic import (
-    CRITIC_PRIVILEGE_DIM,
-    GaussianActor,
-    PrivilegedCritic,
-)
+from g1_rickshaw_lab.policy_schema import CRITIC_PRIVILEGED_DIM as CRITIC_PRIVILEGE_DIM
+
 from .context_encoder import CausalBlock, ContextEncoder, temporal_receptive_field
 from .teacher_model import (
     DYNAMIC_PRIVILEGE_DIM,
@@ -17,8 +14,6 @@ __all__ = [
     "ContextEncoder",
     "CRITIC_PRIVILEGE_DIM",
     "DYNAMIC_PRIVILEGE_DIM",
-    "GaussianActor",
-    "PrivilegedCritic",
     "STATIC_PRIVILEGE_DIM",
     "TeacherEncoder",
     "temporal_receptive_field",

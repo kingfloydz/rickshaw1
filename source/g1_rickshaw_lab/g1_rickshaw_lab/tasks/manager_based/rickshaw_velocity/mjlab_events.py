@@ -24,7 +24,6 @@ from g1_rickshaw_lab.assets.rickshaw import (
     WHEEL_RADIUS,
 )
 from g1_rickshaw_lab.configuration import G1_JOINT_ORDER
-from g1_rickshaw_lab.policy_schema import ACTOR_OBSERVATION_DIM, HISTORY_LENGTH, TEACHER_DYNAMIC_DIM
 from g1_rickshaw_lab.static_equilibrium import MujocoStaticEquilibrium, load_mujoco_static_equilibrium
 
 from .closed_chain import CONNECTION_NAMES, build_assembled_spec
@@ -44,7 +43,6 @@ from .mdp.events import (
     _update_teacher_static_domain,
     sample_domain_parameters,
 )
-from .mdp.observations import ObservationHistoryState
 from .mjlab_commands import rickshaw_velocity
 from .sloped_reset import TERRAIN_SLOPES, build_sloped_reset_templates
 from .terrain import (
@@ -58,7 +56,6 @@ from .terrain import (
 @dataclass(frozen=True)
 class MjlabTaskRuntimeCfg:
     domain: DomainRandomizationCfg
-    history_length: int = HISTORY_LENGTH
     terrain_slope: float | None = None
 
 
@@ -68,17 +65,6 @@ def _ids(entity: Any, kind: str, names: tuple[str, ...]) -> torch.Tensor:
     if tuple(resolved) != names:
         raise RuntimeError(f"{kind} order mismatch: expected {names}, got {tuple(resolved)}")
     return torch.as_tensor(indices, device=entity.data.device, dtype=torch.long)
-
-
-def _body_mass_kinematics(env: Any, entity_name: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    entity = env.scene[entity_name]
-    body_ids = entity.indexing.body_ids
-    masses = env.sim.model.body_mass[:, body_ids]
-    total = masses.sum(dim=-1)
-    weights = masses / total[:, None]
-    position = torch.sum(entity.data.body_com_pos_w * weights[..., None], dim=1)
-    velocity = torch.sum(entity.data.body_com_lin_vel_w * weights[..., None], dim=1)
-    return position, velocity, total
 
 
 def _load_static() -> tuple[Any, MujocoStaticEquilibrium]:
@@ -159,25 +145,13 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
 
     env.overspeed_margin = float(cfg.domain.calibration["safety.overspeed_margin"])
     env.rickshaw_state = RickshawRuntimeState.zeros(env.num_envs, device=env.device)
-    env.observation_history_state = ObservationHistoryState.zeros(
-        env.num_envs, history_length=cfg.history_length, device=env.device
-    )
-    env.critic_policy_observation = torch.zeros((env.num_envs, ACTOR_OBSERVATION_DIM), device=env.device)
-    env.teacher_dynamic_history_state = ObservationHistoryState.zeros(
-        env.num_envs,
-        history_length=cfg.history_length,
-        observation_dim=TEACHER_DYNAMIC_DIM,
-        device=env.device,
-    )
     env.hitch_height_target = float(solution.hitch_height)
     zeros = torch.zeros(env.num_envs, device=env.device)
     zeros3 = torch.zeros((env.num_envs, 3), device=env.device)
     env.rickshaw_kinematic_state = RickshawKinematicState.initialized(zeros, zeros3)
-    env.cart_previous_com_velocity_w = torch.zeros((env.num_envs, 3), device=env.device)
-    env.last_rolling_force_w = torch.zeros((env.num_envs, 2, 3), device=env.device)
     env.rickshaw_speed_s = zeros.clone()
     env.rickshaw_ang_vel_z = zeros.clone()
-    env._mjlab_physical_state_step = -1
+    env._mjlab_reward_state_step = -1
     env._mjlab_observation_state_step = -1
 
 
@@ -315,33 +289,23 @@ def reset_from_mujoco_static(env: Any, env_ids: torch.Tensor | None) -> None:
     env.rickshaw_state.wheel_normal_force[env_ids] = 0.0
     env.rickshaw_state.wheel_longitudinal_slip[env_ids] = 0.0
     env.rickshaw_state.two_wheel_contact[env_ids] = False
-    env.rickshaw_state.hand_force_w[env_ids] = 0.0
     env.rickshaw_state.connection_force_w[env_ids] = 0.0
     env.rickshaw_state.relative_position_b[env_ids] = env.static_relative_position_b[env_ids]
     env.rickshaw_state.relative_yaw[env_ids] = env.static_relative_yaw[env_ids]
     env.rickshaw_state.pitch[env_ids] = env.static_rickshaw_pitch[env_ids]
-    env.observation_history_state.reset(env_ids)
-    env.critic_policy_observation[env_ids] = 0.0
-    env.teacher_dynamic_history_state.reset(env_ids)
     zero = torch.zeros(env_ids.numel(), device=env.device)
     env.rickshaw_kinematic_state.reset(
         zero,
         torch.zeros((env_ids.numel(), 3), device=env.device),
         env_ids,
     )
-    env.cart_previous_com_velocity_w[env_ids] = 0.0
-    env.last_rolling_force_w[env_ids] = 0.0
-    env._mjlab_physical_state_step = -1
+    env._mjlab_reward_state_step = -1
     env._mjlab_observation_state_step = -1
 
 
-def ensure_mjlab_physical_state(env: Any) -> None:
-    """Refresh all task state exactly once per policy step."""
+def _refresh_mjlab_instantaneous_state(env: Any) -> None:
+    """Refresh state that does not advance a temporal accumulator."""
 
-    step = int(env.common_step_counter)
-    if env._mjlab_physical_state_step == step:
-        return
-    env._mjlab_physical_state_step = step
     robot = env.scene["robot"]
     cart = env.scene["rickshaw"]
     origin = env.scene.env_origins
@@ -376,17 +340,9 @@ def ensure_mjlab_physical_state(env: Any) -> None:
     wheel_normal = torch.clamp(torch.sum(wheel_force * env.path_normal_w[:, None, :], dim=-1), min=0.0)
     env.rickshaw_state.wheel_normal_force[:] = wheel_normal
     env.rickshaw_state.two_wheel_contact[:] = torch.all(wheel_normal > 1.0, dim=-1)
-    _, cart_velocity, cart_mass = _body_mass_kinematics(env, "rickshaw")
     lin_vel_x, _, ang_vel_z = rickshaw_velocity(cart, env.path_normal_w)
     env.rickshaw_speed_s[:] = lin_vel_x
     env.rickshaw_ang_vel_z[:] = ang_vel_z
-    env.rickshaw_kinematic_state.update(
-        lin_vel_x,
-        cart.data.root_link_ang_vel_w,
-        env.path_lateral_w,
-        env.path_normal_w,
-        env.step_dt,
-    )
     env.rickshaw_state.wheel_longitudinal_slip[:] = wheel_longitudinal_slip(
         cart.data.body_link_lin_vel_w[:, env.wheel_body_ids],
         cart.data.body_link_ang_vel_w[:, env.wheel_body_ids],
@@ -394,19 +350,42 @@ def ensure_mjlab_physical_state(env: Any) -> None:
         env.path_normal_w,
         WHEEL_RADIUS,
     )
-    acceleration = (cart_velocity - env.cart_previous_com_velocity_w) / env.step_dt
-    gravity = torch.tensor((0.0, 0.0, -9.81), device=env.device)
-    force_on_cart = (
-        cart_mass[:, None] * acceleration
-        - cart_mass[:, None] * gravity
-        - torch.sum(wheel_force, dim=1)
-        - torch.sum(env.last_rolling_force_w, dim=1)
-    )
-    valid_force = (step > 0) & torch.all(torch.isfinite(force_on_cart), dim=-1)
-    force_on_cart = torch.where(valid_force[:, None], force_on_cart, torch.zeros_like(force_on_cart))
-    env.rickshaw_state.hand_force_w[:] = -force_on_cart
-    env.cart_previous_com_velocity_w[:] = cart_velocity
 
+
+def ensure_mjlab_reward_state(env: Any) -> None:
+    """Refresh reward state and advance kinematics once per policy step."""
+
+    step = int(env.common_step_counter)
+    if env._mjlab_reward_state_step == step:
+        return
+    env._mjlab_reward_state_step = step
+    _refresh_mjlab_instantaneous_state(env)
+    cart = env.scene["rickshaw"]
+    env.rickshaw_kinematic_state.update(
+        env.rickshaw_speed_s,
+        cart.data.root_link_ang_vel_w,
+        env.path_lateral_w,
+        env.path_normal_w,
+        env.step_dt,
+    )
+
+
+def ensure_mjlab_observation_state(env: Any) -> None:
+    """Refresh post-forward state once before observation assembly."""
+
+    step = int(env.common_step_counter)
+    if env._mjlab_observation_state_step == step:
+        return
+    env._mjlab_observation_state_step = step
+    _refresh_mjlab_instantaneous_state(env)
+
+
+def apply_mjlab_rolling_resistance(env: Any, env_ids: torch.Tensor | None) -> None:
+    """Write rolling resistance after Mjlab's post-step forward pass."""
+
+    del env_ids
+    cart = env.scene["rickshaw"]
+    wheel_force = env.scene["wheel_contacts"].data.force
     rolling_force = rolling_resistance_force(
         cart.data.body_link_lin_vel_w[:, env.wheel_body_ids],
         wheel_force,
@@ -414,25 +393,16 @@ def ensure_mjlab_physical_state(env: Any) -> None:
         env.path_normal_w,
         env.c_rr,
     )
-    env.last_rolling_force_w[:] = rolling_force
     cart.data.write_external_wrench(
         rolling_force,
         torch.zeros_like(rolling_force),
         body_ids=env.wheel_body_ids.tolist(),
     )
-
-
-def advance_mjlab_policy_state(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTaskRuntimeCfg) -> None:
-    """Advance the online task state once per policy step."""
-
-    del env_ids, cfg
-    ensure_mjlab_physical_state(env)
-
-
 __all__ = [
     "MjlabTaskRuntimeCfg",
-    "advance_mjlab_policy_state",
-    "ensure_mjlab_physical_state",
+    "apply_mjlab_rolling_resistance",
+    "ensure_mjlab_observation_state",
+    "ensure_mjlab_reward_state",
     "initialize_mjlab_domain",
     "initialize_mjlab_task",
     "reset_from_mujoco_static",

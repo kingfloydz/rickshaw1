@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
+from mjlab.utils.lab_api.math import quat_apply
 
 
 def rolling_resistance_force(
@@ -152,14 +153,11 @@ class RickshawKinematicState:
 
 
 def quat_apply_wxyz(quaternion: torch.Tensor, vector: torch.Tensor) -> torch.Tensor:
-    """Rotate vectors by wxyz quaternions without a simulator dependency."""
+    """Validate and delegate wxyz quaternion rotation to Mjlab."""
 
     if quaternion.shape[-1] != 4 or vector.shape[-1] != 3:
         raise ValueError("quaternion/vector dimensions must end in 4/3")
-    q_vec = quaternion[..., 1:]
-    uv = torch.linalg.cross(q_vec, vector, dim=-1)
-    uuv = torch.linalg.cross(q_vec, uv, dim=-1)
-    return vector + 2.0 * (quaternion[..., :1] * uv + uuv)
+    return quat_apply(quaternion, vector)
 
 
 def wheel_ground_frame(

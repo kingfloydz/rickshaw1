@@ -7,8 +7,7 @@ import mujoco
 from g1_rickshaw_lab.assets.g1_dex1 import (
     GRASP_SITE_NAMES,
     GRIPPER_BODY_NAMES,
-    add_g1_position_actuators,
-    get_g1_spec,
+    get_g1_robot_cfg,
 )
 from g1_rickshaw_lab.assets.mujoco_spec import (
     ALL_COLLISION_BITS,
@@ -43,6 +42,8 @@ def add_closed_chain_constraints(spec: mujoco.MjSpec) -> None:
 def build_assembled_spec(*, with_ground: bool = True) -> mujoco.MjSpec:
     """Build a standalone one-environment model for validation/statics."""
 
+    from mjlab.entity import Entity
+
     spec = mujoco.MjSpec()
     spec.option.timestep = 0.005
     spec.option.iterations = 10
@@ -57,9 +58,9 @@ def build_assembled_spec(*, with_ground: bool = True) -> mujoco.MjSpec:
         ground.contype = GROUND_COLLISION_BIT
         ground.conaffinity = ALL_COLLISION_BITS
         ground.friction[:3] = (1.0, 0.005, 0.0001)
-    spec.attach(get_g1_spec(), prefix=f"{ROBOT_ENTITY_NAME}/", frame=spec.worldbody.add_frame())
+    robot_spec = Entity(get_g1_robot_cfg()).spec
+    spec.attach(robot_spec, prefix=f"{ROBOT_ENTITY_NAME}/", frame=spec.worldbody.add_frame())
     spec.attach(get_rickshaw_spec(), prefix=f"{RICKSHAW_ENTITY_NAME}/", frame=spec.worldbody.add_frame())
-    add_g1_position_actuators(spec, prefix=f"{ROBOT_ENTITY_NAME}/")
     add_closed_chain_constraints(spec)
     return spec
 

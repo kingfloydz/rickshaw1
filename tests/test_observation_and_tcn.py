@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from mjlab.utils.buffers import CircularBuffer
 from torch import nn
 
 from g1_rickshaw_lab.policy_schema import TEACHER_STATIC_DIM
 from g1_rickshaw_lab.rl import DYNAMIC_PRIVILEGE_DIM, STATIC_PRIVILEGE_DIM
-from g1_rickshaw_lab.rl.actor_critic import GaussianActor
 from g1_rickshaw_lab.rl.context_encoder import (
     DILATIONS,
     FEATURE_DIM,
@@ -31,7 +31,6 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.observations impo
     PREVIOUS_ACTION_SLICE,
     PROJECTED_GRAVITY_SLICE,
     TEACHER_STATIC_FEATURE_NAMES,
-    ObservationHistoryState,
     assemble_actor_observation,
     assemble_teacher_dynamic_privilege,
 )
@@ -152,44 +151,30 @@ def test_teacher_static_and_critic_privilege_include_normalized_terrain_slope() 
 
 
 def test_history_excludes_current_observation() -> None:
-    state = ObservationHistoryState.zeros(1, dtype=torch.float64)
+    state = CircularBuffer(max_len=HISTORY_LENGTH + 1, batch_size=1, device="cpu")
     first = torch.full((1, ACTOR_OBSERVATION_DIM), 10.0, dtype=torch.float64)
     second = torch.full((1, ACTOR_OBSERVATION_DIM), 20.0, dtype=torch.float64)
     third = torch.full((1, ACTOR_OBSERVATION_DIM), 30.0, dtype=torch.float64)
 
-    state.advance(first)
-    assert state.history.shape == (1, HISTORY_LENGTH, ACTOR_OBSERVATION_DIM)
+    state.append(first)
+    history, current = state.buffer[:, :-1], state.buffer[:, -1]
+    assert history.shape == (1, HISTORY_LENGTH, ACTOR_OBSERVATION_DIM)
     assert (HISTORY_LENGTH, ACTOR_OBSERVATION_DIM) == (61, 98)
-    torch.testing.assert_close(state.history, first[:, None, :].expand(-1, 61, -1))
-    torch.testing.assert_close(state.current, first)
+    torch.testing.assert_close(history, first[:, None, :].expand(-1, 61, -1))
+    torch.testing.assert_close(current, first)
 
-    state.advance(second)
-    torch.testing.assert_close(state.history[:, -1], first)
-    torch.testing.assert_close(state.current, second)
-    assert not torch.any(state.history == 20.0)
+    state.append(second)
+    history, current = state.buffer[:, :-1], state.buffer[:, -1]
+    torch.testing.assert_close(history[:, -1], first)
+    torch.testing.assert_close(current, second)
+    assert not torch.any(history == 20.0)
 
-    state.advance(third)
-    torch.testing.assert_close(state.history[:, -2], first)
-    torch.testing.assert_close(state.history[:, -1], second)
-    torch.testing.assert_close(state.current, third)
-    assert not torch.any(state.history == 30.0)
-
-    frozen_history = state.history.clone()
-    frozen_current = state.current.clone()
-    state.advance(torch.full_like(third, 40.0), valid_mask=torch.tensor([False]))
-    torch.testing.assert_close(state.history, frozen_history)
-    torch.testing.assert_close(state.current, frozen_current)
-
-
-def test_history_state_can_track_current_without_allocating_temporal_storage() -> None:
-    state = ObservationHistoryState.zeros(2, history_enabled=False)
-    observation = torch.randn(2, ACTOR_OBSERVATION_DIM)
-
-    state.advance(observation)
-
-    assert state.history is None
-    torch.testing.assert_close(state.current, observation)
-    assert torch.all(state.initialized)
+    state.append(third)
+    history, current = state.buffer[:, :-1], state.buffer[:, -1]
+    torch.testing.assert_close(history[:, -2], first)
+    torch.testing.assert_close(history[:, -1], second)
+    torch.testing.assert_close(current, third)
+    assert not torch.any(history == 30.0)
 
 
 def test_tcn_schema_receptive_field_and_single_history_path() -> None:
@@ -231,8 +216,6 @@ def test_tcn_schema_receptive_field_and_single_history_path() -> None:
 def test_fixed_teacher_and_student_context_interfaces() -> None:
     teacher = TeacherEncoder().eval()
     student = ContextEncoder().eval()
-    actor = GaussianActor().eval()
-    current = torch.zeros(2, ACTOR_OBSERVATION_DIM)
     observation_history = torch.zeros(2, 61, ACTOR_OBSERVATION_DIM)
     dynamic_history = torch.zeros(2, 61, DYNAMIC_PRIVILEGE_DIM)
     static_privilege = torch.zeros(2, STATIC_PRIVILEGE_DIM)
@@ -243,8 +226,6 @@ def test_fixed_teacher_and_student_context_interfaces() -> None:
             static_privilege,
         )
         student_context = student(observation_history)
-        teacher_distribution = actor(current, teacher_context)
-        student_distribution = actor(current, student_context)
     assert teacher.latent_dim == 16
     assert student.latent_dim == 16
     assert teacher.temporal_input.in_channels == (
@@ -264,17 +245,12 @@ def test_fixed_teacher_and_student_context_interfaces() -> None:
     assert teacher_context_layers[2].out_features == 16
     assert teacher_context.shape == (2, 16)
     assert student_context.shape == (2, 16)
-    assert teacher_distribution.mean.shape == (2, 29)
-    assert student_distribution.mean.shape == (2, 29)
-    assert actor.network[0].in_features == ACTOR_OBSERVATION_DIM + 16
 
 
 @pytest.mark.parametrize("latent_dim", (4, 8, 16, 24, 32))
 def test_teacher_and_student_use_the_selected_latent_width(latent_dim: int) -> None:
     teacher = TeacherEncoder(latent_dim).eval()
     student = ContextEncoder(latent_dim).eval()
-    actor = GaussianActor(latent_dim).eval()
-    current = torch.zeros(2, ACTOR_OBSERVATION_DIM)
     history = torch.zeros(2, 61, ACTOR_OBSERVATION_DIM)
     with torch.no_grad():
         teacher_context = teacher(
@@ -283,12 +259,8 @@ def test_teacher_and_student_use_the_selected_latent_width(latent_dim: int) -> N
             torch.zeros(2, STATIC_PRIVILEGE_DIM),
         )
         student_context = student(history)
-        teacher_distribution = actor(current, teacher_context)
-        student_distribution = actor(current, student_context)
 
     assert teacher_context.shape == student_context.shape == (2, latent_dim)
-    assert actor.network[0].in_features == ACTOR_OBSERVATION_DIM + latent_dim
-    assert teacher_distribution.mean.shape == student_distribution.mean.shape == (2, 29)
 
 
 def test_tcn_oldest_frame_is_used_but_outside_and_future_frames_are_causal() -> None:

@@ -166,6 +166,15 @@ def test_training_enables_mjlab_nan_guard() -> None:
     assert training.sim.contact_sensor_maxmatch == 64
     assert training.decimation == 4
     assert training.scene.terrain.terrain_type == "plane"
+    policy_sequence = training.observations["policy_sequence"]
+    dynamic_sequence = training.observations["teacher_dynamic_sequence"]
+    assert policy_sequence.history_length == dynamic_sequence.history_length == 62
+    assert not policy_sequence.flatten_history_dim
+    assert not dynamic_sequence.flatten_history_dim
+    assert policy_sequence.enable_corruption
+    assert not playback.observations["policy_sequence"].enable_corruption
+    assert "rolling_resistance" in training.events
+    assert "policy_state" not in training.events
 
 
 def test_stage_reward_curricula_match_training_iterations() -> None:
@@ -195,7 +204,12 @@ def test_stage_reward_curricula_match_training_iterations() -> None:
         "rickshaw_g1_relative_yaw_l2",
     }
 
-    def assert_schedule(cfg, iterations: list[int]) -> None:
+    def assert_schedule(
+        cfg,
+        iterations: list[int],
+        dynamics_multipliers: list[float],
+        relative_pose_multipliers: list[float],
+    ) -> None:
         assert set(cfg.curriculum) == {
             f"{name}_weight" for name in dynamics | relative_pose
         }
@@ -205,9 +219,9 @@ def test_stage_reward_curricula_match_training_iterations() -> None:
             stages = term.params["stages"]
             target = cfg.rewards[name].weight
             multipliers = (
-                [0.20, 0.25, 0.50, 0.75, 1.00]
+                relative_pose_multipliers
                 if name in relative_pose
-                else [0.10, 0.25, 0.50, 0.75, 1.00]
+                else dynamics_multipliers
             )
             assert [stage["step"] for stage in stages] == [
                 iteration * 24 for iteration in iterations
@@ -216,9 +230,19 @@ def test_stage_reward_curricula_match_training_iterations() -> None:
                 [target * multiplier for multiplier in multipliers]
             )
 
-    assert_schedule(load_env_cfg(TRAIN_TASK_ID), [0, 300, 600, 900, 1200])
+    assert_schedule(
+        load_env_cfg(TRAIN_TASK_ID),
+        [0, 300, 600, 900, 1200, 1500],
+        [0.04, 0.12, 0.30, 0.50, 0.75, 1.00],
+        [0.08, 0.20, 0.40, 0.60, 0.80, 1.00],
+    )
     assert load_env_cfg(DISTILLATION_TASK_ID).curriculum == {}
-    assert_schedule(load_env_cfg(STUDENT_TASK_ID), [0, 100, 200, 300, 400])
+    assert_schedule(
+        load_env_cfg(STUDENT_TASK_ID),
+        [0, 100, 200, 300, 400],
+        [0.05, 0.20, 0.50, 0.75, 1.00],
+        [0.10, 0.25, 0.50, 0.75, 1.00],
+    )
 
 
 def test_assembled_model_uses_two_connections_without_robot_rickshaw_collision() -> (

@@ -4,27 +4,27 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import replace
 from typing import Any, Literal
 
 from g1_rickshaw_lab.assets import get_g1_robot_cfg, get_rickshaw_cfg
 from g1_rickshaw_lab.configuration import load_feasibility_envelope
-from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH
+from g1_rickshaw_lab.policy_schema import HISTORY_LENGTH, validate_history_length
 from g1_rickshaw_lab.project_paths import CONFIG_ROOT, PROJECT_ROOT
 
 PLAY_SLOPE_ENV = "G1_RICKSHAW_PLAY_SLOPE"
 
 _REWARD_CURRICULUM_SCHEDULES = {
     "s0": (
-        (0, 0.10, 0.20),
-        (300, 0.25, 0.25),
-        (600, 0.50, 0.50),
-        (900, 0.75, 0.75),
-        (1200, 1.00, 1.00),
+        (0, 0.04, 0.08),
+        (300, 0.12, 0.20),
+        (600, 0.30, 0.40),
+        (900, 0.50, 0.60),
+        (1200, 0.75, 0.80),
+        (1500, 1.00, 1.00),
     ),
     "s2": (
-        (0, 0.10, 0.20),
-        (100, 0.25, 0.25),
+        (0, 0.05, 0.10),
+        (100, 0.20, 0.25),
         (200, 0.50, 0.50),
         (300, 0.75, 0.75),
         (400, 1.00, 1.00),
@@ -33,13 +33,10 @@ _REWARD_CURRICULUM_SCHEDULES = {
 
 
 def configure_history_length(env_cfg: Any, history_length: int) -> None:
-    runtime = replace(env_cfg.events["initialize_task"].params["cfg"], history_length=history_length)
-    for event_name in ("initialize_task", "initialize_domain", "policy_state"):
-        env_cfg.events[event_name].params["cfg"] = runtime
-    env_cfg.policy_update = runtime
+    history_length = validate_history_length(history_length)
     env_cfg.history_length = history_length
-    env_cfg.observations["history"].terms["history"].params["history_length"] = history_length
-    env_cfg.observations["teacher_dynamic_history"].terms["history"].params["history_length"] = history_length
+    env_cfg.observations["policy_sequence"].history_length = history_length + 1
+    env_cfg.observations["teacher_dynamic_sequence"].history_length = history_length + 1
 
 
 def _play_slope() -> float | None:
@@ -52,7 +49,7 @@ def _play_slope() -> float | None:
         raise ValueError(f"{PLAY_SLOPE_ENV} must be a slope in radians") from exc
 
 
-def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None):
+def _runtime_cfg(*, play: bool, terrain_slope: float | None):
     from .mdp.events import DomainRandomizationCfg
     from .mjlab_events import MjlabTaskRuntimeCfg
 
@@ -89,7 +86,6 @@ def _runtime_cfg(*, play: bool, history_length: int, terrain_slope: float | None
     )
     return MjlabTaskRuntimeCfg(
         domain=domain,
-        history_length=history_length,
         terrain_slope=terrain_slope,
     )
 
@@ -103,6 +99,7 @@ def g1_rickshaw_env_cfg(
 ):
     """Create the nineteen-slope rickshaw velocity task using mjlab 1.5.3 APIs."""
 
+    history_length = validate_history_length(history_length)
     if terrain_slope is None and play:
         terrain_slope = _play_slope()
 
@@ -120,9 +117,11 @@ def g1_rickshaw_env_cfg(
     from mjlab.tasks.velocity import mdp as velocity_mdp
     from mjlab.tasks.velocity.config.g1.env_cfgs import unitree_g1_flat_env_cfg
     from mjlab.utils.nan_guard import NanGuardCfg
+    from mjlab.utils.noise import UniformNoiseCfg
 
     from . import mjlab_mdp
     from .closed_chain import add_closed_chain_constraints
+    from .mdp.observations import ACTOR_OBSERVATION_NOISE_SCALE
     from .mdp.rewards import (
         HITCH_HEIGHT_RECOVERY_DEADBAND_M,
         HITCH_HEIGHT_RECOVERY_SCALE_M,
@@ -130,39 +129,37 @@ def g1_rickshaw_env_cfg(
     from .mjlab_actions import StaticReferenceJointPositionActionCfg
     from .mjlab_commands import RickshawVelocityCommandCfg
     from .mjlab_events import (
-        advance_mjlab_policy_state,
+        apply_mjlab_rolling_resistance,
         initialize_mjlab_domain,
         initialize_mjlab_task,
         reset_from_mujoco_static,
     )
 
     cfg = unitree_g1_flat_env_cfg(play=play)
-    runtime = _runtime_cfg(play=play, history_length=history_length, terrain_slope=terrain_slope)
+    runtime = _runtime_cfg(play=play, terrain_slope=terrain_slope)
+    actor_noise = UniformNoiseCfg(
+        n_min=tuple(-value for value in ACTOR_OBSERVATION_NOISE_SCALE),
+        n_max=ACTOR_OBSERVATION_NOISE_SCALE,
+    )
     observations = {
-        "policy": ObservationGroupCfg(
-            terms={"current": ObservationTermCfg(func=mjlab_mdp.current_actor_observation)},
-            concatenate_terms=True,
-            enable_corruption=False,
-        ),
-        "history": ObservationGroupCfg(
+        "policy_sequence": ObservationGroupCfg(
             terms={
-                "history": ObservationTermCfg(
-                    func=mjlab_mdp.actor_observation_history,
-                    params={"history_length": history_length},
+                "observation": ObservationTermCfg(
+                    func=mjlab_mdp.current_actor_observation,
+                    noise=actor_noise,
                 )
             },
             concatenate_terms=True,
-            enable_corruption=False,
+            enable_corruption=not play,
+            history_length=history_length + 1,
+            flatten_history_dim=False,
         ),
-        "teacher_dynamic_history": ObservationGroupCfg(
-            terms={
-                "history": ObservationTermCfg(
-                    func=mjlab_mdp.teacher_dynamic_history,
-                    params={"history_length": history_length},
-                )
-            },
+        "teacher_dynamic_sequence": ObservationGroupCfg(
+            terms={"observation": ObservationTermCfg(func=mjlab_mdp.teacher_dynamic_observation)},
             concatenate_terms=True,
             enable_corruption=False,
+            history_length=history_length + 1,
+            flatten_history_dim=False,
         ),
         "teacher_static": ObservationGroupCfg(
             terms={"static": ObservationTermCfg(func=mjlab_mdp.teacher_static)},
@@ -191,7 +188,7 @@ def g1_rickshaw_env_cfg(
         "initialize_task": EventTermCfg(func=initialize_mjlab_task, mode="startup", params={"cfg": runtime}),
         "initialize_domain": EventTermCfg(func=initialize_mjlab_domain, mode="startup", params={"cfg": runtime}),
         "mujoco_static_reset": EventTermCfg(func=reset_from_mujoco_static, mode="reset"),
-        "policy_state": EventTermCfg(func=advance_mjlab_policy_state, mode="step", params={"cfg": runtime}),
+        "rolling_resistance": EventTermCfg(func=apply_mjlab_rolling_resistance, mode="step"),
     }
     feet_ground_sensor_name = "feet_ground_contact"
     foot_height_sensor_name = "foot_height_scan"
@@ -412,9 +409,7 @@ def g1_rickshaw_env_cfg(
     cfg.sim.mujoco.ls_iterations = 20
     cfg.sim.mujoco.ccd_iterations = 50
     cfg.history_length = history_length
-    cfg.observation_noise_enabled = not play
     cfg.domain_randomization = runtime.domain
-    cfg.policy_update = runtime
     if play:
         cfg.episode_length_s = int(1e9)
     cfg.terrain_slope = terrain_slope

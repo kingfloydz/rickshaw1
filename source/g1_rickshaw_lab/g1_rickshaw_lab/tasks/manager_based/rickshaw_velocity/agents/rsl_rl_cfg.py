@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from mjlab.rl import (
@@ -11,6 +11,7 @@ from mjlab.rl import (
     RslRlOnPolicyRunnerCfg,
     RslRlPpoAlgorithmCfg,
 )
+from mjlab.tasks.velocity.config.g1.rl_cfg import unitree_g1_ppo_runner_cfg
 
 from g1_rickshaw_lab.policy_schema import DEFAULT_CONTEXT_DIM, HISTORY_LENGTH
 
@@ -61,45 +62,30 @@ class DistillationRunnerCfg(RslRlBaseRunnerCfg):
     teacher_checkpoint: str | None = None
 
 
-def _actor_cfg(*, latent_dim: int, history_length: int) -> RickshawActorCfg:
+def _actor_cfg(base: RslRlModelCfg, *, latent_dim: int, history_length: int) -> RickshawActorCfg:
+    values = asdict(base)
+    values["class_name"] = "g1_rickshaw_lab.rl.rsl_rl_models:RslRickshawActorModel"
     return RickshawActorCfg(
-        class_name="g1_rickshaw_lab.rl.rsl_rl_models:RslRickshawActorModel",
-        hidden_dims=(512, 256, 128),
-        activation="elu",
-        obs_normalization=True,
+        **values,
         latent_dim=latent_dim,
         history_length=history_length,
-        distribution_cfg={
-            "class_name": "GaussianDistribution",
-            "init_std": 1.0,
-            "std_type": "scalar",
-        },
     )
 
 
-def _critic_cfg() -> RslRlModelCfg:
-    return RslRlModelCfg(
-        class_name="g1_rickshaw_lab.rl.rsl_rl_models:RslRickshawCriticModel",
-        hidden_dims=(512, 256, 128),
-        activation="elu",
-        obs_normalization=True,
-    )
+def _critic_cfg(base: RslRlModelCfg) -> RslRlModelCfg:
+    values = asdict(base)
+    values["class_name"] = "g1_rickshaw_lab.rl.rsl_rl_models:RslRickshawCriticModel"
+    return RslRlModelCfg(**values)
 
 
-def _ppo_cfg() -> RslRlPpoAlgorithmCfg:
-    return RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        clip_param=0.2,
-        entropy_coef=0.01,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=1.0e-3,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
+def _g1_training_components(
+    *, latent_dim: int, history_length: int
+) -> tuple[RickshawActorCfg, RslRlModelCfg, RslRlPpoAlgorithmCfg]:
+    base = unitree_g1_ppo_runner_cfg()
+    return (
+        _actor_cfg(base.actor, latent_dim=latent_dim, history_length=history_length),
+        _critic_cfg(base.critic),
+        base.algorithm,
     )
 
 
@@ -109,6 +95,7 @@ def g1_rickshaw_teacher_ppo_runner_cfg(
     history_length: int = HISTORY_LENGTH,
     rollout_steps: int = DEFAULT_ROLLOUT_STEPS,
 ) -> TeacherRunnerCfg:
+    actor, critic, algorithm = _g1_training_components(latent_dim=latent_dim, history_length=history_length)
     return TeacherRunnerCfg(
         seed=42,
         num_steps_per_env=rollout_steps,
@@ -119,12 +106,12 @@ def g1_rickshaw_teacher_ppo_runner_cfg(
         logger="tensorboard",
         clip_actions=None,
         obs_groups={
-            "actor": ("policy", "history", "teacher_dynamic_history", "teacher_static"),
+            "actor": ("policy_sequence", "teacher_dynamic_sequence", "teacher_static"),
             "critic": ("critic_policy", "critic"),
         },
-        actor=_actor_cfg(latent_dim=latent_dim, history_length=history_length),
-        critic=_critic_cfg(),
-        algorithm=_ppo_cfg(),
+        actor=actor,
+        critic=critic,
+        algorithm=algorithm,
     )
 
 
@@ -134,6 +121,7 @@ def g1_rickshaw_student_ppo_runner_cfg(
     history_length: int = HISTORY_LENGTH,
     rollout_steps: int = DEFAULT_ROLLOUT_STEPS,
 ) -> StudentRunnerCfg:
+    actor, critic, algorithm = _g1_training_components(latent_dim=latent_dim, history_length=history_length)
     return StudentRunnerCfg(
         seed=42,
         num_steps_per_env=rollout_steps,
@@ -144,12 +132,12 @@ def g1_rickshaw_student_ppo_runner_cfg(
         logger="tensorboard",
         clip_actions=None,
         obs_groups={
-            "actor": ("policy", "history"),
+            "actor": ("policy_sequence",),
             "critic": ("critic_policy", "critic"),
         },
-        actor=_actor_cfg(latent_dim=latent_dim, history_length=history_length),
-        critic=_critic_cfg(),
-        algorithm=_ppo_cfg(),
+        actor=actor,
+        critic=critic,
+        algorithm=algorithm,
     )
 
 
@@ -159,7 +147,8 @@ def g1_rickshaw_distillation_runner_cfg(
     history_length: int = HISTORY_LENGTH,
     rollout_steps: int = DEFAULT_ROLLOUT_STEPS,
 ) -> DistillationRunnerCfg:
-    model = _actor_cfg(latent_dim=latent_dim, history_length=history_length)
+    base = unitree_g1_ppo_runner_cfg()
+    model = _actor_cfg(base.actor, latent_dim=latent_dim, history_length=history_length)
     return DistillationRunnerCfg(
         seed=42,
         num_steps_per_env=rollout_steps,
@@ -170,11 +159,11 @@ def g1_rickshaw_distillation_runner_cfg(
         logger="tensorboard",
         clip_actions=None,
         obs_groups={
-            "student": ("policy", "history"),
-            "teacher": ("policy", "history", "teacher_dynamic_history", "teacher_static"),
+            "student": ("policy_sequence",),
+            "teacher": ("policy_sequence", "teacher_dynamic_sequence", "teacher_static"),
         },
         student=model,
-        teacher=_actor_cfg(latent_dim=latent_dim, history_length=history_length),
+        teacher=_actor_cfg(base.actor, latent_dim=latent_dim, history_length=history_length),
     )
 
 

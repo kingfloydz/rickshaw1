@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from g1_rickshaw_lab import policy_schema
-from g1_rickshaw_lab.rl import actor_critic, context_encoder, teacher_model
+from g1_rickshaw_lab.rl import context_encoder, teacher_model
 from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp import observations
 
 
@@ -26,9 +26,6 @@ def test_policy_dimensions_are_shared_across_runtime_layers() -> None:
         24,
         32,
     )
-    assert actor_critic.CURRENT_OBSERVATION_DIM == policy_schema.ACTOR_OBSERVATION_DIM
-    assert actor_critic.ACTION_DIM == policy_schema.ACTION_DIM
-    assert actor_critic.CRITIC_PRIVILEGE_DIM == policy_schema.CRITIC_PRIVILEGED_DIM
     assert teacher_model.DYNAMIC_PRIVILEGE_DIM == policy_schema.TEACHER_DYNAMIC_DIM
     assert teacher_model.STATIC_PRIVILEGE_DIM == policy_schema.TEACHER_STATIC_DIM
     assert observations.ACTOR_OBSERVATION_DIM == policy_schema.ACTOR_OBSERVATION_DIM

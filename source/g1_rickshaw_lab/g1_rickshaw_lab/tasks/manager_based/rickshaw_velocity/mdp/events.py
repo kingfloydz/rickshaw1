@@ -24,7 +24,6 @@ class RickshawRuntimeState:
     pitch: torch.Tensor
     two_wheel_contact: torch.Tensor
     connection_residual: torch.Tensor
-    hand_force_w: torch.Tensor
     connection_force_w: torch.Tensor
     relative_position_b: torch.Tensor
     relative_yaw: torch.Tensor
@@ -46,7 +45,6 @@ class RickshawRuntimeState:
             pitch=scalar.clone(),
             two_wheel_contact=torch.zeros(num_envs, device=device, dtype=torch.bool),
             connection_residual=scalar.clone(),
-            hand_force_w=torch.zeros((num_envs, 3), device=device, dtype=dtype),
             connection_force_w=torch.zeros((num_envs, 2, 3), device=device, dtype=dtype),
             relative_position_b=torch.zeros((num_envs, 3), device=device, dtype=dtype),
             relative_yaw=scalar.clone(),

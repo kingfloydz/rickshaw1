@@ -1,8 +1,6 @@
-"""Fixed-schema actor observations and the exclusive 61-frame history."""
+"""Fixed-schema actor and privileged observations."""
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 import torch
 
@@ -12,7 +10,6 @@ from g1_rickshaw_lab.policy_schema import (
     HISTORY_LENGTH,
     TEACHER_DYNAMIC_DIM,
     TEACHER_STATIC_DIM,
-    validate_history_length,
 )
 
 TEACHER_STATIC_DOMAIN_DIM = TEACHER_STATIC_DIM
@@ -126,94 +123,6 @@ def assemble_teacher_dynamic_privilege(
     )
 
 
-@dataclass
-class ObservationHistoryState:
-    """History where ``current`` is never included in ``history``."""
-
-    history: torch.Tensor | None
-    current: torch.Tensor
-    initialized: torch.Tensor
-
-    @classmethod
-    def zeros(
-        cls,
-        num_envs: int,
-        *,
-        history_length: int = HISTORY_LENGTH,
-        observation_dim: int = ACTOR_OBSERVATION_DIM,
-        history_enabled: bool = True,
-        device: torch.device | str | None = None,
-        dtype: torch.dtype = torch.float32,
-    ) -> ObservationHistoryState:
-        history_length = validate_history_length(history_length)
-        if observation_dim <= 0:
-            raise ValueError("feature dimension must be positive")
-        return cls(
-            history=(
-                torch.zeros(
-                    (num_envs, history_length, observation_dim),
-                    device=device,
-                    dtype=dtype,
-                )
-                if history_enabled
-                else None
-            ),
-            current=torch.zeros((num_envs, observation_dim), device=device, dtype=dtype),
-            initialized=torch.zeros(num_envs, device=device, dtype=torch.bool),
-        )
-
-    def reset(self, env_ids: torch.Tensor | None = None) -> None:
-        ids: slice | torch.Tensor = slice(None) if env_ids is None else env_ids
-        if self.history is not None:
-            self.history[ids] = 0.0
-        self.current[ids] = 0.0
-        self.initialized[ids] = False
-
-    def initialize(self, observation: torch.Tensor, env_ids: torch.Tensor | None = None) -> None:
-        """Fill all history frames with the first post-reset observation."""
-
-        if env_ids is None:
-            ids = torch.arange(self.current.shape[0], device=self.current.device)
-        else:
-            ids = env_ids.to(device=self.current.device, dtype=torch.long)
-        if observation.shape == self.current.shape:
-            observation = observation[ids]
-        if observation.shape != (ids.numel(), self.current.shape[-1]):
-            raise ValueError("initial history observation has the wrong shape")
-        if self.history is not None:
-            self.history[ids] = observation[:, None, :].expand(-1, self.history.shape[1], -1)
-        self.current[ids] = observation
-        self.initialized[ids] = True
-
-    def advance(self, new_observation: torch.Tensor, valid_mask: torch.Tensor | None = None) -> None:
-        """Append old current, then replace current with the new observation."""
-
-        if new_observation.shape != self.current.shape:
-            raise ValueError("new_observation shape differs from history state")
-        if valid_mask is None:
-            valid_mask = torch.ones_like(self.initialized)
-        if valid_mask.shape != self.initialized.shape:
-            raise ValueError("valid_mask must have shape [N]")
-
-        if self.history is None:
-            self.current[valid_mask] = new_observation[valid_mask]
-            self.initialized[valid_mask] = True
-            return
-
-        was_initialized = self.initialized.clone()
-        initialize_mask = valid_mask & ~was_initialized
-        advance_mask = valid_mask & was_initialized
-
-        next_history = torch.cat((self.history[:, 1:], self.current[:, None, :]), dim=1)
-        next_history[~advance_mask] = self.history[~advance_mask]
-        initial = new_observation[initialize_mask]
-        next_history[initialize_mask] = initial[:, None, :].expand(-1, next_history.shape[1], -1)
-        self.history = next_history
-
-        self.current[valid_mask] = new_observation[valid_mask]
-        self.initialized[valid_mask] = True
-
-
 def normalize_features(
     values: torch.Tensor,
     lower: torch.Tensor,
@@ -249,7 +158,6 @@ __all__ = [
     "TEACHER_STATIC_DOMAIN_DIM",
     "TEACHER_STATIC_FEATURE_NAMES",
     "ACTOR_OBSERVATION_NOISE_SCALE",
-    "ObservationHistoryState",
     "assemble_actor_observation",
     "assemble_teacher_dynamic_privilege",
     "normalize_features",

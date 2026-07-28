@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 import torch
 from torch import nn
@@ -14,13 +12,22 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.agents.runners import
 )
 
 
-def _runner() -> SimpleNamespace:
-    return SimpleNamespace(
-        alg=SimpleNamespace(
-            _raw_actor=nn.Linear(3, 2),
-            _raw_critic=nn.Linear(4, 1),
-        )
-    )
+class _Algorithm:
+    def __init__(self) -> None:
+        self._raw_actor = nn.Linear(3, 2)
+        self._raw_critic = nn.Linear(4, 1)
+
+    def load(self, checkpoint: dict, load_cfg: dict, strict: bool) -> bool:
+        assert load_cfg == {
+            "actor": True,
+            "critic": True,
+            "optimizer": False,
+            "iteration": False,
+            "rnd": False,
+        }
+        self._raw_actor.load_state_dict(checkpoint["actor_state_dict"], strict=strict)
+        self._raw_critic.load_state_dict(checkpoint["critic_state_dict"], strict=strict)
+        return False
 
 
 def test_fresh_s2_loads_only_upstream_actor_and_critic_states(
@@ -50,16 +57,16 @@ def test_fresh_s2_loads_only_upstream_actor_and_critic_states(
         },
         context,
     )
-    runner = _runner()
+    algorithm = _Algorithm()
 
-    initialize_student_models(runner.alg, str(teacher), str(context))
+    initialize_student_models(algorithm, str(teacher), str(context))
 
     for actual, expected in zip(
-        runner.alg._raw_actor.parameters(), source_actor.parameters(), strict=True
+        algorithm._raw_actor.parameters(), source_actor.parameters(), strict=True
     ):
         torch.testing.assert_close(actual, expected)
     for actual, expected in zip(
-        runner.alg._raw_critic.parameters(), source_critic.parameters(), strict=True
+        algorithm._raw_critic.parameters(), source_critic.parameters(), strict=True
     ):
         torch.testing.assert_close(actual, expected)
 
@@ -71,7 +78,7 @@ def test_fresh_s2_uses_strict_state_loading(tmp_path: Path) -> None:
     torch.save({"student_state_dict": nn.Linear(5, 2).state_dict()}, context)
 
     with pytest.raises(RuntimeError):
-        initialize_student_models(_runner().alg, str(teacher), str(context))
+        initialize_student_models(_Algorithm(), str(teacher), str(context))
 
 
 @pytest.mark.parametrize(
@@ -93,4 +100,4 @@ def test_fresh_s2_requires_standard_checkpoint_keys(
     torch.save(context_payload, context)
 
     with pytest.raises(KeyError, match=message):
-        initialize_student_models(_runner().alg, str(teacher), str(context))
+        initialize_student_models(_Algorithm(), str(teacher), str(context))
