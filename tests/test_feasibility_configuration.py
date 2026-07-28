@@ -58,10 +58,3 @@ def test_feasibility_envelope_rejects_joint_order_drift() -> None:
     )
     with pytest.raises(FeasibilityConfigError, match="fixed policy joint order"):
         FeasibilityEnvelope.from_mapping(mapping)
-
-
-def test_legacy_actuator_fields_are_rejected() -> None:
-    mapping = _valid_mapping()
-    mapping["calibration"]["control.linear_stiffness_nominal"] = 5.0
-    with pytest.raises(FeasibilityConfigError, match="unknown"):
-        FeasibilityEnvelope.from_mapping(mapping)

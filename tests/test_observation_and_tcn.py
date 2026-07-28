@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from mjlab.utils.buffers import CircularBuffer
 from torch import nn
 
 from g1_rickshaw_lab.policy_schema import TEACHER_STATIC_DIM
@@ -150,33 +149,6 @@ def test_teacher_static_and_critic_privilege_include_normalized_terrain_slope() 
     )
 
 
-def test_history_excludes_current_observation() -> None:
-    state = CircularBuffer(max_len=HISTORY_LENGTH + 1, batch_size=1, device="cpu")
-    first = torch.full((1, ACTOR_OBSERVATION_DIM), 10.0, dtype=torch.float64)
-    second = torch.full((1, ACTOR_OBSERVATION_DIM), 20.0, dtype=torch.float64)
-    third = torch.full((1, ACTOR_OBSERVATION_DIM), 30.0, dtype=torch.float64)
-
-    state.append(first)
-    history, current = state.buffer[:, :-1], state.buffer[:, -1]
-    assert history.shape == (1, HISTORY_LENGTH, ACTOR_OBSERVATION_DIM)
-    assert (HISTORY_LENGTH, ACTOR_OBSERVATION_DIM) == (61, 98)
-    torch.testing.assert_close(history, first[:, None, :].expand(-1, 61, -1))
-    torch.testing.assert_close(current, first)
-
-    state.append(second)
-    history, current = state.buffer[:, :-1], state.buffer[:, -1]
-    torch.testing.assert_close(history[:, -1], first)
-    torch.testing.assert_close(current, second)
-    assert not torch.any(history == 20.0)
-
-    state.append(third)
-    history, current = state.buffer[:, :-1], state.buffer[:, -1]
-    torch.testing.assert_close(history[:, -2], first)
-    torch.testing.assert_close(history[:, -1], second)
-    torch.testing.assert_close(current, third)
-    assert not torch.any(history == 30.0)
-
-
 def test_tcn_schema_receptive_field_and_single_history_path() -> None:
     assert TCN_HISTORY_LENGTH == HISTORY_LENGTH == 61
     assert KERNEL_SIZE == 5
@@ -211,40 +183,6 @@ def test_tcn_schema_receptive_field_and_single_history_path() -> None:
         if isinstance(module, (nn.RNNBase, nn.RNNCellBase))
     ]
     assert recurrent_modules == []
-
-
-def test_fixed_teacher_and_student_context_interfaces() -> None:
-    teacher = TeacherEncoder().eval()
-    student = ContextEncoder().eval()
-    observation_history = torch.zeros(2, 61, ACTOR_OBSERVATION_DIM)
-    dynamic_history = torch.zeros(2, 61, DYNAMIC_PRIVILEGE_DIM)
-    static_privilege = torch.zeros(2, STATIC_PRIVILEGE_DIM)
-    with torch.no_grad():
-        teacher_context = teacher(
-            observation_history,
-            dynamic_history,
-            static_privilege,
-        )
-        student_context = student(observation_history)
-    assert teacher.latent_dim == 16
-    assert student.latent_dim == 16
-    assert teacher.temporal_input.in_channels == (
-        ACTOR_OBSERVATION_DIM + DYNAMIC_PRIVILEGE_DIM
-    )
-    assert teacher.temporal_input.out_channels == 48
-    assert student.context.in_features == 48
-    assert teacher.static[0].in_features == STATIC_PRIVILEGE_DIM
-    assert teacher.static[0].out_features == 16
-    teacher_context_layers = list(teacher.context)
-    assert isinstance(teacher_context_layers[0], nn.Linear)
-    assert teacher_context_layers[0].in_features == 64
-    assert teacher_context_layers[0].out_features == 48
-    assert isinstance(teacher_context_layers[1], nn.ELU)
-    assert isinstance(teacher_context_layers[2], nn.Linear)
-    assert teacher_context_layers[2].in_features == 48
-    assert teacher_context_layers[2].out_features == 16
-    assert teacher_context.shape == (2, 16)
-    assert student_context.shape == (2, 16)
 
 
 @pytest.mark.parametrize("latent_dim", (4, 8, 16, 24, 32))

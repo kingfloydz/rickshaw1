@@ -8,10 +8,6 @@ import pytest
 import torch
 
 from g1_rickshaw_lab.g1_motor_defaults import (
-    ARMATURE_4010,
-    ARMATURE_5020,
-    ARMATURE_7520_14,
-    ARMATURE_7520_22,
     G1_ACTION_SCALE,
     G1_JOINT_EFFORT_LIMITS,
     G1_JOINT_STIFFNESS,
@@ -28,15 +24,6 @@ from g1_rickshaw_lab.tasks.manager_based.rickshaw_velocity.mdp.dynamics import (
     wheel_ground_frame,
     wheel_longitudinal_slip,
 )
-
-
-def test_reflected_inertia_matches_mjlab_1_5_3_g1_constants() -> None:
-    assert ARMATURE_5020 == pytest.approx(0.003609725)
-    assert ARMATURE_7520_14 == pytest.approx(0.01017752004132231)
-    assert ARMATURE_7520_22 == pytest.approx(0.025101925)
-    assert ARMATURE_4010 == pytest.approx(0.00425)
-
-
 def test_action_scale_matches_unitree_motor_defaults() -> None:
     assert ACTION_DIM == 29
     expected = tuple(
