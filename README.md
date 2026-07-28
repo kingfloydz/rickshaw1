@@ -375,7 +375,6 @@ config/
 
 ```text
 rickshaw1/
-|-- .gitignore                         Git ignore rules for generated artifacts
 |-- README.md                          Architecture, configuration, and workflows
 |-- assets/
 |   |-- g1_dex1/
