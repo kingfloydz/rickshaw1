@@ -303,8 +303,18 @@ PYTHON=/path/to/python
 
 Common operational overrides are `--num-envs`, `--s0-iterations`,
 `--s1-iterations`, `--s2-iterations`, `--seed`, `--log-root`, and
-`--gpu-ids`. Use `--gpu-ids all` for all available GPUs or `None` for a
-small CPU debug run.
+`--gpu-ids`. Use `--gpu-ids all` for all available GPUs. `--gpu-ids None`
+selects CPU execution but does not reduce the default environment or iteration
+counts. For a small end-to-end CPU smoke test, use:
+
+```bash
+"$PYTHON" scripts/train_pipeline.py \
+  --gpu-ids None \
+  --num-envs 32 \
+  --s0-iterations 1 \
+  --s1-iterations 1 \
+  --s2-iterations 1
+```
 
 Run stages separately:
 
@@ -335,8 +345,10 @@ STUDENT=/absolute/path/to/s2_student_checkpoint.pt
   --viewer viser
 ```
 
-Use `--slope 0.05` to select one configured slope. Without it, environments
-are assigned across all 19 slopes.
+Use `--slope 0.05` to select one configured slope. Without it, slopes are
+distributed across the play environments. Play defaults to one environment,
+which receives the first configured slope (`-0.08 rad`); use `--num-envs 19`
+or greater to cover all 19 slopes in one run.
 
 Export the deployable student:
 
@@ -345,8 +357,10 @@ Export the deployable student:
 ```
 
 The exporter writes `exported/policy.pt` and `exported/policy.onnx` beside the
-checkpoint. Both accept `current [N,98]` and `history [N,61,98]`, and return
-`actions [N,29]`.
+checkpoint. The JIT policy accepts `current [N,98]` and `history [N,61,98]`
+and returns `actions [N,29]`. The ONNX policy is exported with a fixed batch
+size of one: it accepts `current [1,98]` and `history [1,61,98]` and returns
+`actions [1,29]`.
 
 ### Lint
 
