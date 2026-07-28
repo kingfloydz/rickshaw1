@@ -9,6 +9,7 @@ from mjlab.asset_zoo.robots.unitree_g1.g1_constants import G1_ARTICULATION
 
 from .configuration import G1_JOINT_ORDER
 
+
 def _parameters_for_joint(name: str) -> tuple[float, float, float, float]:
     matches = [
         actuator

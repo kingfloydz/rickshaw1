@@ -62,28 +62,26 @@ PYTHON=/path/to/python
 
 #### MuJoCo Solver Configuration
 
-Training and playback use batched MjLab/MuJoCo-Warp simulation. Static-pose
-generation uses a standalone CPU MuJoCo model. Parameters not set by this
-project retain the framework defaults shown below:
+Training and playback use batched MjLab/MuJoCo-Warp simulation. Parameters not
+set by this project retain the framework defaults shown below:
 
-| Parameter | Training/play | Static model | Meaning |
-| --- | ---: | ---: | --- |
-| `timestep` | `0.005 s` | `0.005 s` | 200 Hz physics step. |
-| Control decimation | `4` | N/A | One action per `0.02 s` (50 Hz). |
-| `integrator` | `implicitfast` | `Euler` | Time integrator; inherited defaults differ. |
-| `solver` | `Newton` | `Newton` | Constraint solver. |
-| `cone` | `pyramidal` | `pyramidal` | Friction-cone representation. |
-| `jacobian` | `auto` | `auto` | Dense/sparse Jacobian selection. |
-| `iterations` | `10` | `10` | Maximum main solver iterations per step. |
-| `tolerance` | `1e-8` | `1e-8` | Main solver early-termination tolerance. |
-| `ls_iterations` | `20` | `20` | Maximum line-search iterations. |
-| `ls_tolerance` | `0.01` | `0.01` | Line-search tolerance. |
-| `ccd_iterations` | `50` | `50` | Maximum convex collision solver iterations. |
-| `impratio` | `1.0` | `1.0` | Friction-to-normal contact impedance ratio. |
+| Parameter | Training/play | Meaning |
+| --- | ---: | --- |
+| `timestep` | `0.005 s` | 200 Hz physics step. |
+| Control decimation | `4` | One action per `0.02 s` (50 Hz). |
+| `integrator` | `implicitfast` | Time integrator. |
+| `solver` | `Newton` | Constraint solver. |
+| `cone` | `pyramidal` | Friction-cone representation. |
+| `jacobian` | `auto` | Dense/sparse Jacobian selection. |
+| `iterations` | `10` | Maximum main solver iterations per step. |
+| `tolerance` | `1e-8` | Main solver early-termination tolerance. |
+| `ls_iterations` | `20` | Maximum line-search iterations. |
+| `ls_tolerance` | `0.01` | Line-search tolerance. |
+| `ccd_iterations` | `50` | Maximum convex collision solver iterations. |
+| `impratio` | `1.0` | Friction-to-normal contact impedance ratio. |
 
 The project explicitly sets `timestep`, `iterations`, `ls_iterations`, and
-`ccd_iterations` in both models. Decimation belongs only to the MjLab
-environment. Batched allocation settings are:
+`ccd_iterations` for the MjLab environment. Batched allocation settings are:
 
 | Parameter | Value | Meaning |
 | --- | ---: | --- |
@@ -96,7 +94,7 @@ The two hand-hitch `connect` equalities inherit
 
 MuJoCo friction triples are `(sliding, torsional, rolling)`:
 
-| Geometry or constraint | Asset/static setting | Runtime behavior |
+| Geometry or constraint | Asset setting | Runtime behavior |
 | --- | --- | --- |
 | Terrain plane | `friction=(1.0, 0.005, 0.0001)` | Sliding friction is replaced by `terrain.friction`. |
 | G1 foot collision spheres | `condim=3`, `priority=1`, `friction=(0.6, 0.005, 0.0001)` | Sliding friction is replaced by `terrain.friction`. |
@@ -375,18 +373,99 @@ config/
 
 ## Repository Layout
 
-| Path | Responsibility |
-| --- | --- |
-| `assets/` | G1/Dex1 and rickshaw URDF, STL, and mesh assets. |
-| `config/` | Feasibility ranges and the certified static pose. |
-| `docs/` | Rendered Teacher and Student network diagrams. |
-| `scripts/validate_static_initialization.py` | Solve and save the static certificate. |
-| `scripts/train_pipeline.py` | Run S0, S1, and S2 in sequence. |
-| `scripts/train_teacher.py`, `train_context.py`, `finetune_student.py` | Run individual training stages. |
-| `scripts/play.py`, `export_student.py` | Playback and policy export. |
-| `source/g1_rickshaw_lab/g1_rickshaw_lab/assets/` | Build MuJoCo robot and rickshaw specs. |
-| `source/g1_rickshaw_lab/g1_rickshaw_lab/rl/` | Teacher/student encoders and RSL-RL adapters. |
-| `source/g1_rickshaw_lab/g1_rickshaw_lab/tasks/manager_based/rickshaw_velocity/` | Scene, managers, closed chain, terrain, resets, rewards, and agents. |
+```text
+rickshaw1/
+|-- .gitignore                         Git ignore rules for generated artifacts
+|-- README.md                          Architecture, configuration, and workflows
+|-- assets/
+|   |-- g1_dex1/
+|   |   |-- g1_29dof_mode_15_with_dex1_1.urdf
+|   |   |                                  G1-29DoF model with fixed Dex1 grippers
+|   |   `-- meshes/                    G1 and Dex1 visual/collision STL meshes
+|   `-- rickshaw/
+|       |-- rickshaw.urdf              Two-wheel rickshaw kinematic model
+|       |-- body.stl                   Rickshaw body visual mesh
+|       |-- body_collision.stl         Rickshaw body collision mesh
+|       |-- left_wheel.stl             Left-wheel visual mesh
+|       `-- right_wheel.stl            Right-wheel visual mesh
+|-- config/
+|   |-- feasibility_envelope.yaml      Nominal physical values and DR ranges
+|   `-- static_rest_poses.json         Certified flat-ground equilibrium state
+|-- docs/
+|   |-- teacher_network.png            Teacher network architecture diagram
+|   `-- student_network.png            Student network architecture diagram
+|-- scripts/
+|   |-- _project.py                    Adds the source-layout package to sys.path
+|   |-- _stage_training.py             Shared stage config and CLI override setup
+|   |-- _static_equilibrium_solver.py  Closed-chain reset-pose optimizer
+|   |-- validate_static_initialization.py
+|   |                                  Solves and saves the reset-pose certificate
+|   |-- train_teacher.py               Trains or resumes the S0 PPO teacher
+|   |-- train_context.py               Runs S1 teacher-to-student distillation
+|   |-- finetune_student.py            Initializes or resumes S2 student PPO
+|   |-- train_pipeline.py              Runs S0, S1, and S2 with checkpoint handoff
+|   |-- play.py                        Launches playback with optional slope choice
+|   `-- export_student.py              Exports student policy to JIT and ONNX
+`-- source/g1_rickshaw_lab/
+    |-- pyproject.toml                 Setuptools build-system declaration
+    |-- setup.py                       Package metadata and runtime dependencies
+    `-- g1_rickshaw_lab/
+        |-- __init__.py                Top-level Python package marker
+        |-- project_paths.py           Repository asset/config path resolution
+        |-- configuration.py           Feasibility YAML schema and loader
+        |-- g1_motor_defaults.py       G1 actuator, effort, and action constants
+        |-- policy_schema.py           Observation/action dimensions and ABI checks
+        |-- rickshaw_spec.py           Rickshaw mass, COM, wheel, and hitch constants
+        |-- static_equilibrium.py      Reset certificate schema, signature, and I/O
+        |-- assets/
+        |   |-- __init__.py            Asset package marker
+        |   |-- mujoco_spec.py         Shared URDF, free-joint, and collision helpers
+        |   |-- g1_dex1.py             Builds the G1/Dex1 MjSpec and EntityCfg
+        |   `-- rickshaw.py            Builds the rickshaw MjSpec and EntityCfg
+        |-- rl/
+        |   |-- __init__.py            RL package marker
+        |   |-- context_encoder.py     Student residual causal TCN encoder
+        |   |-- teacher_model.py       Privileged teacher context encoder
+        |   `-- rsl_rl_models.py       RSL-RL actor, migration, and export wrappers
+        `-- tasks/
+            |-- __init__.py            Task package marker
+            `-- manager_based/
+                |-- __init__.py        Manager-based task package marker
+                `-- rickshaw_velocity/
+                    |-- __init__.py    S0, S1, and S2 task identifiers
+                    |-- registration.py
+                    |                  Registers task configs and runner classes
+                    |-- env_cfg.py     Scene, managers, rewards, and curricula
+                    |-- closed_chain.py
+                    |                  Assembles robot/cart and connect equalities
+                    |-- terrain.py     Slope assignment, frames, and plane poses
+                    |-- sloped_reset.py
+                    |                  Transforms the flat certificate to each slope
+                    |-- mjlab_actions.py
+                    |                  Static-reference joint-position action
+                    |-- mjlab_commands.py
+                    |                  Terrain-frame rickshaw velocity command
+                    |-- mjlab_events.py
+                    |                  Initialization, DR, reset, and resistance
+                    |-- mjlab_mdp.py   MjLab observation and reward term adapters
+                    |-- agents/
+                    |   |-- __init__.py
+                    |   |              Agent package marker
+                    |   |-- rsl_rl_cfg.py
+                    |   |              S0/S1/S2 RSL-RL model and runner configs
+                    |   `-- runners.py
+                    |                  Checkpoint loading and stage handoff runners
+                    `-- mdp/
+                        |-- __init__.py
+                        |              Simulator-independent MDP package marker
+                        |-- dynamics.py
+                        |              Kinematics, mass, force, and slip kernels
+                        |-- events.py  Domain sampling and runtime-state kernels
+                        |-- observations.py
+                        |              Actor and privileged feature assembly
+                        `-- rewards.py
+                                       Rickshaw-specific reward kernels
+```
 
 ## Compatibility Rules
 

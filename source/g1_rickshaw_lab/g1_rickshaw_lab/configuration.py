@@ -17,7 +17,7 @@ Canonical ``feasibility_envelope.yaml`` layout::
 
 Nested mappings are accepted in ``ranges`` and ``calibration`` and are
 flattened with dots.  An interval may be written as ``{min: x, max: y}`` or as
-``[x, y]``.  The canonical serializer always emits the mapping form.
+``[x, y]``.  The canonical file uses the mapping form.
 
 """
 
@@ -208,6 +208,7 @@ class NumericRange:
             return cls(value[0], value[1])
         return cls(value, value)
 
+
 def _looks_like_interval(value: Any) -> bool:
     if isinstance(value, NumericRange):
         return True
@@ -311,7 +312,7 @@ class FeasibilityEnvelope:
             {"schema_version", "joint_order", "ranges", "calibration"},
             "feasibility envelope",
         )
-        ranges = _flatten_interval_mapping(_expect_mapping(data["ranges"], "ranges"), allow_scalars=False)
+        ranges = _flatten_interval_mapping(_expect_mapping(data["ranges"], "ranges"))
         calibration = _expect_mapping(data["calibration"], "calibration")
         return cls(
             schema_version=data["schema_version"],
