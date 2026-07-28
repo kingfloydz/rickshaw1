@@ -11,7 +11,6 @@ from torch import nn
 from torch.distributions import Independent, Normal
 
 from g1_rickshaw_lab.policy_schema import (
-    ACTION_SCALE,
     ACTOR_OBSERVATION_DIM,
     DEFAULT_CONTEXT_DIM,
     HISTORY_LENGTH,
@@ -211,14 +210,6 @@ class RslRickshawActorModel(_RslModelContract):
             raise RuntimeError("only the student actor is deployable")
         return _StudentOnnxExport(self, verbose)
 
-    def as_deployment_controller(self) -> nn.Module:
-        """Return the stateless policy plus the exact deployment action contract."""
-
-        if self.stage != "student":
-            raise RuntimeError("only the student actor is deployable")
-        return _DeploymentController(_StudentExport(self))
-
-
 class RslRickshawCriticModel(_RslModelContract):
     """Independent value trunk using only current and raw privileged state."""
 
@@ -370,32 +361,6 @@ class _StudentOnnxExport(_StudentExport):
     @property
     def output_names(self) -> list[str]:
         return ["actions"]
-
-
-class _DeploymentController(nn.Module):
-    """Stateless policy and joint-position mapping for deployment runtimes."""
-
-    def __init__(self, policy: nn.Module) -> None:
-        super().__init__()
-        self.policy = policy
-        self.register_buffer(
-            "action_scale", torch.tensor(ACTION_SCALE, dtype=torch.float32)
-        )
-
-    def forward(
-        self,
-        current: torch.Tensor,
-        history: torch.Tensor,
-        q_ref: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        normalized_action = self.policy(current, history)
-        scale = self.action_scale.to(dtype=normalized_action.dtype)
-        joint_target = normalized_action * scale + q_ref
-        return normalized_action, joint_target
-
-    @torch.jit.export
-    def reset(self) -> None:
-        pass
 
 
 class _DeploymentContextEncoder(nn.Module):

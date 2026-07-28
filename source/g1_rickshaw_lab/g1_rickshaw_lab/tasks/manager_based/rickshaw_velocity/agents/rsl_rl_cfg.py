@@ -1,15 +1,25 @@
-"""Mjlab RSL-RL configurations for S0 teacher and S2 student PPO."""
+"""Mjlab RSL-RL configurations for teacher, distillation, and student PPO."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from g1_rickshaw_lab.policy_schema import DEFAULT_CONTEXT_DIM, HISTORY_LENGTH
-from g1_rickshaw_lab.training_contract import guide_max_iterations, training_artifact_interval
+
+DEFAULT_ROLLOUT_STEPS = 24
+DEFAULT_MAX_ITERATIONS = 30_000
+DEFAULT_DISTILLATION_ITERATIONS = 2_000
+DEFAULT_SAVE_INTERVAL = 50
 
 
 def _classes():
-    from mjlab.rl import RslRlModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+    from mjlab.rl import (
+        RslRlBaseRunnerCfg,
+        RslRlModelCfg,
+        RslRlOnPolicyRunnerCfg,
+        RslRlPpoAlgorithmCfg,
+    )
 
     @dataclass
     class RickshawActorCfg(RslRlModelCfg):
@@ -20,17 +30,41 @@ def _classes():
     class RickshawAlgorithmCfg(RslRlPpoAlgorithmCfg):
         context_learning_rate: float | None = None
 
-    return RslRlOnPolicyRunnerCfg, RickshawActorCfg, RslRlModelCfg, RickshawAlgorithmCfg
+    @dataclass
+    class DistillationAlgorithmCfg:
+        class_name: str = "Distillation"
+        num_learning_epochs: int = 1
+        gradient_length: int = 15
+        learning_rate: float = 1.0e-3
+        max_grad_norm: float | None = None
+        loss_type: str = "mse"
+        optimizer: str = "adam"
+        rnd_cfg: dict[str, Any] | None = None
+        symmetry_cfg: dict[str, Any] | None = None
+
+    @dataclass
+    class DistillationRunnerCfg(RslRlBaseRunnerCfg):
+        class_name: str = "DistillationRunner"
+        student: RickshawActorCfg = field(default_factory=RickshawActorCfg)
+        teacher: RickshawActorCfg = field(default_factory=RickshawActorCfg)
+        algorithm: DistillationAlgorithmCfg = field(default_factory=DistillationAlgorithmCfg)
+
+    return (
+        RslRlOnPolicyRunnerCfg,
+        RickshawActorCfg,
+        RslRlModelCfg,
+        RickshawAlgorithmCfg,
+        DistillationRunnerCfg,
+    )
 
 
 def _runner_cfg(*, student: bool, latent_dim: int, history_length: int, rollout_steps: int):
-    RunnerCfg, ActorCfg, ModelCfg, AlgorithmCfg = _classes()
-    stage = "s2_student_ppo" if student else "s0_teacher"
+    RunnerCfg, ActorCfg, ModelCfg, AlgorithmCfg, _ = _classes()
     return RunnerCfg(
         seed=42,
         num_steps_per_env=rollout_steps,
-        max_iterations=guide_max_iterations(stage, rollout_steps),
-        save_interval=training_artifact_interval(rollout_steps),
+        max_iterations=DEFAULT_MAX_ITERATIONS,
+        save_interval=DEFAULT_SAVE_INTERVAL,
         experiment_name="g1_rickshaw_student" if student else "g1_rickshaw_teacher",
         run_name="s2" if student else "s0",
         clip_actions=None,
@@ -79,7 +113,10 @@ def _runner_cfg(*, student: bool, latent_dim: int, history_length: int, rollout_
 
 
 def g1_rickshaw_teacher_ppo_runner_cfg(
-    *, latent_dim: int = DEFAULT_CONTEXT_DIM, history_length: int = HISTORY_LENGTH, rollout_steps: int = 24
+    *,
+    latent_dim: int = DEFAULT_CONTEXT_DIM,
+    history_length: int = HISTORY_LENGTH,
+    rollout_steps: int = DEFAULT_ROLLOUT_STEPS,
 ):
     return _runner_cfg(
         student=False,
@@ -90,7 +127,10 @@ def g1_rickshaw_teacher_ppo_runner_cfg(
 
 
 def g1_rickshaw_student_ppo_runner_cfg(
-    *, latent_dim: int = DEFAULT_CONTEXT_DIM, history_length: int = HISTORY_LENGTH, rollout_steps: int = 24
+    *,
+    latent_dim: int = DEFAULT_CONTEXT_DIM,
+    history_length: int = HISTORY_LENGTH,
+    rollout_steps: int = DEFAULT_ROLLOUT_STEPS,
 ):
     return _runner_cfg(
         student=True,
@@ -100,7 +140,54 @@ def g1_rickshaw_student_ppo_runner_cfg(
     )
 
 
+def g1_rickshaw_distillation_runner_cfg(
+    *,
+    latent_dim: int = DEFAULT_CONTEXT_DIM,
+    history_length: int = HISTORY_LENGTH,
+    rollout_steps: int = DEFAULT_ROLLOUT_STEPS,
+):
+    _, ActorCfg, _, _, RunnerCfg = _classes()
+    model_arguments = {
+        "class_name": "g1_rickshaw_lab.rl.rsl_rl_models:RslRickshawActorModel",
+        "hidden_dims": (512, 256, 128),
+        "activation": "elu",
+        "obs_normalization": True,
+        "latent_dim": latent_dim,
+        "history_length": history_length,
+        "distribution_cfg": {
+            "class_name": "GaussianDistribution",
+            "init_std": 1.0,
+            "std_type": "scalar",
+        },
+    }
+    return RunnerCfg(
+        seed=42,
+        num_steps_per_env=rollout_steps,
+        max_iterations=DEFAULT_DISTILLATION_ITERATIONS,
+        save_interval=DEFAULT_SAVE_INTERVAL,
+        experiment_name="g1_rickshaw_context",
+        run_name="s1",
+        clip_actions=None,
+        obs_groups={
+            "student": ("policy", "history"),
+            "teacher": (
+                "policy",
+                "history",
+                "teacher_dynamic_history",
+                "teacher_static",
+            ),
+        },
+        student=ActorCfg(**model_arguments),
+        teacher=ActorCfg(**model_arguments),
+    )
+
+
 __all__ = [
+    "DEFAULT_DISTILLATION_ITERATIONS",
+    "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_ROLLOUT_STEPS",
+    "DEFAULT_SAVE_INTERVAL",
+    "g1_rickshaw_distillation_runner_cfg",
     "g1_rickshaw_student_ppo_runner_cfg",
     "g1_rickshaw_teacher_ppo_runner_cfg",
 ]

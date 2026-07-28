@@ -4,6 +4,7 @@ The task is locked to MuJoCo 3.10.0, Mjlab 1.5.3, MuJoCo-Warp 3.10.0.3,
 and RSL-RL 5.4.0. The registered tasks are:
 
 - `Mjlab-G1-Rickshaw-Slopes-Teacher`
+- `Mjlab-G1-Rickshaw-Slopes-Distillation`
 - `Mjlab-G1-Rickshaw-Slopes-Student`
 - the corresponding `-H91` history variants
 
@@ -57,16 +58,25 @@ python scripts/validate_static_initialization.py
 ## Training And Playback
 
 ```bash
-python scripts/train_teacher.py
-python scripts/finetune_student.py --teacher <teacher.pt> --context <context.pt>
-python scripts/play_student.py --checkpoint <student.pt>
+python scripts/train_teacher.py --latent-dim 8
+python scripts/train_context.py --teacher <teacher.pt> --latent-dim 8 --max-iterations 6000
+python scripts/finetune_student.py --teacher <teacher.pt> --context <distillation.pt> --latent-dim 8
+python scripts/play_student.py --checkpoint <student.pt> --latent-dim 8
 ```
+
+All stages use the checkpoint dictionaries produced by Mjlab and RSL-RL.
+Distillation runs online through RSL-RL's `DistillationRunner`; student actions
+drive the environment and deterministic teacher actions are the targets. Fresh
+student PPO training loads the distilled `student_state_dict` and the teacher
+`critic_state_dict` directly, with a new optimizer. Checkpoints are written to
+timestamped run directories as `model_<iteration>.pt`. Non-default context and
+history dimensions must be passed explicitly to every stage.
 
 The Mjlab runtime owns 19 fixed slopes from -0.08 to 0.10 rad, startup-fixed nine-parameter domain
 randomization, online dynamics diagnostics, observations, rewards, and RSL-RL
 rollout state. The command observation contains only rickshaw `lin_vel_x` and
 `ang_vel_z`; their tracking rewards use the rickshaw axle and terrain-normal
-frame. The 100-D actor observation includes the command and measured rickshaw
+frame. The 98-D actor observation includes the command and measured rickshaw
 velocities, G1 base linear/angular velocity, and the normalized previous action.
 The clean critic observation adds official foot height, air time, contact state,
 and signed-log contact force terms. Rewards otherwise use the Mjlab 1.5.3 G1

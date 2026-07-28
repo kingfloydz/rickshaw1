@@ -5,12 +5,11 @@ from __future__ import annotations
 import argparse
 import os
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
-
-from g1_rickshaw_lab.rl.runner import RunnerContext, create_rickshaw_runner_type
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,15 +107,17 @@ def run_rsl_rl(
     mode: Literal["train", "play"],
     argv: list[str],
     *,
-    runner_context: RunnerContext,
     play_options: PlayOptions | None = None,
+    initialize_runner: Callable[[Any], None] | None = None,
 ) -> None:
     parser = _parser(mode)
     args, overrides = parser.parse_known_args(argv)
     if mode == "train":
-        _run_train(args, overrides, runner_context)
+        _run_train(args, overrides, initialize_runner)
     else:
-        _run_play(args, overrides, runner_context, play_options or PlayOptions())
+        if initialize_runner is not None:
+            raise ValueError("runner initialization applies only to training")
+        _run_play(args, overrides, play_options or PlayOptions())
 
 
 def _load_configs(args: argparse.Namespace, overrides: list[str], *, play: bool):
@@ -157,9 +158,14 @@ def _load_configs(args: argparse.Namespace, overrides: list[str], *, play: bool)
     return env_cfg, agent_cfg
 
 
-def _run_train(args: argparse.Namespace, overrides: list[str], context: RunnerContext) -> None:
+def _run_train(
+    args: argparse.Namespace,
+    overrides: list[str],
+    initialize_runner: Callable[[Any], None] | None,
+) -> None:
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+    from mjlab.tasks.registry import load_runner_cls
     from mjlab.utils.os import dump_yaml, get_checkpoint_path
     from mjlab.utils.wrappers import VideoRecorder
 
@@ -176,7 +182,12 @@ def _run_train(args: argparse.Namespace, overrides: list[str], context: RunnerCo
     log_dir = (log_root / run_name).resolve()
     resume_path = None
     if agent_cfg.resume:
-        resume_path = get_checkpoint_path(log_root.resolve(), agent_cfg.load_run, agent_cfg.load_checkpoint)
+        candidate = Path(agent_cfg.load_checkpoint)
+        resume_path = (
+            candidate.resolve()
+            if candidate.is_file()
+            else get_checkpoint_path(log_root.resolve(), agent_cfg.load_run, agent_cfg.load_checkpoint)
+        )
     env = ManagerBasedRlEnv(env_cfg, device=device, render_mode="rgb_array" if args.video else None)
     if args.video:
         env = VideoRecorder(
@@ -187,13 +198,19 @@ def _run_train(args: argparse.Namespace, overrides: list[str], context: RunnerCo
             disable_logger=True,
         )
     wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    runner_type = create_rickshaw_runner_type(context, base_runner_type=MjlabOnPolicyRunner)
-    runner = runner_type(wrapped, asdict(agent_cfg), str(log_dir), device)
+    runner_type = load_runner_cls(args.task) or MjlabOnPolicyRunner
+    env_cfg_dict = asdict(env_cfg)
+    agent_cfg_dict = asdict(agent_cfg)
+    dump_yaml(log_dir / "params" / "env.yaml", env_cfg_dict)
+    dump_yaml(log_dir / "params" / "agent.yaml", agent_cfg_dict)
+    runner = runner_type(wrapped, agent_cfg_dict, str(log_dir), device)
     runner.add_git_repo_to_log(__file__)
     if resume_path is not None:
         runner.load(str(resume_path))
-    dump_yaml(log_dir / "params" / "env.yaml", asdict(env_cfg))
-    dump_yaml(log_dir / "params" / "agent.yaml", asdict(agent_cfg))
+        if initialize_runner is not None:
+            raise ValueError("cannot combine resume loading with fresh runner initialization")
+    elif initialize_runner is not None:
+        initialize_runner(runner)
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
     wrapped.close()
 
@@ -201,12 +218,12 @@ def _run_train(args: argparse.Namespace, overrides: list[str], context: RunnerCo
 def _run_play(
     args: argparse.Namespace,
     overrides: list[str],
-    context: RunnerContext,
     options: PlayOptions,
 ) -> None:
     import torch
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+    from mjlab.tasks.registry import load_runner_cls
     from mjlab.utils.os import get_checkpoint_path
     from mjlab.utils.wrappers import VideoRecorder
 
@@ -232,7 +249,7 @@ def _run_play(
         )
         env = video_recorder
     wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    runner_type = create_rickshaw_runner_type(context, base_runner_type=MjlabOnPolicyRunner)
+    runner_type = load_runner_cls(args.task) or MjlabOnPolicyRunner
     runner = runner_type(wrapped, asdict(agent_cfg), None, device)
     runner.load(str(resume_path), map_location=device)
     policy = runner.get_inference_policy(device=device)
