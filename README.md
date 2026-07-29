@@ -89,17 +89,52 @@ The project explicitly sets `timestep`, `iterations`, `ls_iterations`, and
 | `njmax` | `600` | Maximum allocated constraints per world. |
 | `contact_sensor_maxmatch` | `64` | Maximum matching contacts considered per contact sensor. |
 
+##### Collision Model
+
+URDF collision elements are imported separately from render geometry. The
+assembled model has 38 contact-enabled geoms per environment: one terrain
+plane, 35 G1 geoms, and two wheel geoms. The remaining 48 geoms are retained
+in the compiled spec with zero contact masks and cannot generate contacts.
+
+| Component | Collision geometry | Runtime state |
+| --- | --- | --- |
+| Terrain | One plane, rotated per environment to the assigned slope | Contact enabled. |
+| G1 link shells | 23 STL mesh geoms for the hips, knees, ankle-pitch links, torso, logo, head, shoulder-yaw links, elbows, and wrists | Contact enabled with the ground and eligible G1 body pairs; `condim=1`. |
+| G1 shoulder proxies | Two pitch cylinders (`radius=0.03 m`, `length=0.05 m`) and two roll cylinders (`radius=0.03 m`, `length=0.03 m`) | Contact enabled with the ground and eligible G1 body pairs; `condim=1`. |
+| G1 feet | Four spheres per foot (`radius=0.005 m`) at local positions `(-0.05, +/-0.025, -0.03)` and `(0.12, +/-0.03, -0.03)` m | Contact enabled; `condim=3`, `priority=1`. |
+| Dex1 grippers | Six imported collision meshes: one base and two finger meshes per hand | Contact disabled; the two invisible grasp sites are equality anchors, not collision geoms. |
+| Rickshaw wheels | Two axle-aligned cylinders (`radius=0.3 m`, `length=0.072548 m`) | Ground contact enabled; wheel-wheel and robot-wheel contact disabled. |
+| Rickshaw body and hitches | One `body_collision.stl` mesh at scale `1e-4`; hitch links have no collision geoms | Contact disabled. |
+| Render geometry | 38 G1 mesh geoms plus the rickshaw body and two wheel meshes | Contact disabled. |
+
+Collision filtering uses independent category bits:
+
+| Category | `contype` | `conaffinity` | Eligible contact pairs |
+| --- | ---: | ---: | --- |
+| Terrain | `0x1` | `0xB` | G1 and rickshaw wheels |
+| Active G1 geoms | `0x2` | `0x3` | Terrain and other eligible G1 bodies |
+| Rickshaw wheels | `0x8` | `0x1` | Terrain only |
+| Disabled collision/render geoms | `0x0` | `0x0` | None |
+
+Consequently, robot-rickshaw and rickshaw self-contact pairs are rejected
+before narrow-phase collision detection. MuJoCo's same-body and parent-child
+filtering still applies to robot pairs admitted by the masks.
+
 The two hand-hitch `connect` equalities inherit
 `solref=(0.02, 1.0)` and `solimp=(0.9, 0.95, 0.001, 0.5, 2.0)`.
 
-MuJoCo friction triples are `(sliding, torsional, rolling)`:
+MuJoCo friction triples are `(sliding, torsional, rolling)`. At environment
+initialization, the sliding coefficient of all robot, rickshaw, and terrain
+geoms is set to `terrain.friction`: nominally `1.0`, or sampled from
+`[0.6, 1.1]` during training. Torsional and rolling coefficients retain their
+asset values.
 
 | Geometry or constraint | Asset setting | Runtime behavior |
 | --- | --- | --- |
 | Terrain plane | `friction=(1.0, 0.005, 0.0001)` | Sliding friction is replaced by `terrain.friction`. |
 | G1 foot collision spheres | `condim=3`, `priority=1`, `friction=(0.6, 0.005, 0.0001)` | Sliding friction is replaced by `terrain.friction`. |
-| Other physical G1 geoms | `condim=1`; ground and self-collision enabled | Sliding friction is replaced by `terrain.friction`. |
-| Rickshaw wheels | Ground collision enabled; damping `0.02` | Sliding friction follows `terrain.friction`; damping is randomized per wheel during training. |
+| Other physical G1 geoms | `condim=1`; ground and self-collision enabled | Only the normal contact constraint is active, so the stored sliding coefficient does not contribute friction forces. |
+| Rickshaw wheels | `condim=3`; damping `0.02` | Sliding friction follows `terrain.friction`; damping is sampled independently in `[0.015, 0.025]` during training. |
 | Rickshaw body and visual geoms | Contact disabled | No contact. |
 | Dex1 gripper geoms | Contact disabled | Hands are coupled to the hitches by equalities. |
 
