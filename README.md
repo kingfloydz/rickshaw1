@@ -340,7 +340,9 @@ Common operational overrides are `--num-envs`, `--s0-iterations`,
 `--s1-iterations`, `--s2-iterations`, `--seed`, `--log-root`, and
 `--gpu-ids`. Use `--gpu-ids all` for all available GPUs. `--gpu-ids None`
 selects CPU execution but does not reduce the default environment or iteration
-counts. For a small end-to-end CPU smoke test, use:
+counts. Each invocation creates an isolated, date-named directory under
+`--log-root`, so concurrent pipelines do not share stage output. For a small
+end-to-end CPU smoke test, use:
 
 ```bash
 "$PYTHON" scripts/train_pipeline.py \
@@ -409,9 +411,10 @@ size of one: it accepts `current [1,98]` and `history [1,61,98]` and returns
 
 ```text
 logs/rsl_rl/
-  g1_rickshaw_teacher/<timestamp>_s0/model_<iteration>.pt
-  g1_rickshaw_context/<timestamp>_s1/model_<iteration>.pt
-  g1_rickshaw_student/<timestamp>_s2/model_<iteration>.pt
+  <YYYY-MM-DD_HH-MM-SS-ffffff>/
+    g1_rickshaw_teacher/<timestamp>_s0/model_<iteration>.pt
+    g1_rickshaw_context/<timestamp>_s1/model_<iteration>.pt
+    g1_rickshaw_student/<timestamp>_s2/model_<iteration>.pt
 
 outputs/
   nan_dumps/
