@@ -63,39 +63,6 @@ def wheel_longitudinal_slip(
     return torch.sum(contact_velocity_w * path_tangent_w[:, None, :], dim=-1)
 
 
-def parallel_axis_inertia(inertia_at_com: torch.Tensor, mass: torch.Tensor, displacement: torch.Tensor) -> torch.Tensor:
-    """Shift a 3-D inertia tensor from its CoM by ``displacement``."""
-
-    if inertia_at_com.shape[-2:] != (3, 3) or displacement.shape[-1] != 3:
-        raise ValueError("inertia must end in [3,3] and displacement in [3]")
-    eye = torch.eye(3, device=inertia_at_com.device, dtype=inertia_at_com.dtype)
-    squared_distance = torch.sum(displacement * displacement, dim=-1)
-    outer = displacement[..., :, None] * displacement[..., None, :]
-    return inertia_at_com + mass[..., None, None] * (squared_distance[..., None, None] * eye - outer)
-
-
-def combine_mass_properties(
-    base_mass: torch.Tensor,
-    base_com: torch.Tensor,
-    base_inertia_at_com: torch.Tensor,
-    payload_mass: torch.Tensor,
-    payload_com: torch.Tensor,
-    payload_inertia_at_com: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Combine base and payload mass/CoM/inertia using parallel-axis shifts."""
-
-    total_mass = base_mass + payload_mass
-    if torch.any(total_mass <= 0.0):
-        raise ValueError("combined mass must be positive")
-    total_com = (base_mass[..., None] * base_com + payload_mass[..., None] * payload_com) / total_mass[..., None]
-    base_shift = base_com - total_com
-    payload_shift = payload_com - total_com
-    total_inertia = parallel_axis_inertia(base_inertia_at_com, base_mass, base_shift) + parallel_axis_inertia(
-        payload_inertia_at_com, payload_mass, payload_shift
-    )
-    return total_mass, total_com, total_inertia
-
-
 @dataclass
 class RickshawKinematicState:
     previous_velocity: torch.Tensor

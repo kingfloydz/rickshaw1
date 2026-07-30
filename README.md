@@ -254,15 +254,12 @@ current actor observation and its preceding 61-frame actor history.
 
 ### Domain Randomization
 
-Nine physical parameters are sampled once per environment:
+Six physical parameters are sampled once per environment:
 
 | Parameter | Range |
 | --- | --- |
 | `torso.mass_delta` | `[-1.0, 3.0] kg` |
-| `payload.mass` | `[-3.0, 3.0] kg` |
-| `payload.com.x` | `[0.3, 0.9] m` |
-| `payload.com.y` | `[-0.15, 0.15] m` |
-| `payload.com.z` | `[0.45, 0.95] m` |
+| `rickshaw.mass_delta` | `[-20.0, 40.0] kg`; uniformly scales all rickshaw body masses and inertias |
 | `rolling_resistance.c_rr` | `[0.01, 0.03]` |
 | `terrain.friction` | `[0.6, 1.1]` |
 | `wheel.left_damping` | `[0.015, 0.025]` |

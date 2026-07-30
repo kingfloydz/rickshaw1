@@ -1,5 +1,5 @@
-# Feasibility envelope for the fixed 35.04 kg cart on flat ground.
-schema_version: 6
+# Feasibility envelope for the nominal 35.04 kg cart on flat ground.
+schema_version: 7
 joint_order:
   - left_hip_pitch_joint
   - left_hip_roll_joint
@@ -32,10 +32,7 @@ joint_order:
   - right_wrist_yaw_joint
 ranges:
   torso.mass_delta: {min: -1.0, max: 3.0}
-  payload.mass: {min: -3.0, max: 3.0}
-  payload.com.x: {min: 0.3, max: 0.9}
-  payload.com.y: {min: -0.15, max: 0.15}
-  payload.com.z: {min: 0.45, max: 0.95}
+  rickshaw.mass_delta: {min: -20.0, max: 40.0}
   rolling_resistance.c_rr: {min: 0.01, max: 0.03}
   terrain.friction: {min: 0.6, max: 1.1}
   wheel.left_damping: {min: 0.015, max: 0.025}

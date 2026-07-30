@@ -6,10 +6,10 @@ before returning an object that can be used by training or export code.
 
 Canonical ``feasibility_envelope.yaml`` layout::
 
-    schema_version: 6
+    schema_version: 7
     joint_order: [29 exact G1 joint names]
     ranges:
-      payload.mass: {min: -3.0, max: 3.0}
+      rickshaw.mass_delta: {min: -20.0, max: 40.0}
       # all names in REQUIRED_FEASIBILITY_RANGES are required
     calibration:
       rolling_resistance.c_rr_nominal: 0.02
@@ -32,7 +32,7 @@ from typing import Any
 
 import yaml
 
-FEASIBILITY_SCHEMA_VERSION = 6
+FEASIBILITY_SCHEMA_VERSION = 7
 
 # This is the source-URDF order after applying the guide's one-time grouping
 # rule: lower_names + waist_names + arm_names.  Runtime regex ordering is never
@@ -71,10 +71,7 @@ G1_JOINT_ORDER = (
 # Marginal bounds produced by the feasibility scan for runtime domain parameters.
 REQUIRED_FEASIBILITY_RANGES = (
     "torso.mass_delta",
-    "payload.mass",
-    "payload.com.x",
-    "payload.com.y",
-    "payload.com.z",
+    "rickshaw.mass_delta",
     "rolling_resistance.c_rr",
     "terrain.friction",
     "wheel.left_damping",
@@ -104,10 +101,7 @@ _NONNEGATIVE_RANGE_NAMES = frozenset(
     if name
     not in {
         "torso.mass_delta",
-        "payload.mass",
-        "payload.com.x",
-        "payload.com.y",
-        "payload.com.z",
+        "rickshaw.mass_delta",
     }
 )
 

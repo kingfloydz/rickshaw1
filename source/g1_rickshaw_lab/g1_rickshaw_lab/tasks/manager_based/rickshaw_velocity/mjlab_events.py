@@ -8,14 +8,9 @@ from typing import Any
 import mujoco
 import torch
 from mjlab.managers.event_manager import RecomputeLevel, requires_model_fields
-from mjlab.utils.lab_api.math import (
-    matrix_from_quat,
-    quat_from_matrix,
-)
 
 from g1_rickshaw_lab.assets.g1_dex1 import GRASP_SITE_NAMES
 from g1_rickshaw_lab.assets.rickshaw import (
-    BASE_LINK_NAME,
     HITCH_SITE_NAMES,
     WHEEL_JOINT_NAMES,
     WHEEL_LINK_NAMES,
@@ -31,7 +26,6 @@ from g1_rickshaw_lab.static_equilibrium import MujocoStaticEquilibrium, load_muj
 from .closed_chain import CONNECTION_NAMES, build_assembled_spec
 from .mdp.dynamics import (
     RickshawKinematicState,
-    combine_mass_properties,
     connect_constraint_forces,
     relative_position_in_yaw_frame,
     relative_yaw_from_quaternions,
@@ -112,7 +106,6 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
     env.grasp_site_ids = _ids(robot, "sites", GRASP_SITE_NAMES)
     env.foot_body_ids = _ids(robot, "bodies", ("left_ankle_roll_link", "right_ankle_roll_link"))
     env.torso_body_id = int(_ids(robot, "bodies", ("torso_link",))[0])
-    env.cart_base_body_id = int(_ids(cart, "bodies", (BASE_LINK_NAME,))[0])
 
     if tuple(robot.joint_names) != G1_JOINT_ORDER:
         raise RuntimeError("fixed-gripper MuJoCo robot must expose exactly the 29 policy joints")
@@ -159,15 +152,13 @@ def initialize_mjlab_task(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTask
 
 @requires_model_fields(
     "body_mass",
-    "body_ipos",
     "body_inertia",
-    "body_iquat",
     "geom_friction",
     "dof_damping",
     recompute=RecomputeLevel.set_const,
 )
 def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTaskRuntimeCfg) -> None:
-    """Sample the nine startup-fixed physics parameters and write MuJoCo fields."""
+    """Sample the six startup-fixed physics parameters and write MuJoCo fields."""
 
     del env_ids
     ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
@@ -175,7 +166,6 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
     robot = env.scene["robot"]
     cart = env.scene["rickshaw"]
     torso_global = robot.indexing.body_ids[env.torso_body_id]
-    base_global = cart.indexing.body_ids[env.cart_base_body_id]
     env_grid = ids
 
     default_robot_mass = env.sim.get_default_field("body_mass")[robot.indexing.body_ids]
@@ -184,29 +174,28 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
     env.sim.model.body_mass[env_grid, torso_global] = torso_mass
     env.effective_torso_mass = torso_mass
 
-    default_mass = env.sim.get_default_field("body_mass")[base_global]
-    default_com = env.sim.get_default_field("body_ipos")[base_global]
-    default_principal = env.sim.get_default_field("body_inertia")[base_global]
-    default_quat = env.sim.get_default_field("body_iquat")[base_global]
-    rotation = matrix_from_quat(default_quat)
-    default_inertia = rotation @ torch.diag(default_principal) @ rotation.mT
-    payload_mass = sampled["payload.mass"]
-    payload_com = torch.stack((sampled["payload.com.x"], sampled["payload.com.y"], sampled["payload.com.z"]), dim=-1)
-    total_mass, total_com, total_inertia = combine_mass_properties(
-        default_mass.expand(env.num_envs),
-        default_com.expand(env.num_envs, -1),
-        default_inertia.expand(env.num_envs, -1, -1),
-        payload_mass,
-        payload_com,
-        torch.zeros((env.num_envs, 3, 3), device=env.device),
+    cart_body_ids = cart.indexing.body_ids.to(dtype=torch.long)
+    default_cart_mass = env.sim.get_default_field("body_mass")[cart_body_ids]
+    default_cart_inertia = env.sim.get_default_field("body_inertia")[cart_body_ids]
+    default_total_mass = torch.sum(default_cart_mass)
+    expected_total_mass = torch.as_tensor(
+        RICKSHAW_TOTAL_MASS,
+        device=default_total_mass.device,
+        dtype=default_total_mass.dtype,
     )
-    principal, axes = torch.linalg.eigh(total_inertia)
-    reflected = torch.linalg.det(axes) < 0
-    axes[reflected, :, 2] *= -1
-    env.sim.model.body_mass[env_grid, base_global] = total_mass
-    env.sim.model.body_ipos[env_grid, base_global] = total_com
-    env.sim.model.body_inertia[env_grid, base_global] = principal
-    env.sim.model.body_iquat[env_grid, base_global] = quat_from_matrix(axes)
+    if not torch.isclose(default_total_mass, expected_total_mass, rtol=1.0e-5, atol=1.0e-4):
+        raise RuntimeError(
+            f"rickshaw body masses sum to {default_total_mass.item():.6f} kg, "
+            f"expected {RICKSHAW_TOTAL_MASS:.6f} kg"
+        )
+    mass_delta = sampled["rickshaw.mass_delta"]
+    total_mass = RICKSHAW_TOTAL_MASS + mass_delta
+    density_scale = total_mass / RICKSHAW_TOTAL_MASS
+    cart_env_grid, cart_body_grid = torch.meshgrid(ids, cart_body_ids, indexing="ij")
+    env.sim.model.body_mass[cart_env_grid, cart_body_grid] = default_cart_mass[None, :] * density_scale[:, None]
+    env.sim.model.body_inertia[cart_env_grid, cart_body_grid] = (
+        default_cart_inertia[None, :, :] * density_scale[:, None, None]
+    )
     friction = sampled["terrain.friction"]
     geom_ids = torch.cat(
         (
@@ -222,10 +211,11 @@ def initialize_mjlab_domain(env: Any, env_ids: torch.Tensor | None, cfg: MjlabTa
     wheel_damping = torch.stack((sampled["wheel.left_damping"], sampled["wheel.right_damping"]), dim=-1)
     env.sim.model.dof_damping[dof_grid, wheel_grid] = wheel_damping
     env.c_rr = sampled["rolling_resistance.c_rr"]
-    cart_mass = RICKSHAW_TOTAL_MASS + payload_mass
-    nominal_com = torch.tensor(RICKSHAW_CENTER_OF_MASS, device=env.device)
-    cart_com = (RICKSHAW_TOTAL_MASS * nominal_com[None, :] + payload_mass[:, None] * payload_com) / cart_mass[:, None]
-    env.effective_cart_mass_com = torch.cat((cart_mass[:, None], cart_com), dim=-1)
+    nominal_com = torch.tensor(RICKSHAW_CENTER_OF_MASS, device=env.device, dtype=total_mass.dtype)
+    env.effective_cart_mass_com = torch.cat(
+        (total_mass[:, None], nominal_com[None, :].expand(env.num_envs, -1)),
+        dim=-1,
+    )
     _update_teacher_static_domain(env, cfg.domain, sampled)
 
 

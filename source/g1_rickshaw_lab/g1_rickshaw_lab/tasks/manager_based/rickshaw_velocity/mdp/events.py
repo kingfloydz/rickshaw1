@@ -53,10 +53,7 @@ class RickshawRuntimeState:
 
 DOMAIN_RANDOMIZATION_NAMES = (
     "torso.mass_delta",
-    "payload.mass",
-    "payload.com.x",
-    "payload.com.y",
-    "payload.com.z",
+    "rickshaw.mass_delta",
     "rolling_resistance.c_rr",
     "terrain.friction",
     "wheel.left_damping",
@@ -91,6 +88,8 @@ class DomainRandomizationCfg:
                 raise ValueError(f"{name} cannot be negative")
         if float(self.ranges["terrain.friction"][0]) <= 0.0:
             raise ValueError("terrain friction must stay positive")
+        if RICKSHAW_TOTAL_MASS + float(self.ranges["rickshaw.mass_delta"][0]) <= 0.0:
+            raise ValueError("rickshaw mass randomization must keep total mass positive")
         if not isinstance(self.calibration, Mapping):
             raise ValueError("domain randomization calibration must be a mapping")
 
@@ -121,20 +120,12 @@ def sample_domain_parameters(
 def effective_cart_mass_com_bounds(
     ranges: Mapping[str, tuple[float, float]],
 ) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    mass_low, mass_high = map(float, ranges["payload.mass"])
-    lower = [RICKSHAW_TOTAL_MASS + mass_low]
-    upper = [RICKSHAW_TOTAL_MASS + mass_high]
-    for axis, name in enumerate(("payload.com.x", "payload.com.y", "payload.com.z")):
-        payload_low, payload_high = map(float, ranges[name])
-        candidates = [
-            (RICKSHAW_TOTAL_MASS * RICKSHAW_CENTER_OF_MASS[axis] + payload_mass * payload_com)
-            / (RICKSHAW_TOTAL_MASS + payload_mass)
-            for payload_mass in (mass_low, mass_high)
-            for payload_com in (payload_low, payload_high)
-        ]
-        lower.append(min(candidates))
-        upper.append(max(candidates))
-    return tuple(lower), tuple(upper)
+    mass_low, mass_high = map(float, ranges["rickshaw.mass_delta"])
+    center_of_mass = tuple(map(float, RICKSHAW_CENTER_OF_MASS))
+    return (
+        (RICKSHAW_TOTAL_MASS + mass_low, *center_of_mass),
+        (RICKSHAW_TOTAL_MASS + mass_high, *center_of_mass),
+    )
 
 
 def _update_teacher_static_domain(

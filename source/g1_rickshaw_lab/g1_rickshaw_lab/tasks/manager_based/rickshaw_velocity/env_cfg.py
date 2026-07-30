@@ -58,10 +58,7 @@ def _runtime_cfg(*, play: bool, terrain_slope: float | None):
     calibration = dict(envelope.calibration)
     names = (
         "torso.mass_delta",
-        "payload.mass",
-        "payload.com.x",
-        "payload.com.y",
-        "payload.com.z",
+        "rickshaw.mass_delta",
         "rolling_resistance.c_rr",
         "terrain.friction",
         "wheel.left_damping",
@@ -70,10 +67,7 @@ def _runtime_cfg(*, play: bool, terrain_slope: float | None):
     ranges = {name: (envelope.ranges[name].minimum, envelope.ranges[name].maximum) for name in names}
     nominal = {
         "torso.mass_delta": 0.0,
-        "payload.mass": 0.0,
-        "payload.com.x": 0.5 * sum(ranges["payload.com.x"]),
-        "payload.com.y": 0.0,
-        "payload.com.z": 0.5 * sum(ranges["payload.com.z"]),
+        "rickshaw.mass_delta": 0.0,
         "rolling_resistance.c_rr": calibration["rolling_resistance.c_rr_nominal"],
         "terrain.friction": calibration["terrain.friction_nominal"],
         "wheel.left_damping": 0.02,
